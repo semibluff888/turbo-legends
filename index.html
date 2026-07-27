@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Turbo Kart</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🏎️</text></svg>" />
+  <link rel="stylesheet" href="./src/styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Menu screens (DOM overlays) -->
+    <section id="screen-title" class="screen" hidden></section>
+    <section id="screen-character" class="screen" hidden></section>
+    <section id="screen-track" class="screen" hidden></section>
+    <section id="screen-difficulty" class="screen" hidden></section>
+    <section id="screen-pause" class="screen overlay" hidden></section>
+    <section id="screen-results" class="screen overlay" hidden></section>
+
+    <!-- In-race HUD -->
+    <div id="hud" hidden>
+      <canvas id="minimap" width="220" height="220"></canvas>
+    </div>
+
+    <!-- Touch controls (shown only when body has the .touch class) -->
+    <div id="touch-steer-zone"></div>
+    <div id="touch-controls">
+      <button class="btn btn-item" aria-label="Use item">🎁</button>
+      <button class="btn btn-drift" aria-label="Drift">🌀</button>
+    </div>
+
+    <noscript>
+      <div class="noscript-warning">Turbo Kart needs JavaScript enabled.</div>
+    </noscript>
+  </div>
+  <script type="module" src="./src/main.js?v=20260726-steering-fix"></script>
+</body>
+</html>

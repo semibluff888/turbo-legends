@@ -1,0 +1,472 @@
+// Turbo Kart — boot, screen flow, and the fixed-step game loop.
+// This is the only module that imports everything; it owns the frame.
+
+import * as THREE from 'three';
+import { FIXED_DT, MAX_FRAME_TIME, RACE_STATE, CAMERA, RACE } from './core/constants.js';
+import { Track } from './track/track.js';
+import { TRACKS, getTrackDef } from './track/tracks.js';
+import { CHARACTERS } from './game/characters.js';
+import { RaceDirector } from './game/race.js';
+import { makeControls, resetControls } from './game/kart.js';
+import { createRenderer, buildScene } from './render/scene.js';
+import { buildTrackMesh } from './render/trackMesh.js';
+import { KartVisual } from './render/kartMesh.js';
+import { Effects } from './render/effects.js';
+import { ChaseCamera } from './render/camera.js';
+import { Hud } from './ui/hud.js';
+import { Screens } from './ui/screens.js';
+import { AudioManager } from './audio/audio.js';
+import { InputManager } from './input/input.js?v=20260726-steering-fix';
+
+// ---------------------------------------------------------------------------
+// App state
+// ---------------------------------------------------------------------------
+
+const canvas = document.getElementById('game-canvas');
+const { renderer, resize } = createRenderer(canvas);
+const camera = new THREE.PerspectiveCamera(
+  CAMERA.fov, window.innerWidth / window.innerHeight, CAMERA.near, CAMERA.far);
+
+const input = new InputManager(window);
+const audio = new AudioManager();
+
+const hud = new Hud(document.getElementById('hud'), document.getElementById('minimap'));
+
+/** Player selections, persisted across races in this session. */
+const selection = {
+  characterId: CHARACTERS[2].id,
+  trackId: TRACKS[0].id,
+  difficulty: 'normal',
+};
+
+/** 'title' | 'character' | 'track' | 'difficulty' | 'race' | 'results' */
+let mode = 'title';
+let paused = false;
+
+/** Everything belonging to the current race; null between races. */
+let race = null;
+
+const playerControls = makeControls();
+
+// ---------------------------------------------------------------------------
+// Screens
+// ---------------------------------------------------------------------------
+
+const screens = new Screens({
+  title: document.getElementById('screen-title'),
+  character: document.getElementById('screen-character'),
+  track: document.getElementById('screen-track'),
+  difficulty: document.getElementById('screen-difficulty'),
+  pause: document.getElementById('screen-pause'),
+  results: document.getElementById('screen-results'),
+}, {
+  onCharacter(id) {
+    selection.characterId = id;
+    mode = 'track';
+    screens.showTrack(TRACKS);
+    audio.ui('confirm');
+  },
+  onTrack(id) {
+    selection.trackId = id;
+    mode = 'difficulty';
+    screens.showDifficulty();
+    audio.ui('confirm');
+  },
+  onDifficulty(key) {
+    selection.difficulty = key;
+    audio.ui('confirm');
+    startRace();
+  },
+  onStart() {
+    mode = 'character';
+    screens.showCharacter(CHARACTERS);
+    audio.ui('confirm');
+  },
+  onResume() { setPaused(false); },
+  onRestart() {
+    setPaused(false);
+    startRace();
+  },
+  onQuit() {
+    setPaused(false);
+    endRace();
+    goToTitle();
+  },
+  onResultsDone() {
+    endRace();
+    goToTitle();
+  },
+});
+
+function goToTitle() {
+  mode = 'title';
+  screens.showTitle();
+  hud.hide();
+  audio.playMusic('menu');
+  buildAttract();
+}
+
+// ---------------------------------------------------------------------------
+// Attract mode: an empty track slowly orbited behind the title menus.
+// ---------------------------------------------------------------------------
+
+let attract = null;
+
+function disposeSceneDeep(scene) {
+  scene.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) {
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) {
+        for (const v of Object.values(m)) if (v && v.isTexture) v.dispose();
+        m.dispose();
+      }
+    }
+  });
+}
+
+function buildAttract() {
+  if (race) return; // race scene doubles as the backdrop
+  if (attract) return;
+  const def = getTrackDef(selection.trackId);
+  const track = new Track(def);
+  const world = buildScene(track);
+  world.scene.add(buildTrackMesh(track));
+  attract = { track, world, angle: 0 };
+}
+
+function destroyAttract() {
+  if (!attract) return;
+  disposeSceneDeep(attract.world.scene);
+  attract = null;
+}
+
+// ---------------------------------------------------------------------------
+// Race lifecycle
+// ---------------------------------------------------------------------------
+
+function startRace() {
+  destroyAttract();
+  if (race) endRace();
+
+  const def = getTrackDef(selection.trackId);
+  const track = new Track(def);
+  const director = new RaceDirector(track, {
+    playerCharacterId: selection.characterId,
+    difficulty: selection.difficulty,
+    seed: (Date.now() & 0xffffff) ^ 0x5eed,
+  });
+
+  const world = buildScene(track);
+  world.scene.add(buildTrackMesh(track));
+
+  const visuals = director.karts.map((k) => new KartVisual(k, world.scene));
+  const effects = new Effects(world.scene);
+  const chase = new ChaseCamera(camera);
+  if (chase.setTrack) chase.setTrack(track);
+  chase.snapTo(director.player);
+
+  race = {
+    track, director, world, visuals, effects, chase,
+    accumulator: 0,
+    finalLapAnnounced: false,
+    finishedAnnounced: false,
+    resultsShown: false,
+    lastCountdownBeep: -1,
+  };
+
+  mode = 'race';
+  paused = false;
+  screens.hideAll();
+  hud.showRace(director);
+  audio.playMusic('race');
+  audio.setFinalLap(false);
+  audio.startEngine();
+  resetControls(playerControls);
+}
+
+function endRace() {
+  if (!race) return;
+  audio.stopEngine();
+  hud.hide();
+  disposeSceneDeep(race.world.scene);
+  race = null;
+}
+
+function setPaused(p) {
+  if (!race || race.director.state === RACE_STATE.RESULTS) return;
+  paused = p;
+  if (p) {
+    screens.showPause();
+    audio.ui('back');
+  } else {
+    screens.hideAll();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame race handling
+// ---------------------------------------------------------------------------
+
+function consumeRaceEvents() {
+  const { director, effects, chase } = race;
+  for (const kart of director.karts) {
+    for (const ev of kart.events) {
+      switch (ev.type) {
+        case 'collide':
+          if (kart.isPlayer) chase.addShake(Math.min(0.5, (ev.impactSpeed || 6) * 0.04));
+          effects.burst(kart.x, kart.y + 0.6, kart.z, 0xffffff, 6);
+          break;
+        case 'spinout':
+        case 'squash':
+          if (kart.isPlayer) chase.addShake(0.7);
+          effects.burst(kart.x, kart.y + 0.8, kart.z, 0xffd23f, 14);
+          break;
+        case 'itembox':
+          effects.shatter(kart.x, kart.y + 1.0, kart.z);
+          break;
+        case 'drift_boost':
+        case 'boost':
+          if (kart.isPlayer) chase.addShake(0.18);
+          break;
+        case 'finish':
+          effects.confettiBurst(kart.x, kart.y + 3, kart.z);
+          break;
+        case 'lap':
+          // The HUD shows its own FINAL LAP banner; we only speed up the music.
+          if (kart.isPlayer && ev.isFinal && !race.finalLapAnnounced) {
+            race.finalLapAnnounced = true;
+            audio.setFinalLap(true);
+          }
+          break;
+      }
+    }
+  }
+  // Item system one-shot world VFX.
+  if (director.items && director.items.drainVfx) {
+    for (const v of director.items.drainVfx()) {
+      if (v.type === 'explosion') {
+        effects.explosion(v.x, v.y, v.z);
+        chase.addShake(0.4);
+      } else if (v.type === 'shell_break') {
+        effects.burst(v.x, v.y, v.z, 0x99ff99, 10);
+      } else {
+        effects.burst(v.x, v.y, v.z, 0xffe14d, 8);
+      }
+    }
+  }
+}
+
+function updateRaceFrame(dt) {
+  const { director, visuals, effects, chase, world } = race;
+
+  // --- Simulation at fixed timestep ---------------------------------------
+  if (!paused) {
+    input.readControls(playerControls);
+    race.accumulator = Math.min(race.accumulator + dt, MAX_FRAME_TIME);
+    while (race.accumulator >= FIXED_DT) {
+      director.update(FIXED_DT, playerControls);
+      race.accumulator -= FIXED_DT;
+    }
+  }
+
+  // --- Presentation ---------------------------------------------------------
+  const player = director.player;
+
+  // Countdown beeps (audio keyed to the integer countdown value).
+  if (director.state === RACE_STATE.COUNTDOWN) {
+    const n = Math.ceil(director.countdown);
+    if (n !== race.lastCountdownBeep && n <= 3) {
+      race.lastCountdownBeep = n;
+      audio.countdownBeep(n);
+      hud.countdown(n);
+    }
+  } else if (race.lastCountdownBeep !== 0) {
+    race.lastCountdownBeep = 0;
+    audio.countdownBeep(0);
+    hud.countdown('go');
+  }
+
+  for (const v of visuals) v.sync(camera.position);
+
+  // Continuous particle sources.
+  for (const kart of director.karts) {
+    if (kart.drifting && kart.driftTier >= 0 && !kart.airborne) {
+      const tier = kart.driftTierInfo;
+      effects.driftSparks(
+        kart.x - kart.forwardX * 0.9, kart.y + 0.15, kart.z - kart.forwardZ * 0.9,
+        tier ? tier.color : 0x4fc3ff);
+    }
+    if (kart.surface === 'offroad' && kart.speedRatio > 0.25 && !kart.airborne) {
+      effects.dust(kart.x, kart.y + 0.2, kart.z);
+    }
+  }
+
+  consumeRaceEvents();
+  audio.consume(director.karts, director);
+  audio.update(dt, player, director);
+  for (const kart of director.karts) kart.clearEvents();
+
+  effects.update(dt);
+  chase.update(dt, player, playerControls.lookBack);
+  world.animate(dt, director.elapsed);
+  hud.update(player, director, dt);
+
+  // Finish / results flow (the HUD shows its own FINISHED banner).
+  if (player.finished && !race.finishedAnnounced) {
+    race.finishedAnnounced = true;
+    audio.setFinalLap(false);
+  }
+  if (director.state === RACE_STATE.RESULTS && !race.resultsShown) {
+    race.resultsShown = true;
+    race.resultsShownAt = performance.now() / 1000;
+    mode = 'results';
+    hud.hide(); // the results panel owns the screen now
+    screens.showResults(director.standings, player, race.track.name);
+    audio.playMusic('results');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Menu input routing
+// ---------------------------------------------------------------------------
+
+function updateMenus() {
+  const m = input.menu;
+  if (mode === 'title') {
+    if (input.anyKey) screens.confirm();
+    return;
+  }
+  if (m.up) { screens.moveFocus(-10); audio.ui('move'); }
+  if (m.down) { screens.moveFocus(10); audio.ui('move'); }
+  if (m.left) { screens.moveFocus(-1); audio.ui('move'); }
+  if (m.right) { screens.moveFocus(1); audio.ui('move'); }
+  if (m.confirm) screens.confirm();
+  if (m.back) {
+    audio.ui('back');
+    if (mode === 'character') goToTitle();
+    else if (mode === 'track') { mode = 'character'; screens.showCharacter(CHARACTERS); }
+    else if (mode === 'difficulty') { mode = 'track'; screens.showTrack(TRACKS); }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main loop
+// ---------------------------------------------------------------------------
+
+let lastTime = performance.now();
+let audioInited = false;
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min((now - lastTime) / 1000, MAX_FRAME_TIME);
+  lastTime = now;
+
+  input.update();
+
+  // WebAudio requires a user gesture; init lazily on the first press.
+  if (!audioInited && input.anyKey) {
+    audioInited = true;
+    audio.init();
+    audio.playMusic('menu');
+  }
+  if (input.muteToggle) audio.toggleMuted();
+
+  if (mode === 'race') {
+    // Esc raises both `pause` and `back` edges — the else-if keeps one press
+    // from toggling the menu open and instantly closed in the same frame.
+    if (input.menu.pause) {
+      setPaused(!paused);
+    } else if (paused) {
+      const m = input.menu;
+      if (m.up) { screens.moveFocus(-10); audio.ui('move'); }
+      if (m.down) { screens.moveFocus(10); audio.ui('move'); }
+      if (m.confirm) screens.confirm();
+      if (m.back) setPaused(false);
+    }
+    updateRaceFrame(paused ? 0 : dt);
+    renderer.render(race.world.scene, camera);
+    return;
+  }
+
+  if (mode === 'results') {
+    const m = input.menu;
+    // Grace period so a player still holding throttle can't skip the podium.
+    const ready = race && race.resultsShownAt != null
+      && now / 1000 - race.resultsShownAt > RACE.resultsInputDelay;
+    if (ready && (m.confirm || input.anyKey)) screens.confirm();
+    if (race) {
+      updateRaceFrame(dt); // let the field keep driving behind the results panel
+      renderer.render(race.world.scene, camera);
+    }
+    return;
+  }
+
+  // Menu modes — orbit the attract track.
+  updateMenus();
+  if (attract) {
+    attract.angle += dt * 0.06;
+    const t = attract.track;
+    const s = (attract.angle * 30) % t.length;
+    const p = t.toWorld(s, 0);
+    camera.position.set(
+      p.x + Math.sin(attract.angle) * 46,
+      26 + Math.sin(attract.angle * 0.6) * 6,
+      p.z + Math.cos(attract.angle) * 46);
+    camera.lookAt(p.x, p.y, p.z);
+    attract.world.animate(dt, attract.angle);
+    renderer.render(attract.world.scene, camera);
+  } else if (race) {
+    renderer.render(race.world.scene, camera);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Global events + boot
+// ---------------------------------------------------------------------------
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  resize(window.innerWidth, window.innerHeight);
+});
+resize(window.innerWidth, window.innerHeight);
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && mode === 'race' && !paused) setPaused(true);
+});
+
+goToTitle();
+
+// Dev hook: ?autostart=1&track=harbor-loop&char=nova&diff=hard&seed=42&t=12
+// jumps straight into a race (and optionally fast-forwards t seconds of sim).
+{
+  const q = new URLSearchParams(window.location.search);
+  const devScreen = q.get('screen');
+  if (devScreen === 'character') { mode = 'character'; screens.showCharacter(CHARACTERS); }
+  else if (devScreen === 'track') { mode = 'track'; screens.showTrack(TRACKS); }
+  else if (devScreen === 'difficulty') { mode = 'difficulty'; screens.showDifficulty(); }
+  if (q.get('autostart')) {
+    if (q.get('char')) selection.characterId = q.get('char');
+    if (q.get('track')) selection.trackId = q.get('track');
+    if (q.get('diff')) selection.difficulty = q.get('diff');
+    startRace();
+    const ff = Number(q.get('t')) || 0;
+    if (ff > 0 && race) {
+      for (let i = 0; i < Math.min(ff, 120) * 120; i++) {
+        race.director.update(FIXED_DT, playerControls);
+      }
+      for (const kart of race.director.karts) kart.clearEvents();
+      race.chase.snapTo(race.director.player);
+    }
+    if (q.get('results') && race) {
+      // Fast-forward until the results screen (autopilot drives everyone).
+      for (let i = 0; i < 300 * 120 && race.director.state !== RACE_STATE.RESULTS; i++) {
+        race.director.update(FIXED_DT, playerControls);
+      }
+      for (const kart of race.director.karts) kart.clearEvents();
+    }
+  }
+}
+
+requestAnimationFrame(frame);

@@ -1,0 +1,11 @@
+node_modules/
+coverage/
+
+.probe/
+.claude/settings.local.json
+
+*.log
+npm-debug.log*
+
+.DS_Store
+Thumbs.db
