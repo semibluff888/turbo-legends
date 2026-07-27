@@ -118,6 +118,10 @@ export class AudioManager {
     /** @type {AudioContext|null} */
     this.ctx = null;
     this._muted = false;
+    this._masterVolume = 1;
+    this._musicVolume = 1;
+    this._sfxVolume = 1;
+    this._musicEnabled = true;
 
     // Deferred intent recorded before init() (autoplay gate).
     this._themeName = null;
@@ -155,15 +159,16 @@ export class AudioManager {
     const ctx = this.ctx = new AC();
 
     this.master = ctx.createGain();
-    this.master.gain.value = this._muted ? 0 : AUDIO.masterVolume;
+    this.master.gain.value = this._muted ? 0 : AUDIO.masterVolume * this._masterVolume;
     this.master.connect(ctx.destination);
 
     this.sfxGain = ctx.createGain();
-    this.sfxGain.gain.value = AUDIO.sfxVolume;
+    this.sfxGain.gain.value = AUDIO.sfxVolume * this._sfxVolume;
     this.sfxGain.connect(this.master);
 
     this.musicGain = ctx.createGain();
-    this.musicGain.gain.value = AUDIO.musicVolume;
+    this.musicGain.gain.value = this._musicEnabled
+      ? AUDIO.musicVolume * this._musicVolume : 0;
     this.musicGain.connect(this.master);
 
     // Soften the square lead — mellow, not grating.
@@ -202,10 +207,43 @@ export class AudioManager {
   setMuted(m) {
     this._muted = !!m;
     if (!this.ctx) return;
-    this._ramp(this.master.gain, this._muted ? 0 : AUDIO.masterVolume, 0.06);
+    this._ramp(this.master.gain,
+      this._muted ? 0 : AUDIO.masterVolume * this._masterVolume, 0.06);
   }
 
-  toggleMuted() { this.setMuted(!this._muted); }
+  toggleMuted() {
+    this.setMuted(!this._muted);
+    return this._muted;
+  }
+
+  /**
+   * Apply normalized user settings. Safe before init(); the stored intent is
+   * used when the WebAudio graph is eventually created.
+   * @param {{master?:number,music?:number,sfx?:number,
+   *          musicEnabled?:boolean,muted?:boolean}} settings
+   */
+  applySettings(settings = {}) {
+    if (Number.isFinite(Number(settings.master))) {
+      this._masterVolume = clamp(Number(settings.master), 0, 1);
+    }
+    if (Number.isFinite(Number(settings.music))) {
+      this._musicVolume = clamp(Number(settings.music), 0, 1);
+    }
+    if (Number.isFinite(Number(settings.sfx))) {
+      this._sfxVolume = clamp(Number(settings.sfx), 0, 1);
+    }
+    if (typeof settings.musicEnabled === 'boolean') {
+      this._musicEnabled = settings.musicEnabled;
+    }
+    if (typeof settings.muted === 'boolean') this._muted = settings.muted;
+
+    if (!this.ctx) return;
+    this._ramp(this.master.gain,
+      this._muted ? 0 : AUDIO.masterVolume * this._masterVolume, 0.06);
+    this._ramp(this.musicGain.gain,
+      this._musicEnabled ? AUDIO.musicVolume * this._musicVolume : 0, 0.06);
+    this._ramp(this.sfxGain.gain, AUDIO.sfxVolume * this._sfxVolume, 0.06);
+  }
 
   // -------------------------------------------------------------------------
   // Engine / skid / AI hum (continuous layers)

@@ -1,0 +1,64 @@
+export const SETTINGS_STORAGE_KEY = 'turbo-kart.settings.v1';
+
+export const DEFAULT_SETTINGS = Object.freeze({
+  muted: false,
+  master: 1,
+  musicEnabled: true,
+  music: 1,
+  sfx: 1,
+});
+
+function clampUnit(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(1, n));
+}
+
+export function sanitizeSettings(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    muted: typeof source.muted === 'boolean' ? source.muted : DEFAULT_SETTINGS.muted,
+    master: clampUnit(source.master, DEFAULT_SETTINGS.master),
+    musicEnabled: typeof source.musicEnabled === 'boolean'
+      ? source.musicEnabled : DEFAULT_SETTINGS.musicEnabled,
+    music: clampUnit(source.music, DEFAULT_SETTINGS.music),
+    sfx: clampUnit(source.sfx, DEFAULT_SETTINGS.sfx),
+  };
+}
+
+function getStorage(storage) {
+  if (storage !== undefined) return storage;
+  try {
+    return globalThis.localStorage || null;
+  } catch {
+    return null;
+  }
+}
+
+export function loadSettings(storage) {
+  const target = getStorage(storage);
+  if (!target || typeof target.getItem !== 'function') return sanitizeSettings(null);
+  try {
+    const raw = target.getItem(SETTINGS_STORAGE_KEY);
+    return raw ? sanitizeSettings(JSON.parse(raw)) : sanitizeSettings(null);
+  } catch {
+    return sanitizeSettings(null);
+  }
+}
+
+export function saveSettings(settings, storage) {
+  const next = sanitizeSettings(settings);
+  const target = getStorage(storage);
+  if (target && typeof target.setItem === 'function') {
+    try {
+      target.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Private browsing and storage quotas must never block the game.
+    }
+  }
+  return next;
+}
+
+export function resetSettings(storage) {
+  return saveSettings(DEFAULT_SETTINGS, storage);
+}

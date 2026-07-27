@@ -15,6 +15,7 @@ import { Effects } from './render/effects.js';
 import { ChaseCamera } from './render/camera.js';
 import { Hud } from './ui/hud.js';
 import { Screens } from './ui/screens.js';
+import { loadSettings, resetSettings, saveSettings } from './ui/settings-store.js';
 import { AudioManager } from './audio/audio.js';
 import { InputManager } from './input/input.js?v=20260726-steering-fix';
 
@@ -29,6 +30,9 @@ const camera = new THREE.PerspectiveCamera(
 
 const input = new InputManager(window);
 const audio = new AudioManager();
+let gameSettings = loadSettings();
+let audioInited = false;
+audio.applySettings(gameSettings);
 
 const hud = new Hud(document.getElementById('hud'), document.getElementById('minimap'));
 
@@ -39,9 +43,11 @@ const selection = {
   difficulty: 'normal',
 };
 
-/** 'title' | 'character' | 'track' | 'difficulty' | 'race' | 'results' */
+/** 'title' | 'settings' | 'help' | 'character' | 'track' | 'difficulty' | 'race' | 'results' */
 let mode = 'title';
 let paused = false;
+/** Where an auxiliary page returns: the title menu or the in-race pause menu. */
+let panelReturn = 'title';
 
 /** Everything belonging to the current race; null between races. */
 let race = null;
@@ -57,6 +63,8 @@ const screens = new Screens({
   character: document.getElementById('screen-character'),
   track: document.getElementById('screen-track'),
   difficulty: document.getElementById('screen-difficulty'),
+  settings: document.getElementById('screen-settings'),
+  help: document.getElementById('screen-help'),
   pause: document.getElementById('screen-pause'),
   results: document.getElementById('screen-results'),
 }, {
@@ -64,24 +72,42 @@ const screens = new Screens({
     selection.characterId = id;
     mode = 'track';
     screens.showTrack(TRACKS);
-    audio.ui('confirm');
+    playUi('confirm');
   },
   onTrack(id) {
     selection.trackId = id;
     mode = 'difficulty';
     screens.showDifficulty();
-    audio.ui('confirm');
+    playUi('confirm');
   },
   onDifficulty(key) {
     selection.difficulty = key;
-    audio.ui('confirm');
+    playUi('confirm');
     startRace();
   },
-  onStart() {
+  onSinglePlayer() {
     mode = 'character';
     screens.showCharacter(CHARACTERS);
+    playUi('confirm');
+  },
+  onMultiplayer() { playUi('confirm'); },
+  onOpenSettings() { openPanel('settings'); },
+  onOpenHelp() { openPanel('help'); },
+  onSettingsChange(key, value) {
+    ensureAudio();
+    gameSettings = saveSettings({ ...gameSettings, [key]: value });
+    audio.applySettings(gameSettings);
+    screens.updateSettings(gameSettings);
+    audio.ui('move');
+  },
+  onSettingsReset() {
+    ensureAudio();
+    gameSettings = resetSettings();
+    audio.applySettings(gameSettings);
+    screens.updateSettings(gameSettings);
     audio.ui('confirm');
   },
+  onClosePanel() { closePanel(); },
   onResume() { setPaused(false); },
   onRestart() {
     setPaused(false);
@@ -100,10 +126,46 @@ const screens = new Screens({
 
 function goToTitle() {
   mode = 'title';
+  paused = false;
+  panelReturn = 'title';
   screens.showTitle();
   hud.hide();
   audio.playMusic('menu');
   buildAttract();
+}
+
+function ensureAudio() {
+  if (!audioInited) {
+    audioInited = true;
+    audio.init();
+    audio.applySettings(gameSettings);
+  } else {
+    audio.resume();
+  }
+}
+
+function playUi(kind) {
+  ensureAudio();
+  audio.ui(kind);
+}
+
+function openPanel(name) {
+  panelReturn = race && paused ? 'pause' : 'title';
+  mode = name;
+  if (name === 'settings') screens.showSettings(gameSettings);
+  else screens.showHelp('controls');
+  playUi('confirm');
+}
+
+function closePanel() {
+  playUi('back');
+  if (panelReturn === 'pause' && race) {
+    mode = 'race';
+    paused = true;
+    screens.showPause();
+  } else {
+    goToTitle();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +262,7 @@ function setPaused(p) {
     screens.showPause();
     audio.ui('back');
   } else {
+    mode = 'race';
     screens.hideAll();
   }
 }
@@ -333,16 +396,32 @@ function updateRaceFrame(dt) {
 
 function updateMenus() {
   const m = input.menu;
-  if (mode === 'title') {
-    if (input.anyKey) screens.confirm();
+
+  if (mode === 'settings') {
+    if (m.up) { screens.moveFocus(-1); audio.ui('move'); }
+    if (m.down) { screens.moveFocus(1); audio.ui('move'); }
+    if (m.left) screens.adjustFocused(-1);
+    if (m.right) screens.adjustFocused(1);
+    if (m.confirm) screens.confirm();
+    if (m.back) closePanel();
     return;
   }
+
+  if (mode === 'help') {
+    if (m.left) { screens.cycleHelpTab(-1); audio.ui('move'); }
+    if (m.right) { screens.cycleHelpTab(1); audio.ui('move'); }
+    if (m.up) screens.scrollHelp(-1);
+    if (m.down) screens.scrollHelp(1);
+    if (m.confirm || m.back) closePanel();
+    return;
+  }
+
   if (m.up) { screens.moveFocus(-10); audio.ui('move'); }
   if (m.down) { screens.moveFocus(10); audio.ui('move'); }
   if (m.left) { screens.moveFocus(-1); audio.ui('move'); }
   if (m.right) { screens.moveFocus(1); audio.ui('move'); }
   if (m.confirm) screens.confirm();
-  if (m.back) {
+  if (m.back && mode !== 'title') {
     audio.ui('back');
     if (mode === 'character') goToTitle();
     else if (mode === 'track') { mode = 'character'; screens.showCharacter(CHARACTERS); }
@@ -355,8 +434,6 @@ function updateMenus() {
 // ---------------------------------------------------------------------------
 
 let lastTime = performance.now();
-let audioInited = false;
-
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min((now - lastTime) / 1000, MAX_FRAME_TIME);
@@ -365,12 +442,13 @@ function frame(now) {
   input.update();
 
   // WebAudio requires a user gesture; init lazily on the first press.
-  if (!audioInited && input.anyKey) {
-    audioInited = true;
-    audio.init();
-    audio.playMusic('menu');
+  if (!audioInited && input.anyKey) ensureAudio();
+  if (input.muteToggle) {
+    ensureAudio();
+    gameSettings = saveSettings({ ...gameSettings, muted: !gameSettings.muted });
+    audio.applySettings(gameSettings);
+    screens.updateSettings(gameSettings);
   }
-  if (input.muteToggle) audio.toggleMuted();
 
   if (mode === 'race') {
     // Esc raises both `pause` and `back` edges — the else-if keeps one press
@@ -446,6 +524,8 @@ goToTitle();
   if (devScreen === 'character') { mode = 'character'; screens.showCharacter(CHARACTERS); }
   else if (devScreen === 'track') { mode = 'track'; screens.showTrack(TRACKS); }
   else if (devScreen === 'difficulty') { mode = 'difficulty'; screens.showDifficulty(); }
+  else if (devScreen === 'settings') { mode = 'settings'; screens.showSettings(gameSettings); }
+  else if (devScreen === 'help') { mode = 'help'; screens.showHelp(); }
   if (q.get('autostart')) {
     if (q.get('char')) selection.characterId = q.get('char');
     if (q.get('track')) selection.trackId = q.get('track');

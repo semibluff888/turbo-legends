@@ -226,11 +226,13 @@ results (RACE.postRaceTimeout auto-place), state machine RACE_STATE.
 HUD: item slot w/ roulette animation, lap "2/3", position "3rd" big with
 ordinal, speed lines at high speedRatio, lap time + best, final-lap banner,
 wrong-way warning, countdown 3-2-1-GO, minimap canvas. Menus (DOM overlays,
-gamepad/keyboard navigable): title → character select (grid of 8 with stats
-bars) → track select (3 cards) → difficulty → race; pause (Esc: resume/
-restart/quit); results table (positions, times, best lap) with confetti +
-"press Enter". All styled in styles.css — chunky kart-racer aesthetic, bold
-rounded sans (system stack), thick outlines, gradients, no external assets.
+gamepad/keyboard navigable): main menu → single-player character select (grid
+of 8 with stats bars) → track select (3 cards) → difficulty → race;
+multiplayer is a coming-soon placeholder. Settings and How to Play are
+available from the main and pause menus. Results show positions, times and
+best laps. All styled in styles.css — chunky kart-racer aesthetic, bold rounded
+sans (system stack), thick outlines, gradients, no external assets. Audio
+settings persist locally through ui/settings-store.js.
 
 ### src/audio/audio.js
 WebAudio, all synthesized (no files): engine loop per-kart-ish (player full
@@ -240,8 +242,9 @@ sfx map (boost woosh, item get chime, roulette ticks, shell fire, hits, spin,
 squash horn, star jingle loop, lightning, countdown beeps + GO, finish
 fanfare, UI move/confirm), lightweight music: chiptune-ish pattern sequencer
 (two 16-step channels + kick/hat) with menu theme, race theme, final-lap
-speedup, results theme. Master/music/sfx gains from AUDIO constants; created
-lazily on first user gesture; `setMuted(m)`; mute toggle key M.
+speedup, results theme. Master/music/sfx gains use AUDIO constants as tuned
+100% baselines; created lazily on first user gesture. `applySettings()` handles
+normalized channel levels, music enable and mute; mute toggle key M.
 
 ### src/input/input.js
 ```js
@@ -272,8 +275,9 @@ selection state, restart/quit flows, window resize, visibilitychange pause.
 ## index.html
 Already provided: import map `three` → /vendor/three.module.js, `#app` with
 `<canvas id="game-canvas">`, DOM overlay roots: `#screen-title`,
-`#screen-character`, `#screen-track`, `#screen-difficulty`, `#hud`,
-`#screen-pause`, `#screen-results`, `#minimap` canvas inside #hud.
+`#screen-character`, `#screen-track`, `#screen-difficulty`, `#screen-settings`,
+`#screen-help`, `#hud`, `#screen-pause`, `#screen-results`, `#minimap` canvas
+inside #hud.
 `src/styles.css` linked. main.js is the only script tag (type=module).
 
 ## Testing (node --test tests/)
