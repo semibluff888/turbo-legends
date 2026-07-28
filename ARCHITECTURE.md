@@ -1,4 +1,4 @@
-# Turbo Kart — Architecture & Frozen Contracts
+# Turbo Legends — Architecture & Frozen Contracts
 
 A Mario Kart-style 3D kart racer. Browser-only, no build step: ES modules +
 vendored Three.js (`vendor/three.module.js`, import-mapped to `three`).
@@ -228,7 +228,7 @@ ordinal, speed lines at high speedRatio, lap time + best, final-lap banner,
 wrong-way warning, countdown 3-2-1-GO, minimap canvas. Menus (DOM overlays,
 gamepad/keyboard navigable): main menu → single-player character select (grid
 of 8 with stats bars) → track select (3 cards) → difficulty → race;
-multiplayer is a coming-soon placeholder. Settings and How to Play are
+multiplayer is a coming-soon placeholder. Settings and Help are
 available from the main and pause menus. Results show positions, times and
 best laps. All styled in styles.css — chunky kart-racer aesthetic, bold rounded
 sans (system stack), thick outlines, gradients, no external assets. Audio

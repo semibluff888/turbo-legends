@@ -1,4 +1,4 @@
-// Turbo Kart — boot, screen flow, and the fixed-step game loop.
+// Turbo Legends — boot, screen flow, and the fixed-step game loop.
 // This is the only module that imports everything; it owns the frame.
 
 import * as THREE from 'three';

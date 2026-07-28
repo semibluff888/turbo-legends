@@ -1,4 +1,4 @@
-// Minimal static file server for Turbo Kart.
+// Minimal static file server for Turbo Legends.
 // ES modules require an http:// origin, so `npm start` and open the printed URL.
 import { createServer } from 'node:http';
 import { createReadStream, promises as fs, realpathSync } from 'node:fs';
@@ -101,7 +101,7 @@ export function createStaticServer(root = ROOT) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const server = createStaticServer();
   server.listen(PORT, HOST, () => {
-    console.log(`\n  🏁  Turbo Kart running at  http://${HOST}:${PORT}/\n`);
+    console.log(`\n  🏁  Turbo Legends running at  http://${HOST}:${PORT}/\n`);
     console.log('  Press Ctrl+C to stop.\n');
   });
 }

@@ -1,9 +1,9 @@
 {
-  "name": "turbo-kart",
+  "name": "turbo-legends",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Turbo Kart — a Mario Kart-style 3D kart racer that runs in the browser with no build step.",
+  "description": "Turbo Legends — a Mario Kart-style 3D kart racer that runs in the browser with no build step.",
   "scripts": {
     "start": "node server.mjs",
     "dev": "node server.mjs",

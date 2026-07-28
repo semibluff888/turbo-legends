@@ -1,4 +1,4 @@
-# 🏎️ Turbo Kart
+# 🏎️ Turbo Legends
 
 A Mario Kart-style 3D kart racer that runs entirely in your browser.
 No build step; vendored Three.js, procedural visuals/SFX, and local soundtrack assets.

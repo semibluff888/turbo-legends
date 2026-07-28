@@ -1,4 +1,4 @@
-// Turbo Kart — unified input: keyboard, gamepad, and touch mapped onto the
+// Turbo Legends — unified input: keyboard, gamepad, and touch mapped onto the
 // makeControls() shape (see src/game/kart.js). Presentation-side module: it
 // may touch the DOM, but only inside the constructor/methods so importing it
 // under Node (tools/syntax-check.mjs stubs) is side-effect free.

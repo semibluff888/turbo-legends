@@ -11,7 +11,7 @@ export const UI_COPY = Object.freeze({
       { value: 'single', icon: '🏁', label: 'SINGLE PLAYER', desc: 'Race against 7 AI drivers' },
       { value: 'multiplayer', icon: '🌐', label: 'MULTIPLAYER', desc: 'Online competitive racing', badge: 'COMING SOON' },
       { value: 'settings', icon: '⚙️', label: 'SETTINGS', desc: 'Audio and game options' },
-      { value: 'help', icon: '📖', label: 'HOW TO PLAY', desc: 'Controls, items and racing tips' },
+      { value: 'help', icon: '📖', label: 'HELP', desc: 'Controls, items and racing tips' },
     ],
     hint: 'Arrows / WASD to navigate · Enter to select · M to mute',
     multiplayerToast: 'MULTIPLAYER IS COMING SOON',
@@ -38,7 +38,7 @@ export const UI_COPY = Object.freeze({
     items: [
       ['resume', 'RESUME'],
       ['settings', 'SETTINGS'],
-      ['help', 'HOW TO PLAY'],
+      ['help', 'HELP'],
       ['restart', 'RESTART'],
       ['quit', 'QUIT TO TITLE'],
     ],
@@ -66,7 +66,7 @@ export const UI_COPY = Object.freeze({
     hint: 'Up / Down to select · Left / Right to adjust · Esc to go back',
   },
   help: {
-    heading: 'HOW TO PLAY',
+    heading: 'HELP',
     tabs: [
       { value: 'controls', label: 'CONTROLS' },
       { value: 'items', label: 'ITEMS' },

@@ -128,9 +128,9 @@ export class Screens {
     root.innerHTML = `
       <div class="title-layout">
         <div class="title-brand">
-          <h1 class="logo" aria-label="Turbo Kart">
+          <h1 class="logo" aria-label="Turbo Legends">
             <span class="logo-line logo-turbo">TURBO</span>
-            <span class="logo-line logo-kart">KART</span>
+            <span class="logo-line logo-legends">LEGENDS</span>
           </h1>
           <p class="title-tagline">START YOUR ENGINES</p>
         </div>

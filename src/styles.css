@@ -1,4 +1,4 @@
-/* Turbo Kart — full UI stylesheet.
+/* Turbo Legends — full UI stylesheet.
    Chunky joyful arcade: heavy rounded type (system stack at weight 800/900),
    thick white outlines, saturated gradients, translucent blurred panels over
    the always-rendering 3D canvas. No external assets or fonts. */
@@ -167,8 +167,9 @@ kbd {
   background-image: linear-gradient(180deg, #ffe14d 12%, #ff9d2e 55%, #ff5fa2 100%);
 }
 
-.logo-kart {
-  font-size: clamp(90px, 11.5vw, 160px);
+.logo-legends {
+  font-size: clamp(58px, 6.5vw, 92px);
+  letter-spacing: -0.02em;
   background-image: linear-gradient(180deg, #7fe3ff 8%, #4aa8ff 52%, #b45fe9 100%);
 }
 
@@ -1379,6 +1380,12 @@ body.touch #touch-steer-zone { display: block; }
    Responsive
 --------------------------------------------------------------------------- */
 
+@media (min-width: 901px) {
+  .logo-line {
+    -webkit-text-stroke-width: clamp(3.5px, 0.28vw, 5px);
+  }
+}
+
 @media (max-width: 900px) {
   .title-layout {
     gap: 24px;
@@ -1386,7 +1393,7 @@ body.touch #touch-steer-zone { display: block; }
   }
   .title-brand { gap: 12px; }
   .logo-turbo { font-size: clamp(72px, 23vw, 128px); }
-  .logo-kart { font-size: clamp(90px, 29vw, 160px); }
+  .logo-legends { font-size: clamp(56px, 15vw, 92px); }
   .main-menu-panel { padding: 18px; }
   .main-menu-option { padding: 10px 13px; }
   .help-controls-grid { grid-template-columns: 1fr; }
@@ -1446,7 +1453,7 @@ body.touch #touch-steer-zone { display: block; }
   .logo { animation: none; }
   .title-brand { gap: 8px; }
   .logo-turbo { font-size: clamp(42px, 9vh, 72px); }
-  .logo-kart { font-size: clamp(54px, 12vh, 92px); }
+  .logo-legends { font-size: clamp(40px, 8vh, 64px); }
   .main-menu-panel { padding: 14px 18px; }
   .main-menu-heading { margin-bottom: 10px; font-size: 22px; }
   .main-menu-list { gap: 6px; }
