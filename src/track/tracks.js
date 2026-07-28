@@ -5,7 +5,7 @@
 // Authoring notes:
 //  - `sFrac` places pads/boxes as a fraction (0..1) of the lap, so tweaking
 //    control points doesn't silently move every pickup.
-//  - Item boxes are authored in clusters of 3–4 across the road, like the
+//  - Item boxes are authored in rows of 6 across the road, like the
 //    genre convention, so the whole pack can pick up at once.
 
 /** Convenience: a lateral row of item boxes at one track position. */
@@ -52,9 +52,9 @@ export const TRACKS = [
       { sFrac: 0.60, lateral: 0, width: 5, length: 9 },
     ],
     itemBoxes: [
-      ...boxRow(0.10, [-6, -2, 2, 6]),
-      ...boxRow(0.38, [-6, -2, 2, 6]),
-      ...boxRow(0.70, [-6, -2, 2, 6]),
+      ...boxRow(0.10, [-10, -6, -2, 2, 6, 10]),
+      ...boxRow(0.38, [-10, -6, -2, 2, 6, 10]),
+      ...boxRow(0.70, [-10, -6, -2, 2, 6, 10]),
     ],
   },
 
@@ -95,9 +95,9 @@ export const TRACKS = [
       { sFrac: 0.86, lateral: 2.5, width: 4.5, length: 8 },
     ],
     itemBoxes: [
-      ...boxRow(0.085, [-5, -1.7, 1.7, 5]),
-      ...boxRow(0.46, [-5, -1.7, 1.7, 5]),
-      ...boxRow(0.74, [-4.5, -1.5, 1.5, 4.5]),
+      ...boxRow(0.085, [-8.5, -5.1, -1.7, 1.7, 5.1, 8.5]),
+      ...boxRow(0.46, [-8.5, -5.1, -1.7, 1.7, 5.1, 8.5]),
+      ...boxRow(0.74, [-7.2, -4.32, -1.44, 1.44, 4.32, 7.2]),
     ],
   },
 
@@ -142,9 +142,9 @@ export const TRACKS = [
       { sFrac: 0.88, lateral: 3, width: 5, length: 9 },
     ],
     itemBoxes: [
-      ...boxRow(0.05, [-5.5, -1.8, 1.8, 5.5]),
-      ...boxRow(0.34, [-5.5, -1.8, 1.8, 5.5]),
-      ...boxRow(0.59, [-5, -1.7, 1.7, 5]),
+      ...boxRow(0.05, [-9.5, -5.7, -1.9, 1.9, 5.7, 9.5]),
+      ...boxRow(0.34, [-9.5, -5.7, -1.9, 1.9, 5.7, 9.5]),
+      ...boxRow(0.59, [-12.4, -7.44, -2.48, 2.48, 7.44, 12.4]),
     ],
   },
 ];

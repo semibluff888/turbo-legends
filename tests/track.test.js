@@ -128,7 +128,19 @@ test('boost pads sit fully on the road and classify as BOOST surface', () => {
 
 test('item boxes are authored on the road and world positions match track space', () => {
   for (const track of tracks) {
-    assert.ok(track.itemBoxes.length >= 4);
+    const boxesByPosition = new Map();
+    for (const box of track.itemBoxes) {
+      const row = boxesByPosition.get(box.s) || [];
+      row.push(box);
+      boxesByPosition.set(box.s, row);
+    }
+    for (const boxes of boxesByPosition.values()) {
+      assert.equal(boxes.length, 6, `${track.id} item-box row should contain 6 boxes`);
+      const outerLateral = Math.max(...boxes.map((box) => Math.abs(box.lateral)));
+      const edgeClearance = track.halfWidthAt(boxes[0].s) - outerLateral;
+      assert.ok(edgeClearance <= 1.1,
+        `${track.id} outer item boxes are ${edgeClearance.toFixed(2)} from the road edge`);
+    }
     for (const box of track.itemBoxes) {
       const hw = track.halfWidthAt(box.s);
       assert.ok(Math.abs(box.lateral) < hw - 0.5,
