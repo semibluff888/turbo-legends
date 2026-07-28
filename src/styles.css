@@ -630,13 +630,15 @@ kbd {
 
 .setting-control { min-width: 0; gap: 12px; }
 
-.setting-choice {
+.setting-control.setting-choice {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 34px;
+  grid-template-columns: 32px minmax(0, 1fr) 32px;
   gap: 8px;
+  align-items: center;
+  width: 100%;
 }
 
-.setting-choice .setting-value {
+.setting-control.setting-choice .setting-value {
   width: auto;
   overflow: hidden;
   text-align: center;
@@ -645,7 +647,7 @@ kbd {
 }
 
 .setting-choice-arrow {
-  width: 34px;
+  width: 32px;
   height: 30px;
   display: grid;
   place-items: center;
@@ -653,15 +655,23 @@ kbd {
   border-radius: 9px;
   color: #fff;
   background: rgba(0, 0, 0, 0.28);
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 900;
   line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.12s, background 0.12s, transform 0.1s;
 }
 
-.setting-choice-arrow:hover,
+.setting-choice-arrow:hover {
+  border-color: #fff;
+  background: rgba(255, 255, 255, 0.22);
+}
+
 .setting-choice-arrow:active {
   border-color: #fff;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.32);
+  transform: scale(0.94);
 }
 
 .setting-value {
