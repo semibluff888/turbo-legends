@@ -23,12 +23,16 @@ test('settings sanitize partial values and clamp volume ranges', () => {
     musicEnabled: false,
     music: -0.4,
     sfx: '0.35',
+    menuBgm: 'bad-menu',
+    raceBgm: 'rainbow-kart-dash',
   }), {
     muted: true,
     master: 1,
     musicEnabled: false,
     music: 0,
     sfx: 0.35,
+    menuBgm: 'rainbow-drift',
+    raceBgm: 'rainbow-kart-dash',
   });
 
   assert.deepEqual(sanitizeSettings({ master: 'bad' }), DEFAULT_SETTINGS);
@@ -41,6 +45,16 @@ test('settings save and load a versioned local record', () => {
   assert.equal(saved.muted, true);
   assert.deepEqual(loadSettings(storage), saved);
   assert.ok(storage.getItem(SETTINGS_STORAGE_KEY));
+});
+
+test('old settings records gain the new BGM defaults', () => {
+  const storage = new MemoryStorage();
+  storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ master: 0.65, sfx: 0.4 }));
+  const loaded = loadSettings(storage);
+  assert.equal(loaded.master, 0.65);
+  assert.equal(loaded.sfx, 0.4);
+  assert.equal(loaded.menuBgm, 'rainbow-drift');
+  assert.equal(loaded.raceBgm, 'default');
 });
 
 test('invalid or unavailable storage falls back without throwing', () => {

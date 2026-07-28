@@ -24,6 +24,7 @@ const MIME = {
   '.map': 'application/json; charset=utf-8',
   '.txt': 'text/plain; charset=utf-8',
   '.md': 'text/markdown; charset=utf-8',
+  '.mp3': 'audio/mpeg',
 };
 
 function isInside(root, filePath) {
@@ -46,7 +47,7 @@ function isPublicPath(root, filePath) {
   const parts = rel.split(sep);
   if (!rel || parts.some(part => part.startsWith('.'))) return false;
   if (rel === 'index.html') return true;
-  return parts[0] === 'src' || parts[0] === 'vendor';
+  return parts[0] === 'src' || parts[0] === 'vendor' || parts[0] === 'sound';
 }
 
 export function createStaticServer(root = ROOT) {

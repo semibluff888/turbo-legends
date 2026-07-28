@@ -1,7 +1,7 @@
 # 🏎️ Turbo Kart
 
 A Mario Kart-style 3D kart racer that runs entirely in your browser.
-No build step, no external assets — vendored Three.js, procedural everything.
+No build step; vendored Three.js, procedural visuals/SFX, and local soundtrack assets.
 
 ![genre](https://img.shields.io/badge/genre-kart%20racer-ff5fa2) ![deps](https://img.shields.io/badge/runtime%20deps-three.js%20(vendored)-4aa8ff)
 
@@ -44,8 +44,8 @@ the left, drift/item buttons on the right).
   rubber-banding, and item spite
 - **3 difficulty levels**, rocket starts, jump-start penalties, drafting,
   lap timing, wrong-way detection, minimap, results podium
-- **Synth audio** — engine, skids, item sfx, and a chiptune soundtrack, all
-  generated in WebAudio (zero audio files)
+- **Dynamic audio** — procedural WebAudio engines, skids and item SFX plus
+  looping menu/track-specific MP3 soundtracks
 
 ## Development
 

@@ -1,101 +1,22 @@
-// AudioManager: the entire soundscape of Turbo Kart, fully synthesized with
-// WebAudio — no asset files. Engine loop, skid loop, one-shot event SFX, and a
-// tiny chiptune pattern sequencer for music.
+// AudioManager: MP3 background music plus a synthesized WebAudio soundscape.
+// Looping music is streamed through one media element; all SFX remain procedural.
 //
 // Lazy by contract: the constructor allocates nothing heavy and touches no
-// browser API. init() must be called from a user gesture; every public method
-// is a safe no-op while this.ctx === null.
+// browser API. init() may run at boot; suspended contexts are resumed from the
+// first trusted user gesture. Public methods remain safe while ctx is null.
 
 import { AUDIO, DRIFT_TIERS, KART_STATE } from '../core/constants.js';
 import { clamp } from '../core/mathx.js';
+import {
+  DEFAULT_MENU_BGM,
+  DEFAULT_RACE_BGM,
+  resolveMenuBgm,
+  resolveRaceBgm,
+  sanitizeMenuBgm,
+  sanitizeRaceBgm,
+} from './bgm.js';
 
 const midiHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
-
-// ---------------------------------------------------------------------------
-// Music patterns
-// ---------------------------------------------------------------------------
-// One step = a 16th note. Channels loop independently on their own length, so
-// a 1-bar hat pattern can ride over an 8-bar melody. Melodic entries are
-// `null` (rest), a MIDI note, or `[midi, lengthInSteps]`. Drum entries are
-// velocities 0..1 (falsy = rest).
-
-const _ = null;
-
-/** Driving root/octave/fifth bass bar used by the race + results themes. */
-const bassBar = (r) => [r, _, r, _, r + 12, _, r, _, r, _, r, _, r + 7, _, r, _];
-
-// --- Race theme: E minor, 128 BPM, Em–C–G–D. Lead = A section (bars 1-4,
-// chord tones) then B section (bars 5-8, busier). Bass loops every 4 bars.
-const RACE = {
-  bpm: 128,
-  leadWave: 'square', leadGain: 0.085, bassGain: 0.26, hatGain: 1.0, kickGain: 1.0,
-  bass: [...bassBar(40), ...bassBar(36), ...bassBar(43), ...bassBar(38)],
-  lead: [
-    // A — Em
-    [64, 2], _, _, _, [67, 2], _, _, _, [69, 2], _, [67, 1], _, [71, 4], _, _, _,
-    // C
-    [72, 2], _, _, _, [71, 2], _, _, _, [67, 2], _, [64, 1], _, [69, 4], _, _, _,
-    // G
-    [67, 2], _, _, _, [71, 2], _, _, _, [74, 2], _, [71, 1], _, [67, 4], _, _, _,
-    // D
-    [66, 2], _, _, _, [69, 2], _, _, _, [66, 2], _, [62, 1], _, [64, 4], _, _, _,
-    // B — Em
-    [76, 1], _, [76, 1], _, [74, 2], _, _, _, [71, 1], _, [74, 1], _, [76, 2], _, [74, 1], _,
-    // C
-    [72, 1], _, [72, 1], _, [74, 2], _, _, _, [76, 2], _, _, _, [72, 2], _, _, _,
-    // G
-    [74, 1], _, [74, 1], _, [71, 2], _, _, _, [67, 1], _, [71, 1], _, [74, 2], _, [76, 1], _,
-    // D — F#5 tension, resolve toward E next loop
-    [78, 2], _, _, _, [74, 2], _, _, _, [69, 2], _, [66, 1], _, [71, 4], _, _, _,
-  ],
-  hat: [_, _, 1, _, _, _, 1, _, _, _, 1, _, _, _, 1, 0.5],
-  kick: [1, _, _, _, _, _, _, _, 1, _, _, _, _, _, 0.7, _],
-};
-
-// --- Menu theme: laid back, 96 BPM, Amaj7–F#m7–Dmaj7–E7 (2 bars each).
-const menuBassA = (r) => [[r, 4], _, _, _, _, _, _, _, [r + 7, 2], _, _, _, _, _, [r, 1], _];
-const menuBassB = (r) => [[r, 4], _, _, _, _, _, [r + 12, 1], _, [r + 7, 2], _, _, _, _, _, _, _];
-const MENU = {
-  bpm: 96,
-  leadWave: 'triangle', leadGain: 0.15, bassGain: 0.24, hatGain: 0.5, kickGain: 0.55,
-  bass: [
-    ...menuBassA(45), ...menuBassB(45), ...menuBassA(42), ...menuBassB(42),
-    ...menuBassA(38), ...menuBassB(38), ...menuBassA(40), ...menuBassB(40),
-  ],
-  lead: [
-    // Amaj7
-    [69, 3], _, _, _, [71, 2], _, _, _, [73, 6], _, _, _, _, _, _, _,
-    [76, 4], _, _, _, _, _, _, _, [73, 2], _, _, _, [71, 2], _, _, _,
-    // F#m7
-    [73, 3], _, _, _, [71, 2], _, _, _, [69, 6], _, _, _, _, _, _, _,
-    [66, 4], _, _, _, _, _, _, _, [64, 4], _, _, _, _, _, _, _,
-    // Dmaj7
-    [66, 3], _, _, _, [69, 2], _, _, _, [71, 6], _, _, _, _, _, _, _,
-    [73, 4], _, _, _, _, _, _, _, [69, 4], _, _, _, _, _, _, _,
-    // E7
-    [68, 3], _, _, _, [66, 2], _, _, _, [64, 6], _, _, _, _, _, _, _,
-    [71, 4], _, _, _, _, _, _, _, [68, 2], _, _, _, [64, 2], _, _, _,
-  ],
-  hat: [_, _, _, _, 0.6, _, _, _, _, _, _, _, 0.6, _, _, 0.3],
-  kick: [0.8, _, _, _, _, _, _, _, _, _, 0.5, _, _, _, _, _],
-};
-
-// --- Results theme: victory-ish doo-wop loop, C–Am–F–G at 112 BPM.
-const RESULTS = {
-  bpm: 112,
-  leadWave: 'square', leadGain: 0.09, bassGain: 0.26, hatGain: 0.7, kickGain: 0.9,
-  bass: [...bassBar(36), ...bassBar(45), ...bassBar(41), ...bassBar(43)],
-  lead: [
-    [72, 1], _, [72, 1], _, [76, 2], _, _, _, [79, 3], _, _, _, [76, 2], _, _, _,
-    [76, 2], _, _, _, [74, 2], _, _, _, [72, 4], _, _, _, _, _, [69, 1], _,
-    [69, 2], _, _, _, [72, 2], _, _, _, [77, 3], _, _, _, [76, 2], _, _, _,
-    [74, 2], _, _, _, [71, 2], _, _, _, [67, 2], _, [71, 1], _, [74, 2], _, _, _,
-  ],
-  hat: [_, _, 0.8, _, _, _, 0.8, _, _, _, 0.8, _, _, _, 0.8, _],
-  kick: [1, _, _, _, _, _, _, _, 1, _, _, _, _, _, _, _],
-};
-
-const THEMES = { menu: MENU, race: RACE, results: RESULTS };
 
 /** Star invincibility arpeggio: C and D chords alternating, Mario-style. */
 const STAR_ARP = [72, 76, 79, 84, 74, 78, 81, 86];
@@ -114,7 +35,7 @@ const ENGINE_F_OVER = 55;
 const ENGINE_BOOST_PITCH = 1.25;
 
 export class AudioManager {
-  constructor() {
+  constructor(options = {}) {
     /** @type {AudioContext|null} */
     this.ctx = null;
     this._muted = false;
@@ -122,17 +43,30 @@ export class AudioManager {
     this._musicVolume = 1;
     this._sfxVolume = 1;
     this._musicEnabled = true;
+    this._menuBgm = DEFAULT_MENU_BGM;
+    this._raceBgm = DEFAULT_RACE_BGM;
 
     // Deferred intent recorded before init() (autoplay gate).
-    this._themeName = null;
+    this._musicContext = null;
+    this._raceTrackId = null;
+    this._bgmId = null;
+    this._bgmElement = null;
+    this._bgmNode = null;
+    this._bgmPlayPending = false;
+    this._createMediaElement = options.createMediaElement || (() => {
+      if (typeof Audio !== 'undefined') return new Audio();
+      if (typeof document !== 'undefined' && document.createElement) {
+        return document.createElement('audio');
+      }
+      return null;
+    });
     this._engineWanted = false;
 
     this._finalLap = false;
     this._engineOn = false;
+    this._gameplaySfxPaused = false;
 
-    // Sequencer state.
-    this._musicStep = 0;
-    this._nextStepTime = 0;
+    // Scheduled star-jingle state.
     this._starOn = false;
     this._starStep = 0;
     this._starNext = 0;
@@ -156,7 +90,13 @@ export class AudioManager {
     const AC = (typeof window !== 'undefined')
       && (window.AudioContext || window.webkitAudioContext);
     if (!AC) return;
-    const ctx = this.ctx = new AC();
+    let ctx;
+    try {
+      ctx = new AC();
+    } catch {
+      return;
+    }
+    this.ctx = ctx;
 
     this.master = ctx.createGain();
     this.master.gain.value = this._muted ? 0 : AUDIO.masterVolume * this._masterVolume;
@@ -166,17 +106,19 @@ export class AudioManager {
     this.sfxGain.gain.value = AUDIO.sfxVolume * this._sfxVolume;
     this.sfxGain.connect(this.master);
 
+    this.gameplaySfxGain = ctx.createGain();
+    this.gameplaySfxGain.gain.value = this._gameplaySfxPaused ? 0 : 1;
+    this.gameplaySfxGain.connect(this.sfxGain);
+
+    this.uiSfxGain = ctx.createGain();
+    this.uiSfxGain.gain.value = 1;
+    this.uiSfxGain.connect(this.sfxGain);
+
     this.musicGain = ctx.createGain();
     this.musicGain.gain.value = this._musicEnabled
       ? AUDIO.musicVolume * this._musicVolume : 0;
     this.musicGain.connect(this.master);
-
-    // Soften the square lead — mellow, not grating.
-    this.musicFilter = ctx.createBiquadFilter();
-    this.musicFilter.type = 'lowpass';
-    this.musicFilter.frequency.value = 5200;
-    this.musicFilter.Q.value = 0.4;
-    this.musicFilter.connect(this.musicGain);
+    this._initBgmMedia(ctx);
 
     // Shared white-noise buffer for every noise-based voice.
     const len = Math.floor(ctx.sampleRate * 1.2);
@@ -193,19 +135,117 @@ export class AudioManager {
     if (this._timer && typeof this._timer.unref === 'function') this._timer.unref();
 
     if (this._engineWanted) this.startEngine();
-    const pending = this._themeName;
-    this._themeName = null;
-    if (pending) this.playMusic(pending);
+    this._syncBgm();
   }
 
   resume() {
+    const retryBgm = () => {
+      this._initBgmMedia(this.ctx);
+      if (this._bgmPlayPending || this._bgmElement?.paused) this._tryPlayBgm();
+    };
     if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume().catch(() => {});
+      this.ctx.resume().then(retryBgm).catch(() => {});
+    } else {
+      retryBgm();
+    }
+  }
+
+  _ensureBgmMedia() {
+    if (this._bgmElement) return this._bgmElement;
+    try {
+      const media = this._createMediaElement();
+      if (!media) return null;
+      media.loop = true;
+      media.preload = 'auto';
+      media.playsInline = true;
+      this._bgmElement = media;
+      this._applyBgmVolume();
+      return media;
+    } catch {
+      return null;
+    }
+  }
+
+  _initBgmMedia(ctx) {
+    const media = this._ensureBgmMedia();
+    if (!media || this._bgmNode || !ctx || ctx.state !== 'running'
+      || typeof ctx.createMediaElementSource !== 'function') return;
+    try {
+      const node = ctx.createMediaElementSource(media);
+      node.connect(this.musicGain);
+      this._bgmNode = node;
+      media.volume = 1;
+    } catch {
+      this._bgmNode = null;
+      this._applyBgmVolume();
+    }
+  }
+
+  _applyBgmVolume() {
+    const media = this._bgmElement;
+    if (!media) return;
+    if (this._bgmNode) {
+      media.volume = 1;
+      return;
+    }
+    media.volume = (!this._muted && this._musicEnabled)
+      ? clamp(AUDIO.masterVolume * this._masterVolume
+        * AUDIO.musicVolume * this._musicVolume, 0, 1)
+      : 0;
+  }
+
+  _desiredBgmTrack() {
+    if (this._musicContext === 'menu') return resolveMenuBgm(this._menuBgm);
+    if (this._musicContext === 'race') {
+      return resolveRaceBgm(this._raceBgm, this._raceTrackId);
+    }
+    return null;
+  }
+
+  _syncBgm({ restart = false } = {}) {
+    const track = this._desiredBgmTrack();
+    const media = this._ensureBgmMedia();
+    if (!track || !media) return;
+
+    const sameTrack = this._bgmId === track.id;
+    if (!sameTrack) {
+      this._bgmId = track.id;
+      media.src = track.url;
+      if (typeof media.load === 'function') media.load();
+    }
+    if (!sameTrack || restart) {
+      try { media.currentTime = 0; } catch {}
+    }
+    this._applyBgmRate();
+    this._tryPlayBgm();
+  }
+
+  _applyBgmRate() {
+    if (!this._bgmElement) return;
+    this._bgmElement.playbackRate = this._finalLap ? FINAL_LAP_RATE : 1;
+  }
+
+  _tryPlayBgm() {
+    const media = this._bgmElement;
+    if (!media || !media.src || typeof media.play !== 'function') return;
+    this._bgmPlayPending = true;
+    let attempt;
+    try {
+      attempt = media.play();
+    } catch {
+      return;
+    }
+    if (attempt && typeof attempt.then === 'function') {
+      attempt.then(() => { this._bgmPlayPending = false; })
+        .catch(() => { this._bgmPlayPending = true; });
+    } else {
+      this._bgmPlayPending = false;
     }
   }
 
   setMuted(m) {
     this._muted = !!m;
+    this._applyBgmVolume();
     if (!this.ctx) return;
     this._ramp(this.master.gain,
       this._muted ? 0 : AUDIO.masterVolume * this._masterVolume, 0.06);
@@ -219,10 +259,12 @@ export class AudioManager {
   /**
    * Apply normalized user settings. Safe before init(); the stored intent is
    * used when the WebAudio graph is eventually created.
-   * @param {{master?:number,music?:number,sfx?:number,
-   *          musicEnabled?:boolean,muted?:boolean}} settings
+   * @param {{master?:number,music?:number,sfx?:number,menuBgm?:string,
+   *          raceBgm?:string,musicEnabled?:boolean,muted?:boolean}} settings
    */
   applySettings(settings = {}) {
+    const previousMenuBgm = this._menuBgm;
+    const previousRaceBgm = this._raceBgm;
     if (Number.isFinite(Number(settings.master))) {
       this._masterVolume = clamp(Number(settings.master), 0, 1);
     }
@@ -237,12 +279,25 @@ export class AudioManager {
     }
     if (typeof settings.muted === 'boolean') this._muted = settings.muted;
 
-    if (!this.ctx) return;
-    this._ramp(this.master.gain,
-      this._muted ? 0 : AUDIO.masterVolume * this._masterVolume, 0.06);
-    this._ramp(this.musicGain.gain,
-      this._musicEnabled ? AUDIO.musicVolume * this._musicVolume : 0, 0.06);
-    this._ramp(this.sfxGain.gain, AUDIO.sfxVolume * this._sfxVolume, 0.06);
+    if (Object.hasOwn(settings, 'menuBgm')) {
+      this._menuBgm = sanitizeMenuBgm(settings.menuBgm);
+    }
+    if (Object.hasOwn(settings, 'raceBgm')) {
+      this._raceBgm = sanitizeRaceBgm(settings.raceBgm);
+    }
+
+    const bgmChanged = previousMenuBgm !== this._menuBgm
+      || previousRaceBgm !== this._raceBgm;
+
+    if (this.ctx) {
+      this._ramp(this.master.gain,
+        this._muted ? 0 : AUDIO.masterVolume * this._masterVolume, 0.06);
+      this._ramp(this.musicGain.gain,
+        this._musicEnabled ? AUDIO.musicVolume * this._musicVolume : 0, 0.06);
+      this._ramp(this.sfxGain.gain, AUDIO.sfxVolume * this._sfxVolume, 0.06);
+    }
+    this._applyBgmVolume();
+    if (bgmChanged) this._syncBgm();
   }
 
   // -------------------------------------------------------------------------
@@ -252,7 +307,7 @@ export class AudioManager {
   _buildEngine(ctx) {
     this._engineGain = ctx.createGain();
     this._engineGain.gain.value = 0;
-    this._engineGain.connect(this.sfxGain);
+    this._engineGain.connect(this.gameplaySfxGain);
 
     this._engineFilter = ctx.createBiquadFilter();
     this._engineFilter.type = 'lowpass';
@@ -292,7 +347,7 @@ export class AudioManager {
   _buildSkid(ctx) {
     this._skidGain = ctx.createGain();
     this._skidGain.gain.value = 0;
-    this._skidGain.connect(this.sfxGain);
+    this._skidGain.connect(this.gameplaySfxGain);
     this._skidFilter = ctx.createBiquadFilter();
     this._skidFilter.type = 'bandpass';
     this._skidFilter.frequency.value = 850;
@@ -309,7 +364,7 @@ export class AudioManager {
   _buildAiLayer(ctx) {
     this._aiGain = ctx.createGain();
     this._aiGain.gain.value = 0;
-    this._aiGain.connect(this.sfxGain);
+    this._aiGain.connect(this.gameplaySfxGain);
     this._aiFilter = ctx.createBiquadFilter();
     this._aiFilter.type = 'lowpass';
     this._aiFilter.frequency.value = 240;
@@ -542,38 +597,39 @@ export class AudioManager {
   }
 
   // -------------------------------------------------------------------------
-  // Music sequencer
+  // Background music + pause routing
   // -------------------------------------------------------------------------
 
-  /** @param {'menu'|'race'|'results'|null} name */
-  playMusic(name) {
-    if (!this.ctx) { this._themeName = name; return; }
-    if (name === this._themeName) return;
-    this._themeName = name;
-    this._musicStep = 0;
-    this._nextStepTime = this.ctx.currentTime + 0.06;
+  playMenuMusic() {
+    this._musicContext = 'menu';
+    this._raceTrackId = null;
+    this.setFinalLap(false);
+    this._syncBgm();
   }
 
-  setFinalLap(b) { this._finalLap = !!b; }
+  playRaceMusic(trackId, { restart = false } = {}) {
+    this._musicContext = 'race';
+    this._raceTrackId = trackId;
+    this.setFinalLap(false);
+    this._syncBgm({ restart });
+  }
 
-  /** Lookahead scheduler: services the music loop and the star jingle. */
+  setFinalLap(b) {
+    this._finalLap = !!b;
+    this._applyBgmRate();
+  }
+
+  setGameplaySfxPaused(paused) {
+    this._gameplaySfxPaused = !!paused;
+    if (!this.ctx || !this.gameplaySfxGain) return;
+    this._ramp(this.gameplaySfxGain.gain, this._gameplaySfxPaused ? 0 : 1, 0.04);
+  }
+
+  /** Lookahead scheduler for the star invincibility jingle. */
   _tick() {
     const ctx = this.ctx;
     if (!ctx) return;
     const now = ctx.currentTime;
-
-    const theme = this._themeName ? THEMES[this._themeName] : null;
-    if (theme) {
-      const rate = (this._themeName === 'race' && this._finalLap) ? FINAL_LAP_RATE : 1;
-      const stepDur = 60 / theme.bpm / 4 / rate;
-      // Resync after a long stall (tab hidden) instead of burst-scheduling.
-      if (this._nextStepTime < now - 0.25) this._nextStepTime = now + 0.02;
-      while (this._nextStepTime < now + LOOKAHEAD) {
-        this._scheduleMusicStep(theme, this._musicStep, this._nextStepTime, stepDur);
-        this._musicStep++;
-        this._nextStepTime += stepDur;
-      }
-    }
 
     if (this._starOn) {
       if (this._starNext < now - 0.2) this._starNext = now + 0.02;
@@ -584,53 +640,6 @@ export class AudioManager {
         this._starNext += STAR_STEP_DUR;
       }
     }
-  }
-
-  _scheduleMusicStep(theme, step, t, stepDur) {
-    const octaveUp = (this._themeName === 'race' && this._finalLap) ? 12 : 0;
-
-    const bassEntry = theme.bass[step % theme.bass.length];
-    if (bassEntry != null) {
-      const m = Array.isArray(bassEntry) ? bassEntry[0] : bassEntry;
-      const len = Array.isArray(bassEntry) ? bassEntry[1] : 1;
-      this._tone(t, midiHz(m), stepDur * len * 0.92, 'triangle',
-        theme.bassGain, { dest: this.musicGain });
-    }
-
-    const leadEntry = theme.lead[step % theme.lead.length];
-    if (leadEntry != null) {
-      const m = (Array.isArray(leadEntry) ? leadEntry[0] : leadEntry) + octaveUp;
-      const len = Array.isArray(leadEntry) ? leadEntry[1] : 1;
-      this._tone(t, midiHz(m), stepDur * len * 0.95, theme.leadWave,
-        theme.leadGain, { dest: this.musicFilter });
-    }
-
-    const hatVel = theme.hat[step % theme.hat.length];
-    if (hatVel) this._hat(t, hatVel * theme.hatGain);
-
-    const kickVel = theme.kick[step % theme.kick.length];
-    if (kickVel) this._kick(t, kickVel * theme.kickGain);
-  }
-
-  _hat(t, vel) {
-    this._noise(t, 0.035, 0.11 * vel,
-      { type: 'highpass', freq: 6500, dest: this.musicGain });
-  }
-
-  _kick(t, vel) {
-    const ctx = this.ctx;
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(150, t);
-    osc.frequency.exponentialRampToValueAtTime(44, t + 0.1);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.5 * vel, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
-    osc.connect(g);
-    g.connect(this.musicGain);
-    osc.start(t);
-    osc.stop(t + 0.15);
-    osc.onended = () => g.disconnect();
   }
 
   // -------------------------------------------------------------------------
@@ -663,7 +672,7 @@ export class AudioManager {
     g.gain.linearRampToValueAtTime(peak, t + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     osc.connect(g);
-    g.connect((opts && opts.dest) || this.sfxGain);
+    g.connect((opts && opts.dest) || this.gameplaySfxGain || this.sfxGain);
     osc.start(t);
     osc.stop(t + dur + 0.05);
     osc.onended = () => { g.disconnect(); if (lfoGain) lfoGain.disconnect(); };
@@ -690,7 +699,7 @@ export class AudioManager {
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     src.connect(filter);
     filter.connect(g);
-    g.connect((opts && opts.dest) || this.sfxGain);
+    g.connect((opts && opts.dest) || this.gameplaySfxGain || this.sfxGain);
     src.start(t);
     src.stop(t + dur + 0.05);
     src.onended = () => g.disconnect();
@@ -858,14 +867,15 @@ export class AudioManager {
   ui(kind) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
+    const opts = { dest: this.uiSfxGain || this.sfxGain };
     if (kind === 'confirm') {
-      this._tone(t, 660, 0.06, 'square', 0.09);
-      this._tone(t + 0.06, 880, 0.09, 'square', 0.09);
+      this._tone(t, 660, 0.06, 'square', 0.09, opts);
+      this._tone(t + 0.06, 880, 0.09, 'square', 0.09, opts);
     } else if (kind === 'back') {
-      this._tone(t, 520, 0.06, 'square', 0.08);
-      this._tone(t + 0.06, 390, 0.09, 'square', 0.08);
+      this._tone(t, 520, 0.06, 'square', 0.08, opts);
+      this._tone(t + 0.06, 390, 0.09, 'square', 0.08, opts);
     } else {
-      this._tone(t, 600, 0.045, 'square', 0.07);
+      this._tone(t, 600, 0.045, 'square', 0.07, opts);
     }
   }
 

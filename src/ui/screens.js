@@ -95,6 +95,7 @@ export class Screens {
     this._builtCharacters = null;
     this._builtTracks = null;
     this._settings = {};
+    this._settingDefs = new Map(UI_COPY.settings.rows.map((def) => [def.key, def]));
     this._helpTab = 'controls';
     this._toastTimer = null;
 
@@ -185,10 +186,14 @@ export class Screens {
       row.dataset.value = def.key;
       row.dataset.kind = def.kind;
       row.setAttribute('tabindex', '-1');
-      row.setAttribute('role', def.kind === 'toggle' ? 'switch' : 'slider');
+      row.setAttribute('role', def.kind === 'toggle'
+        ? 'switch' : def.kind === 'choice' ? 'spinbutton' : 'slider');
       if (def.kind === 'volume') {
         row.setAttribute('aria-valuemin', '0');
         row.setAttribute('aria-valuemax', '100');
+      } else if (def.kind === 'choice') {
+        row.setAttribute('aria-valuemin', '0');
+        row.setAttribute('aria-valuemax', String(Math.max(0, def.options.length - 1)));
       }
       const copy = el('span', 'setting-copy', row);
       el('span', 'setting-label', copy, def.label);
@@ -197,11 +202,25 @@ export class Screens {
       if (def.kind === 'volume') {
         const meter = el('span', 'setting-meter', control);
         el('span', 'setting-meter-fill', meter);
-      } else {
+        el('span', 'setting-value', control);
+      } else if (def.kind === 'toggle') {
         const toggle = el('span', 'setting-switch', control);
         el('span', 'setting-switch-knob', toggle);
+        el('span', 'setting-value', control);
+      } else {
+        control.classList.add('setting-choice');
+        const previous = el('button', 'setting-choice-arrow setting-choice-previous', control, '‹');
+        previous.type = 'button';
+        previous.tabIndex = -1;
+        previous.dataset.direction = '-1';
+        previous.setAttribute('aria-label', `Previous ${def.label}`);
+        el('span', 'setting-value', control);
+        const next = el('button', 'setting-choice-arrow setting-choice-next', control, '›');
+        next.type = 'button';
+        next.tabIndex = -1;
+        next.dataset.direction = '1';
+        next.setAttribute('aria-label', `Next ${def.label}`);
       }
-      el('span', 'setting-value', control);
       this._wireSettingRow(row);
     }
 
@@ -459,7 +478,7 @@ export class Screens {
         row.classList.toggle('is-on', on);
         row.setAttribute('aria-checked', String(on));
         if (valueNode) valueNode.textContent = on ? 'ON' : 'OFF';
-      } else {
+      } else if (kind === 'volume') {
         const value = clampUnit(this._settings[key]);
         const pct = Math.round(value * 100);
         const fill = row.querySelector('.setting-meter-fill');
@@ -467,13 +486,26 @@ export class Screens {
         if (valueNode) valueNode.textContent = `${pct}%`;
         row.setAttribute('aria-valuenow', String(pct));
         row.setAttribute('aria-valuetext', `${pct} percent`);
+      } else {
+        const options = this._settingDefs.get(key)?.options || [];
+        let index = options.findIndex((option) => option.value === this._settings[key]);
+        if (index < 0) index = 0;
+        const option = options[index];
+        if (valueNode) valueNode.textContent = option?.label || '';
+        row.setAttribute('aria-valuenow', String(index));
+        row.setAttribute('aria-valuetext', option?.label || '');
       }
-      row.classList.toggle('is-inactive', key === 'music' && !this._settings.musicEnabled);
+      const musicSetting = key === 'music' || key === 'menuBgm' || key === 'raceBgm';
+      row.classList.toggle('is-inactive', musicSetting && !this._settings.musicEnabled);
     }
   }
 
   _changeSetting(key, value) {
-    const next = key === 'muted' || key === 'musicEnabled' ? !!value : clampUnit(value);
+    const kind = this._settingDefs.get(key)?.kind;
+    let next;
+    if (kind === 'toggle') next = !!value;
+    else if (kind === 'choice') next = value;
+    else next = clampUnit(value);
     if (this._settings[key] === next) return;
     this._settings[key] = next;
     this._syncSettings();
@@ -488,10 +520,23 @@ export class Screens {
     const key = node.dataset.value;
     if (node.dataset.kind === 'toggle') {
       this._changeSetting(key, dir > 0);
+    } else if (node.dataset.kind === 'choice') {
+      this._cycleChoice(node, dir);
     } else {
       const value = clampUnit(this._settings[key]) + Math.sign(dir) * SETTING_STEP;
       this._changeSetting(key, Math.round(clampUnit(value) / SETTING_STEP) * SETTING_STEP);
     }
+    return true;
+  }
+
+  _cycleChoice(node, dir) {
+    const key = node.dataset.value;
+    const options = this._settingDefs.get(key)?.options || [];
+    if (options.length <= 1) return false;
+    let index = options.findIndex((option) => option.value === this._settings[key]);
+    if (index < 0) index = 0;
+    index = (index + Math.sign(dir) + options.length) % options.length;
+    this._changeSetting(key, options[index].value);
     return true;
   }
 
@@ -681,6 +726,11 @@ export class Screens {
 
       if (node.dataset.kind === 'toggle') {
         this.confirm();
+        return;
+      }
+      if (node.dataset.kind === 'choice') {
+        const arrow = ev.target?.closest?.('.setting-choice-arrow');
+        this._cycleChoice(node, Number(arrow?.dataset.direction) || 1);
         return;
       }
       const meter = ev.target?.closest?.('.setting-meter');

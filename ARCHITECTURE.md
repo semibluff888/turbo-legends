@@ -235,16 +235,16 @@ sans (system stack), thick outlines, gradients, no external assets. Audio
 settings persist locally through ui/settings-store.js.
 
 ### src/audio/audio.js
-WebAudio, all synthesized (no files): engine loop per-kart-ish (player full
-detail: 2 detuned saws + noise, pitch from speedRatio + boost; AI karts one
-shared distant layer scaled by proximity), skid loop while drifting, event
-sfx map (boost woosh, item get chime, roulette ticks, shell fire, hits, spin,
-squash horn, star jingle loop, lightning, countdown beeps + GO, finish
-fanfare, UI move/confirm), lightweight music: chiptune-ish pattern sequencer
-(two 16-step channels + kick/hat) with menu theme, race theme, final-lap
-speedup, results theme. Master/music/sfx gains use AUDIO constants as tuned
-100% baselines; created lazily on first user gesture. `applySettings()` handles
-normalized channel levels, music enable and mute; mute toggle key M.
+WebAudio synthesizes the engine, skid, AI layer, event SFX, star jingle,
+countdown and UI feedback. A single looping HTML media element streams local
+MP3 background music immediately, then routes through the WebAudio music gain
+once the browser unlocks it, with menu/per-track selection and final-lap
+speedup. Gameplay and UI SFX use separate child buses so pause menus can
+silence the race while retaining navigation feedback.
+Master/music/sfx gains use AUDIO constants as tuned 100% baselines and are
+initialized at boot and resumed on the first trusted gesture when required.
+`applySettings()` handles normalized
+channel levels, BGM selection, music enable and mute; mute toggle key M.
 
 ### src/input/input.js
 ```js

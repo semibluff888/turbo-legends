@@ -278,7 +278,7 @@ export const CAMERA = {
 
 export const AUDIO = {
   masterVolume: 0.75,
-  musicVolume: 0.38,
+  musicVolume: 1.0,
   sfxVolume: 0.85,
 };
 

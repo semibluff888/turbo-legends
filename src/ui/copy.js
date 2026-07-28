@@ -1,4 +1,5 @@
 import { ITEM } from '../core/constants.js';
+import { MENU_BGM_CHOICES, RACE_BGM_CHOICES } from '../audio/bgm.js';
 
 // English-only UI copy for the current release. Keeping presentation strings
 // together makes a later localization pass mechanical without adding locale
@@ -54,8 +55,10 @@ export const UI_COPY = Object.freeze({
     rows: [
       { key: 'muted', kind: 'toggle', label: 'MUTE ALL', desc: 'Silence every audio channel' },
       { key: 'master', kind: 'volume', label: 'MASTER VOLUME', desc: 'Overall game volume' },
-      { key: 'musicEnabled', kind: 'toggle', label: 'BACKGROUND MUSIC', desc: 'Enable the chiptune soundtrack' },
+      { key: 'musicEnabled', kind: 'toggle', label: 'BACKGROUND MUSIC', desc: 'Enable the soundtrack' },
       { key: 'music', kind: 'volume', label: 'MUSIC VOLUME', desc: 'Soundtrack level' },
+      { key: 'menuBgm', kind: 'choice', label: 'MENU BGM', desc: 'Music used across the main menus', options: MENU_BGM_CHOICES },
+      { key: 'raceBgm', kind: 'choice', label: 'RACE BGM', desc: 'Default follows the selected track', options: RACE_BGM_CHOICES },
       { key: 'sfx', kind: 'volume', label: 'SFX VOLUME', desc: 'Engines, items and interface sounds' },
     ],
     reset: 'RESET TO DEFAULTS',

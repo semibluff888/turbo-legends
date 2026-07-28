@@ -31,7 +31,6 @@ const camera = new THREE.PerspectiveCamera(
 const input = new InputManager(window);
 const audio = new AudioManager();
 let gameSettings = loadSettings();
-let audioInited = false;
 audio.applySettings(gameSettings);
 
 const hud = new Hud(document.getElementById('hud'), document.getElementById('minimap'));
@@ -110,11 +109,10 @@ const screens = new Screens({
   onClosePanel() { closePanel(); },
   onResume() { setPaused(false); },
   onRestart() {
-    setPaused(false);
     startRace();
   },
   onQuit() {
-    setPaused(false);
+    paused = false;
     endRace();
     goToTitle();
   },
@@ -130,13 +128,13 @@ function goToTitle() {
   panelReturn = 'title';
   screens.showTitle();
   hud.hide();
-  audio.playMusic('menu');
+  audio.setGameplaySfxPaused(true);
+  audio.playMenuMusic();
   buildAttract();
 }
 
 function ensureAudio() {
-  if (!audioInited) {
-    audioInited = true;
+  if (!audio.ctx) {
     audio.init();
     audio.applySettings(gameSettings);
   } else {
@@ -241,7 +239,8 @@ function startRace() {
   paused = false;
   screens.hideAll();
   hud.showRace(director);
-  audio.playMusic('race');
+  audio.setGameplaySfxPaused(false);
+  audio.playRaceMusic(def.id, { restart: true });
   audio.setFinalLap(false);
   audio.startEngine();
   resetControls(playerControls);
@@ -258,6 +257,7 @@ function endRace() {
 function setPaused(p) {
   if (!race || race.director.state === RACE_STATE.RESULTS) return;
   paused = p;
+  audio.setGameplaySfxPaused(p);
   if (p) {
     screens.showPause();
     audio.ui('back');
@@ -386,7 +386,7 @@ function updateRaceFrame(dt) {
     mode = 'results';
     hud.hide(); // the results panel owns the screen now
     screens.showResults(director.standings, player, race.track.name);
-    audio.playMusic('results');
+    audio.setFinalLap(false);
   }
 }
 
@@ -441,8 +441,8 @@ function frame(now) {
 
   input.update();
 
-  // WebAudio requires a user gesture; init lazily on the first press.
-  if (!audioInited && input.anyKey) ensureAudio();
+  // Fallback retry for gamepad/touch inputs that bypass the native listeners.
+  if (input.anyKey) ensureAudio();
   if (input.muteToggle) {
     ensureAudio();
     gameSettings = saveSettings({ ...gameSettings, muted: !gameSettings.muted });
@@ -514,7 +514,14 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden && mode === 'race' && !paused) setPaused(true);
 });
 
+// Attempt autoplay immediately, then retry directly inside trusted input
+// events so browsers can unlock a suspended AudioContext on the first gesture.
+window.addEventListener('pointerdown', ensureAudio, { capture: true });
+window.addEventListener('touchstart', ensureAudio, { capture: true, passive: true });
+window.addEventListener('keydown', ensureAudio, { capture: true });
+
 goToTitle();
+ensureAudio();
 
 // Dev hook: ?autostart=1&track=harbor-loop&char=nova&diff=hard&seed=42&t=12
 // jumps straight into a race (and optionally fast-forwards t seconds of sim).

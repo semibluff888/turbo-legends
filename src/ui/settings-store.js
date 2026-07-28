@@ -1,3 +1,10 @@
+import {
+  DEFAULT_MENU_BGM,
+  DEFAULT_RACE_BGM,
+  sanitizeMenuBgm,
+  sanitizeRaceBgm,
+} from '../audio/bgm.js';
+
 export const SETTINGS_STORAGE_KEY = 'turbo-kart.settings.v1';
 
 export const DEFAULT_SETTINGS = Object.freeze({
@@ -6,6 +13,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   musicEnabled: true,
   music: 1,
   sfx: 1,
+  menuBgm: DEFAULT_MENU_BGM,
+  raceBgm: DEFAULT_RACE_BGM,
 });
 
 function clampUnit(value, fallback) {
@@ -23,6 +32,8 @@ export function sanitizeSettings(value) {
       ? source.musicEnabled : DEFAULT_SETTINGS.musicEnabled,
     music: clampUnit(source.music, DEFAULT_SETTINGS.music),
     sfx: clampUnit(source.sfx, DEFAULT_SETTINGS.sfx),
+    menuBgm: sanitizeMenuBgm(source.menuBgm),
+    raceBgm: sanitizeRaceBgm(source.raceBgm),
   };
 }
 
