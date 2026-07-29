@@ -1,299 +1,394 @@
-# Turbo Legends — Architecture & Frozen Contracts
+# Turbo Legends — Architecture & Contracts
 
-A Mario Kart-style 3D kart racer. Browser-only, no build step: ES modules +
-vendored Three.js (`vendor/three.module.js`, import-mapped to `three`).
-`node server.mjs` serves the folder; `node --test` runs headless sim tests
-(bare `node --test tests/` breaks on Node ≥ 24 Windows — use default discovery).
+Turbo Legends has two race modes sharing one presentation stack:
 
-**Prime directive: simulation and presentation never mix.**
-Everything under `src/core`, `src/track`, `src/game` is pure JS (no THREE, no DOM)
-and must run under Node. Everything under `src/render`, `src/ui`, `src/audio`,
-`src/input` is presentation and may touch THREE/DOM/WebAudio.
+```text
+Single-player browser                     Online room
+─────────────────────                     ───────────
+LocalRaceSession                          OnlineRaceSession
+        │                                         │ inputs / snapshots
+RaceDirector adapter                      native browser WebSocket
+        │                                         │ /ws
+RaceSimulation                            Node RoomManager
+                                                  │
+                                          RaceSimulation
+```
 
-## Conventions (frozen)
+The browser has no frontend build step. `server.mjs` serves the vendored browser
+assets and hosts the authoritative WebSocket service in the same Node process.
 
-- Coordinates: XZ ground plane, +Y up. Yaw convention: `yaw = atan2(dx, dz)`,
-  so `forward = (sin(yaw), 0, cos(yaw))`, `right = (cos(yaw), 0, -sin(yaw))`.
-- Fixed timestep `FIXED_DT = 1/120` s; render interpolation is NOT used —
-  120 Hz sim with a frame-clamped accumulator is smooth enough.
-- All randomness through `Rng` (src/core/rng.js). Never `Math.random()` in sim code.
-- All tuning through `src/core/constants.js`. No magic numbers in systems.
-- Track space: `s` = arc length along spline (wraps at `track.length`),
-  `lateral` = signed offset, positive = right of travel direction.
-- Ranking: `kart.progress = (lap-1 adjusted) monotonic meters` — see race.js.
-- Per-step gameplay events: `kart.emit(type, data)` → consumed by audio/VFX,
-  cleared once per rendered frame by the main loop (NOT by systems).
+The prime directive remains: simulation and presentation do not mix.
+`src/core`, `src/track`, and `src/game` are pure JavaScript with no DOM or
+Three.js dependency. Rendering, UI, audio, and input consume Kart-shaped state
+but do not decide authoritative physics, items, laps, ranks, or results.
 
-## Module map & owners
+## Runtime boundaries
 
-| Path | Role | May import |
+- `server.mjs` is the production/development entry point. It combines the HTTP
+  static server, `GET /healthz`, `/ws`, the room manager, and the 60 Hz room
+  scheduler.
+- Only `index.html`, `src/`, `vendor/`, and `sound/` are publicly served.
+  `server/`, tests, repository metadata, and design documents are not browser
+  assets.
+- `server/` owns process-memory rooms, WebSocket connections, authoritative
+  race scheduling, snapshots, event delivery, and cleanup.
+- `src/net/protocol.js` is browser-safe and imported by both client and server;
+  it is the canonical source for protocol v1 names and validation.
+- Rooms are local to one Node process. There is no database, durable result
+  store, account system, or cross-process room migration.
+
+Run with Node 18 or newer:
+
+```bash
+npm install
+npm start
+```
+
+Configuration:
+
+| Variable | Default | Meaning |
 |---|---|---|
-| src/core/constants.js | tuning, enums | (nothing) |
-| src/core/mathx.js | pure math helpers | (nothing) |
-| src/core/rng.js | seeded RNG | (nothing) |
-| src/track/spline.js | ClosedSpline | mathx |
-| src/track/track.js | Track (width/surface/pads/boxes/grid) | spline, constants, mathx |
-| src/track/tracks.js | 3 track definitions (data) | (nothing) |
-| src/game/kart.js | Kart state + controls shape | constants, mathx |
-| src/game/characters.js | roster (data) | constants |
-| src/game/physics.js | stepKartPhysics(kart, track, dt) + kart-kart collisions | constants, mathx |
-| src/game/ai.js | AiDriver: fills kart.controls | constants, mathx, rng |
-| src/game/items.js | ItemSystem: roulette, projectiles, hazards | constants, mathx, rng |
-| src/game/race.js | RaceDirector: countdown/laps/rank/finish + owns systems above | everything in game/track/core |
-| src/render/* | THREE scene, track mesh, kart meshes, particles, camera | THREE + read-only game state |
-| src/ui/* | HUD, menus, results (DOM) | read-only game state |
-| src/audio/* | WebAudio synth engine + sfx | read-only game state + events |
-| src/input/* | keyboard/gamepad/touch → controls | (nothing from game) |
-| src/main.js | boot, screens, fixed-step loop, glue | everything |
+| `HOST` | `127.0.0.1` | HTTP/WebSocket listen address |
+| `PORT` | `5173` | Shared HTTP/WebSocket port |
+| `ALLOWED_ORIGINS` | empty | Comma-separated extra origins accepted by `/ws`; same-origin is always accepted |
 
-## Frozen APIs (already implemented — DO NOT change signatures)
+Public deployments must provide TLS and forward WebSocket Upgrade requests for
+`/ws`. Browser clients automatically choose `ws://` or `wss://` from the page
+URL.
 
-### ClosedSpline (src/track/spline.js)
-- `new ClosedSpline(points, {spacing})` — closed centripetal Catmull-Rom,
-  resampled uniformly; `length`, `count`, `spacing` properties.
-- `sampleAt(s, out?)` → `{x,y,z,tx,ty,tz,rx,rz,heading,curvature,s}` (wraps).
-- `positionAt(s, out?)` → `{x,y,z}`.
-- `project(x, z, out?, hintS?)` → `{s,lateral,dist,index,cx,cz}`.
-- `heightAt(s)` → number.
+## Simulation conventions
 
-### Track (src/track/track.js)
-- `new Track(def)` — def from tracks.js. Props: `id,name,subtitle,laps,theme,
-  spline,length,boostPads,itemBoxes,baseHalfWidth`.
-- `sampleWorld(x, z, hintS?, out?)` → `{s,lateral,halfWidth,surface,offTrackDepth,
-  height,heading,curvature,cx,cz}`; `surface` ∈ SURFACE.
-- `toWorld(s, lateral, out?)` → `{x,y,z,heading}`.
-- `halfWidthAt(s)`, `isOnBoostPad(s, lateral)`, `racingLineLateral(s)`,
-  `respawnPoint(s, out?)`, `gridSlot(i, total, rowSpacing, colOffset, out?)`.
-- Item boxes: `box ∈ {id,s,lateral,active,respawnAt,x,y,z}`;
-  `updateItemBoxes(now)`, `consumeItemBox(box, now)`, `resetItemBoxes()`.
+- Coordinates use the XZ ground plane with +Y up. Yaw is
+  `atan2(dx, dz)`, so forward is `(sin(yaw), 0, cos(yaw))` and right is
+  `(cos(yaw), 0, -sin(yaw))`.
+- Physics uses `FIXED_DT = 1/120` seconds.
+- Track space uses wrapped arc length `s` and signed `lateral`, positive to the
+  right of travel.
+- Race progress is the signed accumulated arc distance `_traveled`. Grid slots
+  begin slightly behind zero; a kart finishes when
+  `_traveled >= laps * track.length`.
+- Simulation code never calls `Math.random()`. All gameplay randomness comes
+  from `Rng` or a named stream derived by `deriveRng(seed, namespace)`.
+- `Kart.isPlayer` is presentation-only. Controller ownership and AI pacing use
+  explicit roster/controller metadata.
+- Kart gameplay events are append-only during a simulation step. The browser
+  clears local events after presentation consumes them; the server numbers and
+  broadcasts online events before clearing them.
 
-### Kart (src/game/kart.js)
-State machine `kart.state` ∈ KART_STATE; controls shape from `makeControls()`.
-Key fields (all already defined — read the file):
-transform `x,y,z,yaw,vx,vy,vz,speed,airborne`; drift `drifting,driftDirection,
-driftCharge,driftTier,hopTimer`; boost `boostTimer,boostPower,boostSource,
-speedMul,draftCharge`; status `state,stateTimer,invulnTimer,starTimer,
-shrinkTimer,aiSpeedMul,startPenaltyTimer`; items `item,itemUses,rouletteTimer,
-rouletteFace`; track `s,lateral,surface,offTrackDepth,progress,lap,rank,
-finished,finishTime,lapTimes,bestLap,wrongWay`; visual-only `visualYawOffset,
-visualRoll,visualPitch,visualScale,wheelSpin`; stats `statSpeed,statAccel,
-statHandling,statWeight`.
-Methods: `applyBoost(power,duration,source)`, `spinOut(cause)`, `squash(cause)`,
-`cancelDrift()`, `giveItem(item)`, `consumeItemUse()`, `clearItem()`,
-`resetTo(x,y,z,yaw)`, `emit(type,data?)`, `clearEvents()`.
-Getters: `maxSpeed,forwardX,forwardZ,rightX,rightZ,invulnerable,incapacitated,
-speedRatio,itemInfo,driftTierInfo`.
+## Timing and authority
 
-## Contracts for modules TO BE implemented
+| Concern | Single-player | Online |
+|---|---|---|
+| Authority | Browser `RaceSimulation` | Node `RaceSimulation` |
+| Physics | 120 Hz fixed-step accumulator | Two 120 Hz steps per 60 Hz network tick |
+| Human input | Read locally each frame | Sent at up to 60 Hz with sequence numbers |
+| State delivery | Direct object reads | Full JSON snapshots at 20 Hz |
+| Events | Kart/ItemSystem queues | Numbered `race_events`, deduplicated client-side |
+| Pause | Stops local simulation | Local overlay; server continues and receives neutral controls |
 
-### Cross-module ownership pins (read carefully — prevents divergence)
-- **Bullet state**: items.js only *enters* the state (`kart.state = KART_STATE.BULLET`,
-  `stateTimer = BOOST.bulletDuration`). physics.js *drives* it: autopilot along the
-  centreline at `KART.maxSpeed * BOOST.bulletPower`, lateral → 0, invulnerable,
-  exits to NORMAL when stateTimer expires (small exit boost).
-- **useItem edges**: race.js does NOT edge-detect. ItemSystem.update reads
-  `kart.controls.useItem`, tracks rising edges internally, calls its own
-  `onUseItem`.
-- **Drafting**: physics.js exports `updateDrafting(karts, dt)`; race.js calls it
-  every step after collisions.
-- **Start penalty**: race.js detects jump starts / rocket starts during the
-  countdown and sets `kart.startPenaltyTimer` / applyBoost at GO. physics.js
-  forces throttle to 0 while `startPenaltyTimer > 0` and decrements it.
-- **Respawn**: physics.js triggers RESPAWNING when a kart is beyond
-  `BOUNDS.offroadExtent + 8` laterally (or falls), using `track.respawnPoint`.
-- **VFX queue**: ItemSystem pushes world-space one-shots to `this.vfx`
-  (`[{type:'explosion'|'shell_break'|'banana_gone', x,y,z}]`);
-  `drainVfx()` returns and clears it. main.js drains into Effects each frame.
-- **Roulette duration**: owned by items.js (~1.1 s), writes `kart.rouletteTimer`
-  (counts down to 0) and cycles `kart.rouletteFace` for the HUD.
-- **Autopilot**: `new RaceDirector(track, {autopilot: true})` gives the player
-  kart an AiDriver too (used by headless tests and the post-finish cruise).
-- **Lap counting**: race.js accumulates signed arc-length deltas
-  (`loopDelta(prevS, s, length)`) into a per-kart `_traveled` float;
-  `lap = floor(_traveled / length)`; finish when `_traveled >= laps * length`.
-  This makes back-and-forth over the line safe by construction.
-  `kart.progress = _traveled` drives ranking.
-- **Events consumed by presentation**: main.js calls `kart.clearEvents()` once
-  per rendered frame AFTER effects + audio have read them. Systems only push.
+`RoomManager` caps one wall-clock delta at 250 ms and performs at most eight
+catch-up network ticks per scheduler pass. This bounds spiral-of-death behavior.
+Each network tick applies the latest input twice at 1/120 second; a pending item
+press is true only on the first of those two steps.
 
-### src/game/physics.js
+`OnlineRaceSession` mirrors authoritative snapshots into Kart objects used by
+the existing renderer and HUD:
+
+- Remote karts blend from their displayed motion to the latest snapshot over
+  100 ms, using shortest-path yaw interpolation. Respawns and errors over four
+  metres snap immediately.
+- The local kart predicts only `stepKartPhysics`. On an acknowledged snapshot,
+  it restores the authoritative state, drops acknowledged commands, replays
+  unacknowledged 60 Hz inputs as two 120 Hz steps each, then smooths small
+  display corrections over 100 ms.
+- Collisions, item outcomes, ranks, lap state, results, projectiles, hazards,
+  and item-box activity are never client-authoritative.
+- Event IDs are remembered in a bounded 1,024-entry deduplication window.
+
+## Module map and ownership
+
+| Path | Responsibility |
+|---|---|
+| `src/core/constants.js` | Shared tuning and enums |
+| `src/core/mathx.js` | Pure math helpers |
+| `src/core/rng.js` | Seeded RNG plus named child-stream derivation |
+| `src/track/*` | Spline, Track projection/surfaces, and three authored track definitions |
+| `src/game/kart.js` | Complete Kart state and controls shape |
+| `src/game/physics.js` | Kart motion, drift, surfaces, status timers, collisions, drafting |
+| `src/game/items.js` | Item boxes, roulette, projectiles, hazards, and item VFX |
+| `src/game/ai.js` | `AiDriver`, which writes controls and AI speed pacing only |
+| `src/game/race-simulation.js` | Generic eight-kart authoritative race pipeline |
+| `src/game/race.js` | Backward-compatible single-player `RaceDirector` adapter |
+| `src/session/local-race-session.js` | Presentation-facing wrapper for local races |
+| `src/net/protocol.js` | Shared protocol v1 constants and client-message validation |
+| `src/net/online-client.js` | Browser transport, room commands, credentials, and reconnect loop |
+| `src/net/online-race-session.js` | Snapshot mirror, input sampling, prediction, and correction |
+| `server/room-manager.js` | Room lifecycle, scheduler, authoritative input and snapshot flow |
+| `server/websocket-game-server.js` | Upgrade/origin checks, connection limits, routing, and heartbeat |
+| `server/race-factory.js` | Builds a Track and `RaceSimulation` for an online room |
+| `src/render/*` | Three.js scene, track/kart visuals, particles, and camera |
+| `src/ui/*` | Menus, lobby, HUD, settings, and local/online results |
+| `src/audio/*` | WebAudio gameplay/UI SFX and local MP3 background music |
+| `src/input/*` | Keyboard, gamepad, and touch controls |
+| `src/main.js` | Browser boot, mode routing, session mounting, and presentation loop |
+| `server.mjs` | Combined HTTP/WebSocket process entry point |
+
+## Core race contracts
+
+### Track and Kart
+
+`Track` remains the only owner of spline projection, road widths, boost pads,
+item-box positions, grid slots, and respawn points. Key methods are
+`sampleWorld`, `toWorld`, `halfWidthAt`, `racingLineLateral`, `gridSlot`, and
+`respawnPoint`.
+
+`Kart` is the shared simulation/presentation state shape. In addition to motion,
+drift, status, item, lap, and rank fields, multiplayer supplies:
+
 ```js
-export function stepKartPhysics(kart, track, dt)   // one fixed step, one kart
-export function resolveKartCollisions(karts, dt)   // pairwise push-out + events
-export function updateDrafting(karts, dt)          // slipstream charge/boost
+kart.participantId
+kart.displayName
+kart.controllerKind // 'human' | 'ai' | 'takeover-ai'
 ```
-Responsibilities: throttle/brake/steer→speed & yaw; drift model (hop, charge
-via DRIFT_TIERS, release boost via kart.applyBoost); surfaces (offroad slow,
-boost pads via BOOST.padPower); soft wall at road edge + BOUNDS.offroadExtent
-(beyond that = wall bounce); gravity/airborne; state timers (spin/squash/
-respawn/invuln/star/shrink/startPenalty/boost decay via BOOST rates → writes
-kart.speedMul); track projection each step (use hintS = kart.s), writes
-kart.s/lateral/surface/offTrackDepth; wrong-way detection (kart.wrongWay);
-visual fields (visualYawOffset lean while drifting, visualScale squash,
-wheelSpin). Emits: 'land','drift_start','drift_tier',
-'drift_boost','offroad','wall_hit','collide'. Collisions: circle push-out with
-mass = statWeight, both karts emit 'collide' with impact speed.
 
-### src/game/ai.js
+Only the local browser mirror sets `isPlayer = true`. The authoritative server
+does not use it to choose controls or AI behavior.
+
+### Physics and items
+
 ```js
-export class AiDriver {
-  constructor(kart, track, rng, difficulty /* DIFFICULTY[key] */, personality /* 0..1 aggression */)
-  update(dt, world /* {karts, items, raceState, elapsed} */)  // writes kart.controls
+stepKartPhysics(kart, track, dt)
+resolveKartCollisions(karts, dt)
+updateDrafting(karts, dt)
+
+new ItemSystem(track, rng)
+items.update(dt, karts, raceTime)
+items.drainVfx()
+```
+
+`ItemSystem` owns rising-edge detection for `kart.controls.useItem`, roulette
+outcomes, item-box state, projectiles, hazards, and item VFX. Physics owns kart
+motion and status progression, including Bullet movement after the item system
+enters the Bullet state.
+
+### RaceSimulation
+
+```js
+new RaceSimulation(track, {
+  roster,
+  difficulty,
+  laps,
+  seed,
+  mode: 'online',
+});
+
+simulation.update(dt, controlsByKartIndex);
+simulation.setController(kartIndex, controllerKind);
+```
+
+The roster must contain exactly eight unique characters. Each entry contains:
+
+```js
+{
+  participantId,
+  displayName,
+  characterId,
+  controllerKind, // 'human' | 'ai' | 'takeover-ai'
 }
 ```
-Pure-pursuit on racingLineLateral with per-driver lateral bias + noise;
-lookahead scales with speed; brake for curvature ahead; drift on sustained
-corners (respect KART.driftMinSpeed); use items with position-aware logic
-(shells forward at targets, banana drops before corners, mushroom on straights,
-star/lightning when behind, defensive hold vs red shells); rubber-band via
-kart.aiSpeedMul (DIFFICULTY.rubberBand, clamp ~[0.88, 1.15]); avoid hazards
-listed in world.items.hazards (see items.js) by steering offset; small
-mistake rate scaled by (1 - aiSkill). Never touches physics directly —
-controls only, plus aiSpeedMul.
 
-### src/game/items.js
+Roster array order is authoritative kart/grid order and must remain stable after
+it is announced to clients. `shuffleRosterForGrid(roster, seed)` returns a
+copied, deterministically shuffled roster before kart indices are assigned.
+
+Public race data includes `track`, `roster`, `karts`, `items`, `standings`,
+`controllerKinds`, `state`, `countdown`, `elapsed`, `laps`, and `isRaceOver`.
+The authoritative state machine uses only `countdown`, `racing`, and `results`;
+one human finishing does not create a global intermediate state.
+
+Every seat gets an independent `AiDriver` at construction, including human
+seats. `setController` switches ownership without replacing the Kart or driver:
+
+- `human`: consume `controlsByKartIndex[index]`.
+- `ai`: regular AI with difficulty pacing and gap-based rubber-banding.
+- `takeover-ai`: disconnected/input-timeout AI with difficulty base pace but no
+  gap-based catch-up bonus.
+
+Regular online AI uses the median progress of current human-controlled seats as
+its pacing reference. Random streams are isolated into roster/grid, item, and
+per-participant AI namespaces, so activating takeover AI cannot consume the item
+stream or another driver's random sequence.
+
+### RaceDirector and the session interface
+
+`RaceDirector` extends `RaceSimulation` as the compatibility adapter for the
+original local API:
+
 ```js
-export class ItemSystem {
-  constructor(track, rng)
-  reset()
-  update(dt, karts, raceTime)
-  // queries for AI + renderer:
-  get projectiles()  // [{id,kind,x,y,z,yaw,ownerIndex,...}]
-  get hazards()      // [{id,kind:'banana'|'bomb',x,y,z,armed,...}]
-  onUseItem(kart, karts)      // called on rising edge of controls.useItem
-  startRoulette(kart, rankOfKart, totalKarts)
+new RaceDirector(track, {
+  playerCharacterId,
+  difficulty,
+  laps,
+  seed,
+  autopilot,
+});
+
+director.update(dt, playerControls);
+```
+
+It keeps the player in the final grid slot, fills the other seven slots with
+distinct AI characters, exposes `player`, and supports deterministic `reset()`.
+`autopilot: true` is used by headless full-race tests.
+
+Presentation code receives either `LocalRaceSession` or `OnlineRaceSession`
+with the common shape:
+
+```js
+{
+  kind, track, karts, player, items,
+  state, countdown, elapsed, laps, standings, isRaceOver,
+  update(dt, controls),
+  dispose(),
 }
 ```
-Owns: item box pickup detection (track.itemBoxes, radius ~1.6+shrink aware),
-roulette timing (~1.1s, writes kart.rouletteTimer/rouletteFace, resolves via
-ITEM_WEIGHTS_BY_RANK + Rng.weighted), green shells (straight, bounce off walls
-using track.sampleWorld, ITEM_PHYSICS), red shells (follow racing line, home on
-next kart ahead by progress within lock range), blue shell (flies to 1st,
-blast), bananas (drop behind or throw forward), bombs (fuse+blast radius),
-mushroom (applyBoost), star (starTimer), lightning (all karts ahead of user:
-squash+shrinkTimer, scaled by progress), bullet (KART_STATE.BULLET autopilot
-along centreline at BOOST.bulletPower for BOOST.bulletDuration, handled here by
-setting state; physics respects it). Hit → kart.spinOut()/squash(). Emits
-events on karts. All randomness through rng.
 
-### src/game/race.js
+Local sessions additionally expose `reset()`.
+
+## Room lifecycle and rules
+
+```text
+lobby → loading → countdown → racing → results → lobby
+```
+
+- Room codes are six characters from an alphabet that omits `I`, `L`, `O`,
+  `0`, and `1`. Codes are case-insensitive.
+- A room accepts up to eight humans only while in `lobby`.
+- Nicknames are 1–20 visible characters, case-insensitively unique per room,
+  and reject control/bidirectional formatting characters.
+- Human character selections are unique. AI fills unused characters until the
+  race has eight karts.
+- The first member is host. If the host disconnects or leaves, ownership moves
+  to the earliest joined connected, non-abandoned member.
+- Only the host can change track/difficulty or start/return the room. A character
+  change clears that member's ready flag; a room-setting change clears all ready
+  flags.
+- Starting requires at least two members, with every member connected and ready.
+  The room then locks against new joins and sends `prepare_race`.
+- Clients build the track/roster and answer `race_loaded`. The loading deadline
+  is 10 seconds; unready clients use takeover AI. Fewer than two connected,
+  loaded humans cancels the launch and resets the lobby.
+- A disconnect immediately enables takeover AI and opens a 30-second resume
+  window. A successful resume restores human control. An explicit leave during
+  a race abandons the session and cannot be resumed; its AI finishes the race.
+- A connected participant that sends no accepted input for 1.5 seconds is also
+  temporarily switched to takeover AI. A newer valid input restores control.
+- The host can return from results immediately; otherwise results return to the
+  lobby after 30 seconds. Disconnected or abandoned members are removed then.
+- A room with no connected members expires after 60 seconds. An inactive lobby
+  expires after 15 minutes.
+
+## Protocol v1
+
+The WebSocket endpoint is `/ws`. Every application message is a JSON object
+with `v: 1` and a `type`. Unknown fields in client messages are discarded by the
+shared validator.
+
+Client → server:
+
+```text
+create_room, join_room, resume,
+select_character, set_room, set_ready,
+start_race, race_loaded, input,
+return_lobby, leave, ping
+```
+
+Server → client:
+
+```text
+welcome, room_state, prepare_race,
+snapshot, race_events, race_results,
+error, pong
+```
+
+The authoritative driving message is:
+
 ```js
-export class RaceDirector {
-  constructor(track, {playerCharacterId, difficulty, laps, seed})
-  get karts(); get player(); get items(); get state(); get countdown(); get elapsed()
-  reset()
-  update(dt, playerControls)   // full fixed step: input→ai→items→physics→laps→rank
-  get standings()              // karts sorted by rank
-  get isRaceOver()
+{
+  type: 'input',
+  v: 1,
+  raceId,
+  seq,
+  useItemSeq,
+  throttle, // clamped 0..1
+  brake,    // clamped 0..1
+  steer,    // clamped -1..1
+  drift,
+  lookBack,
 }
 ```
-Owns kart creation (player + 7 AI on grid via track.gridSlot), countdown
-(RACE.countdownDuration, rocket start / jump start via RACE windows), per-step
-pipeline, lap counting via s-wrap detection near line with loopDelta guard
-(kart.lap, lapTimes, bestLap; finish at track.laps → finished, finishTime,
-freeze to AI control), progress = lap*length + s (careful at pre-line), rank
-assignment (sort by progress; finished karts keep finish order), wrong-way flag,
-results (RACE.postRaceTimeout auto-place), state machine RACE_STATE.
 
-### src/render/* (scene.js, trackMesh.js, kartMesh.js, effects.js, camera.js)
-- `createRenderer(canvas)` → {renderer, resize}via THREE.WebGLRenderer,
-  antialias, shadows PCFSoft, sRGB, ACES tone mapping.
-- `buildScene(track)` → {scene, sunLight, …} — sky gradient (big sphere or fog +
-  clear color from theme), hemisphere+directional light, scenery by
-  theme.scenery ('desert' cacti+rocks / 'harbor' cranes+containers+water /
-  'alpine' pines+peaks), start gate over line, item box meshes (spinning
-  translucent cubes with '?' feel), boost pad chevron decals.
-- `buildTrackMesh(track)` — ribbon geometry from spline samples (positions
-  px/py/pz ± right*halfWidth), UVs along s for dashed edge lines; offroad skirt;
-  vertex colors or 2 materials; kerbs (red/white stripes) where |curvature| high.
-- `KartVisual` class — low-poly kart from THREE primitives (body box + bevel,
-  4 torus/cylinder wheels that spin via kart.wheelSpin and steer front wheels
-  via kart.steerAngle, character-colored shell + accent, simple driver head
-  with helmet), per-frame `sync(kart)` applying x/y/z, yaw+visualYawOffset,
-  visualRoll/Pitch/Scale, star rainbow flash (material emissive cycling),
-  shrink scale, drift spark emitters at rear wheels colored by driftTier
-  (DRIFT_TIERS color), boost flame cone, brake light.
-- `Effects` — pooled particles: drift sparks, boost flames, hit stars,
-  explosion, item box shatter, offroad dust, confetti at finish. All pooled,
-  zero allocation per frame.
-- `ChaseCamera` — CAMERA constants; position damping via mathx.damp with
-  look-ahead along kart forward, FOV kick with speedRatio + boost, shake on
-  hits (kart.events), look-back when controls.lookBack.
-- Minimap: build once from spline (2D polyline in a <canvas> overlay), per-frame
-  dots for karts (player highlighted), colored by kart.color.
+Movement `seq` and item `useItemSeq` are monotonic and handled independently.
+Stale movement can be discarded without losing a newer item edge. Each
+participant's snapshot contains `ack`/`inputAck` for the last applied movement
+sequence.
 
-### src/ui/hud.js + screens
-HUD: item slot w/ roulette animation, lap "2/3", position "3rd" big with
-ordinal, speed lines at high speedRatio, lap time + best, final-lap banner,
-wrong-way warning, countdown 3-2-1-GO, minimap canvas. Menus (DOM overlays,
-gamepad/keyboard navigable): main menu → single-player character select (grid
-of 8 with stats bars) → track select (3 cards) → difficulty → race;
-multiplayer is a coming-soon placeholder. Settings and Help are
-available from the main and pause menus. Results show positions, times and
-best laps. All styled in styles.css — chunky kart-racer aesthetic, bold rounded
-sans (system stack), thick outlines, gradients, no external assets. Audio
-settings persist locally through ui/settings-store.js.
+Snapshots contain the race clock/state, standings order, all Kart fields needed
+by presentation, projectiles, hazards, and item-box activity. They are complete
+replacement state and may be skipped under backpressure. `race_events` carries
+globally increasing event IDs and is not intentionally skipped.
 
-### src/audio/audio.js
-WebAudio synthesizes the engine, skid, AI layer, event SFX, star jingle,
-countdown and UI feedback. A single looping HTML media element streams local
-MP3 background music immediately, then routes through the WebAudio music gain
-once the browser unlocks it, with menu/per-track selection and final-lap
-speedup. Gameplay and UI SFX use separate child buses so pause menus can
-silence the race while retaining navigation feedback.
-Master/music/sfx gains use AUDIO constants as tuned 100% baselines and are
-initialized at boot and resumed on the first trusted gesture when required.
-`applySettings()` handles normalized
-channel levels, BGM selection, music enable and mute; mute toggle key M.
+`welcome` returns opaque `participantId` and `resumeToken` credentials after a
+room action. The browser stores active credentials only in `sessionStorage` and
+automatically retries with delays of 250, 500, 1,000, 2,000, and 4,000 ms within
+the 30-second resume window.
 
-### src/input/input.js
-```js
-export class InputManager {
-  constructor(targetEl)
-  update()                    // poll gamepad, refresh edges
-  readControls(out)           // fills a controls object (makeControls shape)
-  menu                        // {up,down,left,right,confirm,back,pause} edge-triggered
-  anyKey                      // edge
-  usingGamepad; usingTouch
-}
+## WebSocket safety and health
+
+- Upgrade requests must target `/ws` and include an allowed browser Origin.
+  Same-origin HTTP/HTTPS is accepted; `ALLOWED_ORIGINS` adds explicit origins.
+- Client messages are limited to 16 KiB and 90 messages per second per
+  connection.
+- Create/join/resume attempts are limited to 20 per IP per minute by default.
+- Binary client messages are rejected. Per-message compression is disabled.
+- Ping/pong heartbeat runs every 15 seconds and terminates dead sockets.
+- A snapshot is skipped when buffered output exceeds 256 KiB. Connections are
+  closed as too slow when buffered output exceeds 1 MiB.
+- `GET /healthz` returns process uptime plus aggregate room, race, and connection
+  counts. It never includes room codes, nicknames, participant IDs, or tokens.
+
+## Browser flow
+
+`src/main.js` routes title, local selection, online entry/lobby, race, pause,
+settings/help, and result modes. Both race types are mounted through the common
+session interface, then share Track/Kart visuals, Effects, camera, HUD, and audio.
+
+`OnlineClient` owns transport and room commands; `online-screens.js` owns DOM
+entry/lobby/result views. `prepare_race` builds the Track and
+`OnlineRaceSession`, then the client sends `race_loaded`. A `?room=CODE` query
+prefills the join flow.
+
+Online pause and `visibilitychange` set neutral controls but continue session
+updates, snapshot processing, rendering, and server time. Local pause stops the
+local simulation.
+
+## Testing
+
+```bash
+npm test
+npm run check
 ```
-Keyboard: arrows/WASD steer+throttle, Space/Shift drift, Ctrl/E/Enter item,
-R look back, Esc pause, M mute. Gamepad: stick + RT/A throttle, LT/B brake, RB/X
-drift, LB/Y item, Start pause. Touch (only if 'ontouchstart'): left steer zone,
-right buttons (gas auto, drift, item). Digital steer is smoothed in physics,
-not input.
 
-### src/main.js
-Boot: import map check, create canvas, InputManager, AudioManager, screen
-router (title/select/race/pause/results as DOM sections), race lifecycle:
-build Track+RaceDirector+scene+visuals, fixed-step accumulator loop
-(FIXED_DT, MAX_FRAME_TIME clamp), per frame: input.update → (menus or race
-update) → visuals sync → effects → camera → HUD update → audio.consume(events)
-→ kart.clearEvents() for all karts → render. Track/character/difficulty
-selection state, restart/quit flows, window resize, visibilitychange pause.
+The Node test suite covers:
 
-## index.html
-Already provided: import map `three` → /vendor/three.module.js, `#app` with
-`<canvas id="game-canvas">`, DOM overlay roots: `#screen-title`,
-`#screen-character`, `#screen-track`, `#screen-difficulty`, `#screen-settings`,
-`#screen-help`, `#hud`, `#screen-pause`, `#screen-results`, `#minimap` canvas
-inside #hud.
-`src/styles.css` linked. main.js is the only script tag (type=module).
+- spline/track geometry and surfaces;
+- physics, items, AI, full deterministic local races, and multiplayer
+  `RaceSimulation` controller/RNG behavior;
+- the shared protocol validator;
+- room creation, permissions, loading, input ordering, takeover/reconnect,
+  results, expiry, and scheduler behavior;
+- WebSocket origin, limits, routing, and combined game-server health behavior;
+- local/online session contracts, prediction/correction, event deduplication,
+  reconnect transport, menus, settings, input, and audio.
 
-## Testing (node --test tests/)
-- tests/spline.test.js — closure, uniform spacing, project() round-trip,
-  hint disambiguation.
-- tests/track.test.js — surfaces, widths, grid slots on-road, item box
-  placement on-road, racing line within bounds, all 3 TRACKS build.
-- tests/physics.test.js — accelerates to ~maxSpeed, brakes, turns, drift
-  charges tiers & boosts on release, offroad slows, wall keeps kart within
-  bounds, spinout timers, boost decay.
-- tests/race.test.js — full headless race, 8 AI (player kart driven by an AI
-  driver): with seed X the race completes < 6 min sim time, all karts finish,
-  laps == track.laps, ranks are a permutation, lap times sane (> 15s each),
-  determinism: same seed twice → identical finish order & times.
-- tests/items.test.js — weights sum, roulette resolves, shell hit spins target,
-  banana drop/hit, item box consume/respawn.
-
-Run `node tools/syntax-check.mjs` to import every module (with DOM/THREE stubs
-for presentation modules) and fail on syntax/import errors.
+`npm run check` imports every browser module under Node with the repository's
+presentation stubs and fails on syntax or import-contract errors.

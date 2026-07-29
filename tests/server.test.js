@@ -38,6 +38,22 @@ function getResponse(port, path) {
   });
 }
 
+function getBodyResponse(port, path) {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path, agent: false }, res => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve({
+        statusCode: res.statusCode,
+        headers: res.headers,
+        body: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 async function get(port, path) {
   return (await getResponse(port, path)).statusCode;
 }
@@ -66,4 +82,24 @@ test('MP3 sound assets are public and served with an audio MIME type', async () 
     assert.equal(response.statusCode, 200);
     assert.equal(response.headers['content-type'], 'audio/mpeg');
   });
+});
+
+test('health provider exposes aggregate counts without exposing room data', async () => {
+  const server = createStaticServer(PROJECT_ROOT, {
+    healthProvider: () => ({ uptimeSeconds: 12, rooms: 2, races: 1, connections: 3 }),
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  try {
+    const response = await getBodyResponse(server.address().port, '/healthz');
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(JSON.parse(response.body), {
+      status: 'ok', uptimeSeconds: 12, rooms: 2, races: 1, connections: 3,
+    });
+    assert.equal(response.body.includes('roomCode'), false);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
 });

@@ -25,6 +25,21 @@ export function hashSeed(str) {
 }
 
 /**
+ * Deterministically derive an independent 32-bit child seed from a race seed
+ * and a stable namespace. Consumers that use different namespaces cannot
+ * perturb one another by drawing a different number of random values.
+ */
+export function deriveSeed(seed, namespace) {
+  const base = typeof seed === 'string' ? seed : String(seed >>> 0);
+  return hashSeed(`${base}\u0000${String(namespace)}`);
+}
+
+/** Create an independent named RNG stream derived from a parent seed. */
+export function deriveRng(seed, namespace) {
+  return new Rng(deriveSeed(seed, namespace));
+}
+
+/**
  * Wraps a raw `next()` function with the sampling helpers gameplay code wants.
  * Every consumer should take one of these rather than calling Math.random(),
  * so that a race can be replayed exactly.

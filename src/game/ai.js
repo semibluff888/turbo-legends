@@ -1,8 +1,8 @@
 // AiDriver — the computer racer.
 //
 // Reads the world, writes `kart.controls` (plus `kart.aiSpeedMul`) and nothing
-// else. Pure simulation: no THREE, no DOM, all randomness through the shared
-// Rng so headless races replay exactly.
+// else. Pure simulation: no THREE, no DOM, all randomness through the injected
+// per-driver Rng so headless races replay exactly without cross-driver coupling.
 //
 // Driving model:
 //   steering — pure pursuit toward a point on the racing line ahead, nudged by
@@ -13,7 +13,7 @@
 //   drift    — hold through sustained corners, release at a skill-scaled
 //              mini-turbo tier or when the corner ends.
 //   items    — position-aware usage behind a humanising cooldown.
-//   pacing   — rubber-band vs the player kart via kart.aiSpeedMul.
+//   pacing   — rubber-band vs an explicit race-provided progress reference.
 
 import { KART, RACE, ITEM, KART_STATE, RACE_STATE, DRIFT_TIERS } from '../core/constants.js';
 import { clamp, angleDelta, loopDelta } from '../core/mathx.js';
@@ -130,7 +130,7 @@ export class AiDriver {
   /**
    * @param {import('./kart.js').Kart} kart the kart this driver controls
    * @param {import('../track/track.js').Track} track
-   * @param {import('../core/rng.js').Rng} rng shared seeded RNG
+   * @param {import('../core/rng.js').Rng} rng independent seeded RNG for this driver
    * @param {{aiSpeed:number, aiSkill:number, rubberBand:number, itemAggression:number}} difficulty
    *        one of the DIFFICULTY presets
    * @param {number} personality 0..1 aggression
@@ -212,7 +212,15 @@ export class AiDriver {
   /**
    * One fixed step of decision making. Writes kart.controls (+ aiSpeedMul).
    * @param {number} dt
-   * @param {{karts: Array, items: object, raceState: string, elapsed: number}} world
+   * @param {{
+   *   karts: Array,
+   *   items: object,
+   *   raceState: string,
+   *   elapsed: number,
+   *   rubberBandTargetProgress?: number|null,
+   *   rubberBandEligible?: boolean[],
+   *   aiBaseSpeedEligible?: boolean[],
+   * }} world
    */
   update(dt, world) {
     const kart = this.kart;
@@ -653,30 +661,27 @@ export class AiDriver {
     this._rubberTimer = AI.rubberInterval;
 
     const kart = this.kart;
-    if (kart.isPlayer) {
-      // Autopilot on the player's own kart: no rubber banding.
-      kart.aiSpeedMul = 1;
+    const baseSpeed = world.aiBaseSpeedEligible?.[kart.index] === false
+      ? 1
+      : this.difficulty.aiSpeed;
+    if (world.rubberBandEligible?.[kart.index] === false) {
+      // Human-seat takeover keeps the difficulty's base AI pace but receives
+      // no gap-based catch-up. Local autopilot can explicitly opt out of both.
+      kart.aiSpeedMul = clamp(baseSpeed, AI.rubberClamp[0], AI.rubberClamp[1]);
       return;
     }
 
-    let player = null;
-    const karts = world.karts;
-    if (karts) {
-      for (let i = 0; i < karts.length; i++) {
-        if (karts[i].isPlayer) { player = karts[i]; break; }
-      }
-    }
-
-    let mul = 1;
-    if (player) {
-      const gap = player.progress - kart.progress; // > 0: we're behind
+    let mul = baseSpeed;
+    const target = world.rubberBandTargetProgress;
+    if (Number.isFinite(target)) {
+      const gap = target - kart.progress; // > 0: we're behind
       const t = clamp(gap / AI.rubberGapRange, -1, 1);
       const rb = this.difficulty.rubberBand;
       mul = t >= 0
         ? 1 + AI.rubberUp * rb * t
         : 1 - AI.rubberDown * rb * -t;
+      mul *= baseSpeed;
     }
-    mul *= this.difficulty.aiSpeed;
     kart.aiSpeedMul = clamp(mul, AI.rubberClamp[0], AI.rubberClamp[1]);
   }
 }

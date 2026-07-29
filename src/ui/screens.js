@@ -401,14 +401,19 @@ export class Screens {
     this._show('help');
   }
 
-  showPause() {
+  showPause({ online = false } = {}) {
     this.hideAll();
     const root = this.roots.pause;
     if (!root) return;
+    const restart = root.querySelector('[data-value="restart"]');
+    const quit = root.querySelector('[data-value="quit"]');
+    if (restart) restart.hidden = online;
+    if (quit) quit.textContent = online ? UI_COPY.online.lobby.leave : UI_COPY.pause.items.at(-1)[1];
     root.hidden = false;
     this._screen = 'pause';
     this._cols = 1;
     this._items = Array.from(root.querySelectorAll('.menu-option'))
+      .filter((node) => !node.hidden)
       .map((node) => ({ el: node, value: node.dataset.value }));
     this._setFocus(0);
   }
@@ -666,10 +671,8 @@ export class Screens {
     switch (screen) {
       case 'title':
         if (value === 'single') cb.onSinglePlayer?.();
-        else if (value === 'multiplayer') {
-          this.showStatus(UI_COPY.title.multiplayerToast);
-          cb.onMultiplayer?.();
-        } else if (value === 'settings') cb.onOpenSettings?.();
+        else if (value === 'multiplayer') cb.onMultiplayer?.();
+        else if (value === 'settings') cb.onOpenSettings?.();
         else if (value === 'help') cb.onOpenHelp?.();
         break;
       case 'character': cb.onCharacter?.(value); break;

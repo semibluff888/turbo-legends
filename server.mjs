@@ -5,6 +5,9 @@ import { createReadStream, promises as fs, realpathSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { RoomManager } from './server/room-manager.js';
+import { createDefaultRaceFactory } from './server/race-factory.js';
+
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const PORT = Number(process.env.PORT) || 5173;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -50,10 +53,20 @@ function isPublicPath(root, filePath) {
   return parts[0] === 'src' || parts[0] === 'vendor' || parts[0] === 'sound';
 }
 
-export function createStaticServer(root = ROOT) {
+export function createStaticServer(root = ROOT, { healthProvider = null } = {}) {
   const staticRoot = realpathSync(resolve(root));
 
   return createServer(async (req, res) => {
+    if (healthProvider && req.method === 'GET' && req.url?.split('?')[0] === '/healthz') {
+      const body = JSON.stringify({ status: 'ok', ...healthProvider() });
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': Buffer.byteLength(body),
+        'Cache-Control': 'no-store',
+      }).end(body);
+      return;
+    }
+
     let filePath;
     try {
       filePath = safeJoin(staticRoot, req.url === '/' ? '/index.html' : req.url);
@@ -98,10 +111,99 @@ export function createStaticServer(root = ROOT) {
   });
 }
 
+/** Create the in-memory room service with the production race adapter. */
+export function createRoomManager(options = {}) {
+  return new RoomManager({
+    ...options,
+    raceFactory: options.raceFactory ?? createDefaultRaceFactory(),
+  });
+}
+
+/** Create the combined static HTTP and authoritative WebSocket server. */
+export async function createGameServer({
+  root = ROOT,
+  roomManager = null,
+  roomManagerOptions = {},
+  allowedOrigins = process.env.ALLOWED_ORIGINS || '',
+  logger = console,
+  webSocketOptions = {},
+} = {}) {
+  const manager = roomManager ?? createRoomManager(roomManagerOptions);
+  let gateway = null;
+  const server = createStaticServer(root, {
+    healthProvider: () => ({
+      uptimeSeconds: process.uptime(),
+      rooms: manager.roomCount,
+      races: manager.activeRaceCount,
+      connections: gateway?.connectionCount ?? 0,
+    }),
+  });
+  const { attachGameWebSocket } = await import('./server/websocket-game-server.js');
+  gateway = attachGameWebSocket(server, {
+    roomManager: manager,
+    allowedOrigins,
+    logger,
+    ...webSocketOptions,
+  });
+
+  let tickRunning = false;
+  let disposed = false;
+  const tickTimer = setInterval(() => {
+    if (tickRunning) return;
+    tickRunning = true;
+    Promise.resolve(manager.tick()).catch((error) => {
+      logger.error?.('[multiplayer] authoritative tick failed', error);
+    }).finally(() => {
+      tickRunning = false;
+    });
+  }, 1000 / 60);
+  tickTimer.unref?.();
+
+  const onManagerError = (error) => logger.error?.('[multiplayer] room error', error);
+  manager.on('managerError', onManagerError);
+
+  async function disposeGameServices() {
+    if (disposed) return;
+    disposed = true;
+    clearInterval(tickTimer);
+    manager.off('managerError', onManagerError);
+    await gateway.close();
+    manager.close();
+  }
+
+  server.once('close', () => { void disposeGameServices(); });
+  server.roomManager = manager;
+  server.webSocketGateway = gateway;
+  server.shutdown = async () => {
+    await disposeGameServices();
+    if (!server.listening) return;
+    await new Promise((resolveClose, rejectClose) => {
+      server.close((error) => error ? rejectClose(error) : resolveClose());
+    });
+  };
+  return server;
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const server = createStaticServer();
+  const server = await createGameServer();
   server.listen(PORT, HOST, () => {
     console.log(`\n  🏁  Turbo Legends running at  http://${HOST}:${PORT}/\n`);
+    console.log(`  Multiplayer WebSocket:    ws://${HOST}:${PORT}/ws\n`);
     console.log('  Press Ctrl+C to stop.\n');
   });
+
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      await server.shutdown();
+      process.exitCode = 0;
+    } catch (error) {
+      console.error(error);
+      process.exitCode = 1;
+    }
+  };
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
 }

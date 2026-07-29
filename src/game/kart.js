@@ -39,13 +39,26 @@ export class Kart {
    * @param {number} opts.index grid index / stable id
    * @param {object} opts.character character definition (see characters.js)
    * @param {boolean} opts.isPlayer
+   * @param {string|null} [opts.participantId] stable race participant identity
+   * @param {string|null} [opts.displayName] player-facing racer name
+   * @param {string|null} [opts.controllerKind] 'human' | 'ai' | 'takeover-ai'
    */
-  constructor({ index, character, isPlayer = false }) {
+  constructor({
+    index,
+    character,
+    isPlayer = false,
+    participantId = null,
+    displayName = null,
+    controllerKind = null,
+  }) {
     this.index = index;
     this.id = `kart${index}`;
     this.character = character;
     this.isPlayer = isPlayer;
-    this.name = character.name;
+    this.participantId = participantId;
+    this.displayName = displayName || character.name;
+    this.controllerKind = controllerKind;
+    this.name = this.displayName;
     this.color = character.color;
 
     // --- Transform ---------------------------------------------------------

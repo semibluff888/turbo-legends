@@ -4,9 +4,20 @@
 import * as THREE from 'three';
 import { FIXED_DT, MAX_FRAME_TIME, RACE_STATE, CAMERA, RACE } from './core/constants.js';
 import { Track } from './track/track.js';
-import { TRACKS, getTrackDef } from './track/tracks.js';
+import { TRACKS, TRACKS_BY_ID, getTrackDef } from './track/tracks.js';
 import { CHARACTERS } from './game/characters.js';
-import { RaceDirector } from './game/race.js';
+import { LocalRaceSession } from './session/local-race-session.js';
+import { OnlineClient } from './net/online-client.js';
+import { OnlineRaceSession } from './net/online-race-session.js';
+import {
+  invitationRoomCode,
+  isOnlineConnectionError,
+  onlineRoomPhase,
+  shouldAcknowledgeRaceLoaded,
+  shouldPresentOnlineLobby,
+  shouldResumeStoredOnlineSession,
+  shouldUpdateOnlineRaceBehindPanel,
+} from './net/online-flow.js';
 import { makeControls, resetControls } from './game/kart.js';
 import { createRenderer, buildScene } from './render/scene.js';
 import { buildTrackMesh } from './render/trackMesh.js';
@@ -15,6 +26,7 @@ import { Effects } from './render/effects.js';
 import { ChaseCamera } from './render/camera.js';
 import { Hud } from './ui/hud.js';
 import { Screens } from './ui/screens.js';
+import { OnlineScreens } from './ui/online-screens.js';
 import { loadSettings, resetSettings, saveSettings } from './ui/settings-store.js';
 import { AudioManager } from './audio/audio.js';
 import { InputManager } from './input/input.js?v=20260726-steering-fix';
@@ -34,6 +46,7 @@ let gameSettings = loadSettings();
 audio.applySettings(gameSettings);
 
 const hud = new Hud(document.getElementById('hud'), document.getElementById('minimap'));
+const onlineClient = new OnlineClient();
 
 /** Player selections, persisted across races in this session. */
 const selection = {
@@ -42,7 +55,7 @@ const selection = {
   difficulty: 'normal',
 };
 
-/** 'title' | 'settings' | 'help' | 'character' | 'track' | 'difficulty' | 'race' | 'results' */
+/** App route: title/selection/panels, online entry/lobby, race, or results. */
 let mode = 'title';
 let paused = false;
 /** Where an auxiliary page returns: the title menu or the in-race pause menu. */
@@ -50,6 +63,9 @@ let panelReturn = 'title';
 
 /** Everything belonging to the current race; null between races. */
 let race = null;
+let onlineRoomState = null;
+let onlineResultsState = null;
+let pendingOnlineError = '';
 
 const playerControls = makeControls();
 
@@ -89,7 +105,10 @@ const screens = new Screens({
     screens.showCharacter(CHARACTERS);
     playUi('confirm');
   },
-  onMultiplayer() { playUi('confirm'); },
+  onMultiplayer() {
+    playUi('confirm');
+    openOnlineEntry();
+  },
   onOpenSettings() { openPanel('settings'); },
   onOpenHelp() { openPanel('help'); },
   onSettingsChange(key, value) {
@@ -112,6 +131,7 @@ const screens = new Screens({
     startRace();
   },
   onQuit() {
+    if (race?.session.kind === 'online') onlineClient.leave();
     paused = false;
     endRace();
     goToTitle();
@@ -122,10 +142,183 @@ const screens = new Screens({
   },
 });
 
+const onlineScreens = new OnlineScreens({
+  entry: document.getElementById('screen-online-entry'),
+  lobby: document.getElementById('screen-online-lobby'),
+  results: document.getElementById('screen-online-results'),
+}, {
+  onBackToTitle() {
+    onlineClient.leave();
+    onlineRoomState = null;
+    goToTitle();
+  },
+  onCreateRoom({ displayName }) {
+    saveOnlineDisplayName(displayName);
+    pendingOnlineError = '';
+    onlineScreens.setBusy(true);
+    onlineScreens.clearError();
+    onlineClient.createRoom(displayName);
+  },
+  onJoinRoom({ displayName, roomCode }) {
+    saveOnlineDisplayName(displayName);
+    pendingOnlineError = '';
+    onlineScreens.setBusy(true);
+    onlineScreens.clearError();
+    onlineClient.joinRoom(roomCode, displayName);
+  },
+  onSelectCharacter({ characterId }) {
+    onlineScreens.clearError();
+    onlineClient.selectCharacter(characterId);
+  },
+  onSetRoom(settings) {
+    onlineScreens.clearError();
+    onlineClient.setRoom(settings);
+  },
+  onReadyChange({ ready }) {
+    onlineScreens.clearError();
+    onlineClient.setReady(ready);
+  },
+  onStartRace() {
+    onlineScreens.clearError();
+    onlineClient.startRace();
+  },
+  onLeaveRoom() {
+    onlineClient.leave();
+    onlineRoomState = null;
+    if (race) endRace();
+    goToTitle();
+  },
+  onReturnLobby() {
+    onlineScreens.clearError();
+    onlineClient.returnLobby();
+  },
+});
+
+wireOnlineClient();
+
+const ONLINE_NAME_KEY = 'turbo-legends.online-name.v1';
+
+function loadOnlineDisplayName() {
+  try {
+    return String(globalThis.localStorage?.getItem(ONLINE_NAME_KEY) || 'Racer');
+  } catch {
+    return 'Racer';
+  }
+}
+
+function saveOnlineDisplayName(value) {
+  try {
+    globalThis.localStorage?.setItem(ONLINE_NAME_KEY, String(value || '').trim());
+  } catch {
+    // A blocked localStorage must not prevent anonymous online play.
+  }
+}
+
+function openOnlineEntry({ tryResume = true } = {}) {
+  const inviteCode = invitationRoomCode(window.location.search);
+  mode = 'online-entry';
+  screens.hideAll();
+  hud.hide();
+  audio.setGameplaySfxPaused(true);
+  audio.playMenuMusic();
+  onlineScreens.showEntry({
+    displayName: loadOnlineDisplayName(),
+    roomCode: inviteCode,
+    connectionState: onlineClient.state === 'idle' ? 'disconnected' : onlineClient.state,
+  });
+  if (tryResume && shouldResumeStoredOnlineSession({
+    search: window.location.search,
+    roomCode: onlineClient.room?.code,
+    participantId: onlineClient.selfId,
+    resumeToken: onlineClient.resumeToken,
+  })) {
+    onlineScreens.setBusy(true);
+    onlineClient.resumeStored();
+  }
+}
+
+function showOnlineLobby(message) {
+  const roomState = message?.room || message || {};
+  onlineRoomState = roomState;
+  const phase = onlineRoomPhase(roomState);
+  if (phase === 'lobby' && race?.session.kind === 'online') {
+    endRace();
+    buildAttract();
+  }
+  if (!shouldPresentOnlineLobby(roomState, race?.session.kind === 'online')) return;
+
+  mode = 'online-lobby';
+  screens.hideAll();
+  hud.hide();
+  onlineScreens.setBusy(false);
+  const error = pendingOnlineError;
+  pendingOnlineError = '';
+  onlineScreens.showLobby(roomState, {
+    localParticipantId: onlineClient.selfId,
+    ...(error ? { error } : { clearError: true }),
+  });
+  audio.setGameplaySfxPaused(true);
+  audio.playMenuMusic();
+}
+
+function onlineHostId(roomState = onlineRoomState) {
+  return roomState?.hostParticipantId
+    || roomState?.hostId
+    || roomState?.ownerId
+    || null;
+}
+
+function wireOnlineClient() {
+  onlineClient.on('connection', ({ state, reason }) => {
+    const viewState = state === 'idle' ? 'disconnected' : state;
+    onlineScreens.setConnectionState(viewState, reason || '');
+  });
+  onlineClient.on('room_state', showOnlineLobby);
+  onlineClient.on('prepare_race', (message) => {
+    try {
+      startOnlineRace(message);
+    } catch (error) {
+      onlineScreens.setBusy(false);
+      reportOnlineError(error?.message || 'Unable to start the online race.');
+    }
+  });
+  onlineClient.on('race_results', (message) => {
+    onlineResultsState = message;
+    if (mode === 'online-results' && race?.session.kind === 'online') {
+      onlineScreens.updateResults(message, {
+        localParticipantId: onlineClient.selfId,
+        isHost: onlineHostId() === onlineClient.selfId,
+        trackName: race.track.name,
+      });
+    }
+  });
+  onlineClient.on('error', (message) => {
+    onlineScreens.setBusy(false);
+    if (isOnlineConnectionError(message)) onlineScreens.setConnectionState('error');
+    reportOnlineError(message?.message || 'Online request failed.');
+  });
+  onlineClient.on('reconnect_expired', (event) => {
+    pendingOnlineError = '';
+    if (race?.session.kind === 'online') endRace();
+    openOnlineEntry({ tryResume: false });
+    onlineScreens.setBusy(false);
+    onlineScreens.showError(event?.code === 'session_replaced'
+      ? 'This room session was resumed in another window.'
+      : 'The reconnect window expired. Join the room again.');
+  });
+}
+
+function reportOnlineError(message) {
+  const text = String(message || 'Online request failed.');
+  if (onlineScreens.activeScreen) onlineScreens.showError(text);
+  else pendingOnlineError = text;
+}
+
 function goToTitle() {
   mode = 'title';
   paused = false;
   panelReturn = 'title';
+  onlineScreens.hideAll();
   screens.showTitle();
   hud.hide();
   audio.setGameplaySfxPaused(true);
@@ -160,7 +353,7 @@ function closePanel() {
   if (panelReturn === 'pause' && race) {
     mode = 'race';
     paused = true;
-    screens.showPause();
+    screens.showPause({ online: race.session.kind === 'online' });
   } else {
     goToTitle();
   }
@@ -211,34 +404,70 @@ function startRace() {
 
   const def = getTrackDef(selection.trackId);
   const track = new Track(def);
-  const director = new RaceDirector(track, {
+  const session = new LocalRaceSession(track, {
     playerCharacterId: selection.characterId,
     difficulty: selection.difficulty,
     seed: (Date.now() & 0xffffff) ^ 0x5eed,
   });
+  mountRace(track, session, def);
+}
 
+function startOnlineRace(message) {
+  destroyAttract();
+  if (race) endRace();
+
+  const trackId = message.trackId || message.settings?.trackId || message.track?.id;
+  const def = TRACKS_BY_ID[trackId];
+  if (!def) throw new Error('The server selected an unknown track.');
+  if (typeof message.raceId !== 'string' || !message.raceId) {
+    throw new Error('The server sent an invalid race id.');
+  }
+  const roster = message.roster || message.participants;
+  if (!Array.isArray(roster) || roster.length === 0) {
+    throw new Error('The server sent an invalid race roster.');
+  }
+  const track = new Track(def);
+  const session = new OnlineRaceSession({
+    client: onlineClient,
+    track,
+    raceId: message.raceId,
+    roster,
+    localParticipantId: onlineClient.selfId,
+  });
+  onlineResultsState = null;
+  mountRace(track, session, def);
+  onlineScreens.hideAll();
+  if (shouldAcknowledgeRaceLoaded(message, onlineRoomState)) {
+    onlineClient.markRaceLoaded(message.raceId);
+  }
+}
+
+function mountRace(track, session, def) {
   const world = buildScene(track);
   world.scene.add(buildTrackMesh(track));
 
-  const visuals = director.karts.map((k) => new KartVisual(k, world.scene));
+  const visuals = session.karts.map((k) => new KartVisual(k, world.scene));
   const effects = new Effects(world.scene);
   const chase = new ChaseCamera(camera);
   if (chase.setTrack) chase.setTrack(track);
-  chase.snapTo(director.player);
+  chase.snapTo(session.player);
 
   race = {
-    track, director, world, visuals, effects, chase,
+    track, session, world, visuals, effects, chase,
+    online: session.kind === 'online',
     accumulator: 0,
     finalLapAnnounced: false,
     finishedAnnounced: false,
     resultsShown: false,
     lastCountdownBeep: -1,
+    sawCountdown: false,
   };
 
   mode = 'race';
   paused = false;
   screens.hideAll();
-  hud.showRace(director);
+  onlineScreens.hideAll();
+  hud.showRace(session);
   audio.setGameplaySfxPaused(false);
   audio.playRaceMusic(def.id, { restart: true });
   audio.setFinalLap(false);
@@ -248,6 +477,7 @@ function startRace() {
 
 function endRace() {
   if (!race) return;
+  race.session.dispose?.();
   audio.stopEngine();
   hud.hide();
   disposeSceneDeep(race.world.scene);
@@ -255,11 +485,15 @@ function endRace() {
 }
 
 function setPaused(p) {
-  if (!race || race.director.state === RACE_STATE.RESULTS) return;
+  if (!race || race.session.state === RACE_STATE.RESULTS) return;
   paused = p;
+  if (p && race.session.kind === 'online') {
+    resetControls(playerControls);
+    race.session.sendNeutralInput?.();
+  }
   audio.setGameplaySfxPaused(p);
   if (p) {
-    screens.showPause();
+    screens.showPause({ online: race.session.kind === 'online' });
     audio.ui('back');
   } else {
     mode = 'race';
@@ -272,8 +506,8 @@ function setPaused(p) {
 // ---------------------------------------------------------------------------
 
 function consumeRaceEvents() {
-  const { director, effects, chase } = race;
-  for (const kart of director.karts) {
+  const { session, effects, chase } = race;
+  for (const kart of session.karts) {
     for (const ev of kart.events) {
       switch (ev.type) {
         case 'collide':
@@ -306,8 +540,8 @@ function consumeRaceEvents() {
     }
   }
   // Item system one-shot world VFX.
-  if (director.items && director.items.drainVfx) {
-    for (const v of director.items.drainVfx()) {
+  if (session.items && session.items.drainVfx) {
+    for (const v of session.items.drainVfx()) {
       if (v.type === 'explosion') {
         effects.explosion(v.x, v.y, v.z);
         chase.addShake(0.4);
@@ -321,30 +555,34 @@ function consumeRaceEvents() {
 }
 
 function updateRaceFrame(dt) {
-  const { director, visuals, effects, chase, world } = race;
+  const { session, visuals, effects, chase, world } = race;
+  const online = session.kind === 'online';
 
   // --- Simulation at fixed timestep ---------------------------------------
-  if (!paused) {
-    input.readControls(playerControls);
+  if (!paused || online) {
+    if (paused) resetControls(playerControls);
+    else input.readControls(playerControls);
     race.accumulator = Math.min(race.accumulator + dt, MAX_FRAME_TIME);
     while (race.accumulator >= FIXED_DT) {
-      director.update(FIXED_DT, playerControls);
+      session.update(FIXED_DT, playerControls);
       race.accumulator -= FIXED_DT;
     }
   }
 
   // --- Presentation ---------------------------------------------------------
-  const player = director.player;
+  const player = session.player;
 
   // Countdown beeps (audio keyed to the integer countdown value).
-  if (director.state === RACE_STATE.COUNTDOWN) {
-    const n = Math.ceil(director.countdown);
+  const hasAuthoritativeState = !online || session.hasSnapshot;
+  if (hasAuthoritativeState && session.state === RACE_STATE.COUNTDOWN) {
+    const n = Math.ceil(session.countdown);
     if (n !== race.lastCountdownBeep && n <= 3) {
       race.lastCountdownBeep = n;
+      race.sawCountdown = true;
       audio.countdownBeep(n);
       hud.countdown(n);
     }
-  } else if (race.lastCountdownBeep !== 0) {
+  } else if (hasAuthoritativeState && race.sawCountdown && race.lastCountdownBeep !== 0) {
     race.lastCountdownBeep = 0;
     audio.countdownBeep(0);
     hud.countdown('go');
@@ -353,7 +591,7 @@ function updateRaceFrame(dt) {
   for (const v of visuals) v.sync(camera.position);
 
   // Continuous particle sources.
-  for (const kart of director.karts) {
+  for (const kart of session.karts) {
     if (kart.drifting && kart.driftTier >= 0 && !kart.airborne) {
       const tier = kart.driftTierInfo;
       effects.driftSparks(
@@ -366,26 +604,54 @@ function updateRaceFrame(dt) {
   }
 
   consumeRaceEvents();
-  audio.consume(director.karts, director);
-  audio.update(dt, player, director);
-  for (const kart of director.karts) kart.clearEvents();
+  audio.consume(session.karts, session);
+  audio.update(dt, player, session);
+  for (const kart of session.karts) kart.clearEvents();
 
   effects.update(dt);
   chase.update(dt, player, playerControls.lookBack);
-  world.animate(dt, director.elapsed);
-  hud.update(player, director, dt);
+  world.animate(dt, session.elapsed);
+  hud.update(player, session, dt);
 
   // Finish / results flow (the HUD shows its own FINISHED banner).
   if (player.finished && !race.finishedAnnounced) {
     race.finishedAnnounced = true;
     audio.setFinalLap(false);
   }
-  if (director.state === RACE_STATE.RESULTS && !race.resultsShown) {
+  if (session.state === RACE_STATE.RESULTS && !race.resultsShown) {
     race.resultsShown = true;
     race.resultsShownAt = performance.now() / 1000;
-    mode = 'results';
     hud.hide(); // the results panel owns the screen now
-    screens.showResults(director.standings, player, race.track.name);
+    if (online) {
+      mode = 'online-results';
+      screens.hideAll();
+      const fallback = {
+        raceId: session.raceId,
+        trackName: race.track.name,
+        standings: session.standings.map((kart) => ({
+          kartIndex: kart.index,
+          participantId: kart.participantId,
+          displayName: kart.name,
+          characterId: kart.character.id,
+          rank: kart.rank,
+          finished: kart.finished,
+          finishTime: kart.finishTime,
+          bestLap: kart.bestLap,
+          lapTimes: kart.lapTimes,
+        })),
+      };
+      const error = pendingOnlineError;
+      pendingOnlineError = '';
+      onlineScreens.showResults(onlineResultsState || fallback, {
+        localParticipantId: onlineClient.selfId,
+        isHost: onlineHostId() === onlineClient.selfId,
+        trackName: race.track.name,
+        ...(error ? { error } : {}),
+      });
+    } else {
+      mode = 'results';
+      screens.showResults(session.standings, player, race.track.name);
+    }
     audio.setFinalLap(false);
   }
 }
@@ -450,6 +716,17 @@ function frame(now) {
     screens.updateSettings(gameSettings);
   }
 
+  if (shouldUpdateOnlineRaceBehindPanel({
+    mode,
+    paused,
+    raceKind: race?.session.kind,
+  })) {
+    updateMenus();
+    updateRaceFrame(dt);
+    renderer.render(race.world.scene, camera);
+    return;
+  }
+
   if (mode === 'race') {
     // Esc raises both `pause` and `back` edges — the else-if keeps one press
     // from toggling the menu open and instantly closed in the same frame.
@@ -462,7 +739,7 @@ function frame(now) {
       if (m.confirm) screens.confirm();
       if (m.back) setPaused(false);
     }
-    updateRaceFrame(paused ? 0 : dt);
+    updateRaceFrame(paused && race.session.kind !== 'online' ? 0 : dt);
     renderer.render(race.world.scene, camera);
     return;
   }
@@ -475,6 +752,14 @@ function frame(now) {
     if (ready && (m.confirm || input.anyKey)) screens.confirm();
     if (race) {
       updateRaceFrame(dt); // let the field keep driving behind the results panel
+      renderer.render(race.world.scene, camera);
+    }
+    return;
+  }
+
+  if (mode === 'online-results') {
+    if (race) {
+      updateRaceFrame(dt);
       renderer.render(race.world.scene, camera);
     }
     return;
@@ -511,7 +796,13 @@ window.addEventListener('resize', () => {
 resize(window.innerWidth, window.innerHeight);
 
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && mode === 'race' && !paused) setPaused(true);
+  if (!document.hidden || mode !== 'race' || paused) return;
+  if (race?.session.kind === 'online') {
+    resetControls(playerControls);
+    race.session.sendNeutralInput?.();
+  } else {
+    setPaused(true);
+  }
 });
 
 // Attempt autoplay immediately, then retry directly inside trusted input
@@ -541,18 +832,21 @@ ensureAudio();
     const ff = Number(q.get('t')) || 0;
     if (ff > 0 && race) {
       for (let i = 0; i < Math.min(ff, 120) * 120; i++) {
-        race.director.update(FIXED_DT, playerControls);
+        race.session.update(FIXED_DT, playerControls);
       }
-      for (const kart of race.director.karts) kart.clearEvents();
-      race.chase.snapTo(race.director.player);
+      for (const kart of race.session.karts) kart.clearEvents();
+      race.chase.snapTo(race.session.player);
     }
     if (q.get('results') && race) {
       // Fast-forward until the results screen (autopilot drives everyone).
-      for (let i = 0; i < 300 * 120 && race.director.state !== RACE_STATE.RESULTS; i++) {
-        race.director.update(FIXED_DT, playerControls);
+      for (let i = 0; i < 300 * 120 && race.session.state !== RACE_STATE.RESULTS; i++) {
+        race.session.update(FIXED_DT, playerControls);
       }
-      for (const kart of race.director.karts) kart.clearEvents();
+      for (const kart of race.session.karts) kart.clearEvents();
     }
+  } else if (!devScreen && (q.get('room')
+    || (onlineClient.room?.code && onlineClient.selfId && onlineClient.resumeToken))) {
+    openOnlineEntry();
   }
 }
 
