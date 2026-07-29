@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  hasReturnedToOnlineLobby,
   invitationRoomCode,
   isOnlineConnectionError,
   shouldAcknowledgeRaceLoaded,
@@ -37,6 +38,20 @@ test('loading room state cannot replace a race already mounted from prepare_race
   assert.equal(shouldPresentOnlineLobby({ state: 'countdown' }, true), false);
   assert.equal(shouldPresentOnlineLobby({ state: 'racing' }, true), false);
   assert.equal(shouldPresentOnlineLobby({ state: 'lobby' }, true), true);
+});
+
+test('a participant who returned from results is routed to the lobby independently', () => {
+  const room = {
+    state: 'results',
+    members: [
+      { participantId: 'host', postRaceState: 'lobby' },
+      { participantId: 'guest', postRaceState: 'results' },
+    ],
+  };
+  assert.equal(hasReturnedToOnlineLobby(room, 'host'), true);
+  assert.equal(hasReturnedToOnlineLobby(room, 'guest'), false);
+  assert.equal(shouldPresentOnlineLobby(room, true, 'host'), true);
+  assert.equal(shouldPresentOnlineLobby(room, true, 'guest'), false);
 });
 
 test('resumed catch-up only acknowledges loading races', () => {

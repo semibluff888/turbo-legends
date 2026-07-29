@@ -11,6 +11,7 @@ import { OnlineClient } from './net/online-client.js';
 import { OnlineRaceSession } from './net/online-race-session.js';
 import {
   invitationRoomCode,
+  hasReturnedToOnlineLobby,
   isOnlineConnectionError,
   onlineRoomPhase,
   shouldAcknowledgeRaceLoaded,
@@ -241,11 +242,16 @@ function showOnlineLobby(message) {
   const roomState = message?.room || message || {};
   onlineRoomState = roomState;
   const phase = onlineRoomPhase(roomState);
-  if (phase === 'lobby' && race?.session.kind === 'online') {
+  const returnedFromResults = hasReturnedToOnlineLobby(roomState, onlineClient.selfId);
+  if ((phase === 'lobby' || returnedFromResults) && race?.session.kind === 'online') {
     endRace();
     buildAttract();
   }
-  if (!shouldPresentOnlineLobby(roomState, race?.session.kind === 'online')) return;
+  if (!shouldPresentOnlineLobby(
+    roomState,
+    race?.session.kind === 'online',
+    onlineClient.selfId,
+  )) return;
 
   mode = 'online-lobby';
   screens.hideAll();
@@ -652,8 +658,21 @@ function updateRaceFrame(dt) {
       mode = 'results';
       screens.showResults(session.standings, player, race.track.name);
     }
+    resetControls(playerControls);
+    race.accumulator = 0;
+    race.chase.settle?.();
+    audio.stopEngine();
     audio.setFinalLap(false);
   }
+}
+
+function updateResultsFrame(dt) {
+  if (!race) return;
+  const { session, visuals, effects, world } = race;
+  session.update(Math.min(dt, MAX_FRAME_TIME), playerControls);
+  for (const visual of visuals) visual.sync(camera.position);
+  effects.update(dt);
+  world.animate(dt, session.elapsed);
 }
 
 // ---------------------------------------------------------------------------
@@ -751,7 +770,7 @@ function frame(now) {
       && now / 1000 - race.resultsShownAt > RACE.resultsInputDelay;
     if (ready && (m.confirm || input.anyKey)) screens.confirm();
     if (race) {
-      updateRaceFrame(dt); // let the field keep driving behind the results panel
+      updateResultsFrame(dt);
       renderer.render(race.world.scene, camera);
     }
     return;
@@ -759,7 +778,7 @@ function frame(now) {
 
   if (mode === 'online-results') {
     if (race) {
-      updateRaceFrame(dt);
+      updateResultsFrame(dt);
       renderer.render(race.world.scene, camera);
     }
     return;

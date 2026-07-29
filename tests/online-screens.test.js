@@ -71,6 +71,29 @@ test('lobby start remains unavailable to guests and while a member is offline', 
   assert.equal(guestView.canStart, false);
 });
 
+test('returned racers can manage the lobby while other racers remain in game', () => {
+  const view = buildLobbyView({
+    roomCode: 'QRS789',
+    state: 'results',
+    hostParticipantId: 'host',
+    members: [
+      {
+        participantId: 'host', displayName: 'Host', characterId: 'nova', connected: true,
+        ready: true, postRaceState: 'lobby', activityState: 'lobby',
+      },
+      {
+        participantId: 'guest', displayName: 'Guest', characterId: 'pip', connected: true,
+        ready: false, postRaceState: 'results', activityState: 'in_game',
+      },
+    ],
+  }, 'host');
+
+  assert.equal(view.canManageLobby, true);
+  assert.equal(view.canStart, false);
+  assert.equal(view.localMember.ready, true);
+  assert.equal(view.members[1].activityState, 'in_game');
+});
+
 test('authoritative results are sorted and formatted without inventing times', () => {
   const view = buildOnlineResultsView({
     hostParticipantId: 'p1',

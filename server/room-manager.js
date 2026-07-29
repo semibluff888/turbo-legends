@@ -16,6 +16,10 @@ import {
 import { GameError } from './game-error.js';
 
 const ROOM_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const POST_RACE_STATES = Object.freeze({
+  RESULTS: 'results',
+  LOBBY: 'lobby',
+});
 const DEFAULT_ZERO_INPUT = Object.freeze({
   throttle: 0,
   brake: 0,
@@ -216,6 +220,7 @@ export class RoomManager extends EventEmitter {
       settings: { trackId: track.id, difficulty: 'normal' },
       members: new Map(),
       race: null,
+      lastRaceId: null,
       createdAt: now,
       lastActivityAt: now,
       emptySince: null,
@@ -315,7 +320,7 @@ export class RoomManager extends EventEmitter {
 
   selectCharacter(participantId, characterId) {
     const { room, member } = this._findParticipant(participantId);
-    this._requireLobby(room);
+    this._requireMemberLobby(room, member);
     if (!this.characterIds.has(characterId)) {
       throw new GameError(ERROR_CODES.CHARACTER_INVALID, 'That character does not exist.');
     }
@@ -334,8 +339,8 @@ export class RoomManager extends EventEmitter {
   }
 
   setRoom(participantId, patch) {
-    const { room } = this._findParticipant(participantId);
-    this._requireLobby(room);
+    const { room, member } = this._findParticipant(participantId);
+    this._requireMemberLobby(room, member);
     this._requireHost(room, participantId);
     let changed = false;
     if (patch.trackId !== undefined) {
@@ -366,7 +371,7 @@ export class RoomManager extends EventEmitter {
 
   setReady(participantId, ready) {
     const { room, member } = this._findParticipant(participantId);
-    this._requireLobby(room);
+    this._requireMemberLobby(room, member);
     member.ready = Boolean(ready);
     this._touch(room);
     this._broadcastRoomState(room);
@@ -391,6 +396,7 @@ export class RoomManager extends EventEmitter {
     const raceId = this.raceIdFactory();
     const roster = this._buildRoster(room, seed);
     for (const member of members) {
+      member.postRaceState = null;
       member.raceLoaded = false;
       member.kartIndex = roster.find((entry) => entry.participantId === member.participantId)?.kartIndex ?? null;
       member.controllerKind = CONTROLLER_KINDS.TAKEOVER_AI;
@@ -450,10 +456,15 @@ export class RoomManager extends EventEmitter {
 
   handleInput(participantId, input) {
     const { room, member } = this._findParticipant(participantId);
-    if (!room.race?.simulation || ![ROOM_STATES.COUNTDOWN, ROOM_STATES.RACING].includes(room.state)
-      || input.raceId !== room.race.raceId) {
+    if (!room.race) {
+      if (input.raceId === room.lastRaceId) return false;
       throw new GameError(ERROR_CODES.RACE_MISMATCH, 'That input belongs to a different race.');
     }
+    if (input.raceId !== room.race.raceId) {
+      throw new GameError(ERROR_CODES.RACE_MISMATCH, 'That input belongs to a different race.');
+    }
+    if (!room.race.simulation
+      || ![ROOM_STATES.COUNTDOWN, ROOM_STATES.RACING].includes(room.state)) return false;
     if (!member.connected || member.abandoned || !member.raceLoaded) {
       throw new GameError(ERROR_CODES.FORBIDDEN, 'This participant is not controlling a kart.');
     }
@@ -484,12 +495,18 @@ export class RoomManager extends EventEmitter {
   }
 
   returnToLobby(participantId) {
-    const { room } = this._findParticipant(participantId);
+    const { room, member } = this._findParticipant(participantId);
+    if (room.state === ROOM_STATES.LOBBY) return this.getRoomState(room.code);
     if (room.state !== ROOM_STATES.RESULTS) {
       throw new GameError(ERROR_CODES.INVALID_STATE, 'The race is not showing results.');
     }
-    this._requireHost(room, participantId);
-    this._returnLobby(room);
+    if (member.postRaceState !== POST_RACE_STATES.LOBBY) {
+      member.postRaceState = POST_RACE_STATES.LOBBY;
+      member.ready = false;
+    }
+    this._touch(room);
+    if (!this._maybeReturnLobby(room)) this._broadcastRoomState(room);
+    return this.getRoomState(room.code);
   }
 
   getRoomState(roomCode) {
@@ -504,6 +521,11 @@ export class RoomManager extends EventEmitter {
         isHost: member.participantId === room.hostParticipantId,
         ready: member.ready,
         connected: member.connected,
+        postRaceState: member.postRaceState,
+        activityState: room.state === ROOM_STATES.RESULTS
+          && member.postRaceState !== POST_RACE_STATES.LOBBY
+          ? 'in_game'
+          : 'lobby',
         loaded: room.state === ROOM_STATES.LOADING ? member.raceLoaded : undefined,
         controllerKind: member.controllerKind,
       }));
@@ -525,7 +547,9 @@ export class RoomManager extends EventEmitter {
   getCatchUpMessages(participantId) {
     const { room, member } = this._findParticipant(participantId);
     const messages = [this.getRoomState(room.code)];
-    if (room.race) {
+    const returnedFromResults = room.state === ROOM_STATES.RESULTS
+      && member.postRaceState === POST_RACE_STATES.LOBBY;
+    if (room.race && !returnedFromResults) {
       messages.push(serverMessage(SERVER_MESSAGE_TYPES.PREPARE_RACE, {
         raceId: room.race.raceId,
         seed: room.race.seed,
@@ -625,6 +649,7 @@ export class RoomManager extends EventEmitter {
       pendingUseItems: 0,
       lastInput: { ...DEFAULT_ZERO_INPUT },
       lastInputAt: now,
+      postRaceState: null,
     };
     room.members.set(participantId, member);
     this.participantRooms.set(participantId, room.code);
@@ -821,6 +846,10 @@ export class RoomManager extends EventEmitter {
     room.state = ROOM_STATES.RESULTS;
     room.race.resultsAt = now;
     room.race.results = defaultRaceResults(room);
+    for (const member of room.members.values()) {
+      member.ready = false;
+      member.postRaceState = member.abandoned ? null : POST_RACE_STATES.RESULTS;
+    }
     this._broadcastSnapshots(room);
     this._emitToRoom(room, serverMessage(SERVER_MESSAGE_TYPES.RACE_RESULTS, {
       raceId: room.race.raceId,
@@ -831,16 +860,17 @@ export class RoomManager extends EventEmitter {
 
   _returnLobby(room) {
     room.race?.simulation?.dispose?.();
+    room.lastRaceId = room.race?.raceId ?? room.lastRaceId;
     for (const member of [...room.members.values()]) {
       if (!member.connected || member.abandoned) {
         this._removeParticipant(room, member);
         continue;
       }
-      member.ready = false;
       member.raceLoaded = false;
       member.kartIndex = null;
       member.controllerKind = CONTROLLER_KINDS.HUMAN;
       member.pendingUseItems = 0;
+      member.postRaceState = null;
     }
     room.race = null;
     room.state = ROOM_STATES.LOBBY;
@@ -856,7 +886,20 @@ export class RoomManager extends EventEmitter {
       member.kartIndex = null;
       member.controllerKind = CONTROLLER_KINDS.HUMAN;
       member.pendingUseItems = 0;
+      member.postRaceState = null;
     }
+  }
+
+  _maybeReturnLobby(room) {
+    if (room.state !== ROOM_STATES.RESULTS) return false;
+    const active = [...room.members.values()]
+      .filter((member) => member.connected && !member.abandoned);
+    if (active.length === 0
+      || active.some((member) => member.postRaceState !== POST_RACE_STATES.LOBBY)) {
+      return false;
+    }
+    this._returnLobby(room);
+    return true;
   }
 
   _setController(room, member, kind, force = false) {
@@ -936,6 +979,13 @@ export class RoomManager extends EventEmitter {
     if (room.state !== ROOM_STATES.LOBBY) {
       throw new GameError(ERROR_CODES.INVALID_STATE, 'This action is only available in the lobby.');
     }
+  }
+
+  _requireMemberLobby(room, member) {
+    if (room.state === ROOM_STATES.LOBBY) return;
+    if (room.state === ROOM_STATES.RESULTS
+      && member.postRaceState === POST_RACE_STATES.LOBBY) return;
+    throw new GameError(ERROR_CODES.INVALID_STATE, 'Return to the lobby before doing that.');
   }
 
   _requireHost(room, participantId) {

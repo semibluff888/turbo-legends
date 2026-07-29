@@ -517,10 +517,10 @@ export function resolveKartCollisions(karts, dt) {
 
   for (let i = 0; i < n; i++) {
     const a = karts[i];
-    if (a.state === KART_STATE.RESPAWNING) continue;
+    if (a.finished || a.state === KART_STATE.RESPAWNING) continue;
     for (let j = i + 1; j < n; j++) {
       const b = karts[j];
-      if (b.state === KART_STATE.RESPAWNING) continue;
+      if (b.finished || b.state === KART_STATE.RESPAWNING) continue;
       if (Math.abs(a.y - b.y) > TUNE.collideMaxDy) continue;
 
       const dx = b.x - a.x;

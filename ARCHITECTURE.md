@@ -269,9 +269,8 @@ lobby → loading → countdown → racing → results → lobby
   race has eight karts.
 - The first member is host. If the host disconnects or leaves, ownership moves
   to the earliest joined connected, non-abandoned member.
-- Only the host can change track/difficulty or start/return the room. A character
-  change clears that member's ready flag; a room-setting change clears all ready
-  flags.
+- Only the host can change track/difficulty or start the room. A character change
+  clears that member's ready flag; a room-setting change clears all ready flags.
 - Starting requires at least two members, with every member connected and ready.
   The room then locks against new joins and sends `prepare_race`.
 - Clients build the track/roster and answer `race_loaded`. The loading deadline
@@ -282,8 +281,11 @@ lobby → loading → countdown → racing → results → lobby
   a race abandons the session and cannot be resumed; its AI finishes the race.
 - A connected participant that sends no accepted input for 1.5 seconds is also
   temporarily switched to takeover AI. A newer valid input restores control.
-- The host can return from results immediately; otherwise results return to the
-  lobby after 30 seconds. Disconnected or abandoned members are removed then.
+- Every player can return from results independently. Returned players may change
+  character, ready up, and, if host, change room settings while remaining players
+  are shown as `IN GAME`; starting stays disabled until everyone returns. Results
+  return globally after the last connected player returns or after 30 seconds.
+  Disconnected or abandoned members are removed then.
 - A room with no connected members expires after 60 seconds. An inactive lobby
   expires after 15 minutes.
 

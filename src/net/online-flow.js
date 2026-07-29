@@ -39,10 +39,24 @@ export function shouldAcknowledgeRaceLoaded(prepareMessage, roomState) {
   return onlineRoomPhase(roomState) === 'loading';
 }
 
+export function hasReturnedToOnlineLobby(roomState, participantId) {
+  if (onlineRoomPhase(roomState) !== 'results' || !participantId) return false;
+  const members = roomState?.members || roomState?.participants || roomState?.players || [];
+  const local = Array.isArray(members)
+    ? members.find((member) => String(member?.participantId || member?.id || '') === String(participantId))
+    : null;
+  return local?.postRaceState === 'lobby';
+}
+
 /** Non-lobby state must not replace a race that prepare_race already mounted. */
-export function shouldPresentOnlineLobby(roomState, hasMountedOnlineRace = false) {
+export function shouldPresentOnlineLobby(
+  roomState,
+  hasMountedOnlineRace = false,
+  localParticipantId = '',
+) {
   const phase = onlineRoomPhase(roomState);
   if (phase === 'lobby') return true;
+  if (hasReturnedToOnlineLobby(roomState, localParticipantId)) return true;
   return phase === 'loading' && !hasMountedOnlineRace;
 }
 

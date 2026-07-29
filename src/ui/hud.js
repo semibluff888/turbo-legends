@@ -63,7 +63,10 @@ export class Hud {
       </div>
       <div class="hud-speed"><span class="hud-speed-val">0</span><span class="hud-speed-unit">km/h</span></div>
       <div class="hud-announcer">
-        <div class="hud-banner" hidden></div>
+        <div class="hud-banner" hidden>
+          <span class="hud-banner-primary"></span>
+          <span class="hud-banner-secondary" hidden></span>
+        </div>
         <div class="hud-countdown" hidden></div>
         <div class="hud-wrongway" hidden>WRONG WAY ⚠</div>
       </div>
@@ -82,6 +85,8 @@ export class Hud {
     this._bestVal = q('.hud-best-val');
     this._speedVal = q('.hud-speed-val');
     this._banner = q('.hud-banner');
+    this._bannerPrimary = q('.hud-banner-primary');
+    this._bannerSecondary = q('.hud-banner-secondary');
     this._cd = q('.hud-countdown');
     this._wrong = q('.hud-wrongway');
 
@@ -216,7 +221,7 @@ export class Hud {
     }
     if (!this._finishShown && kart.finished) {
       this._finishShown = true;
-      this.banner('FINISHED! ' + ordinal(rank || kart.rank), 3400, 'finish');
+      this.finish(rank || kart.rank);
     }
     // If countdown numbers were shown but GO never arrived, fire it when the
     // director flips to racing so the layer always cleans itself up.
@@ -255,13 +260,28 @@ export class Hud {
    */
   banner(text, ms = 2400, kind = '') {
     const el = this._banner;
-    if (!el.hidden && el.textContent === text) return;
+    if (!el.hidden && this._bannerPrimary.textContent === text
+      && this._bannerSecondary.hidden) return;
     el.className = 'hud-banner' + (kind ? ' ' + kind : '');
-    el.textContent = text;
+    this._bannerPrimary.textContent = text;
+    this._bannerSecondary.textContent = '';
+    this._bannerSecondary.hidden = true;
     el.hidden = false;
     repop(el, 'banner-in');
     clearTimeout(this._bannerTimer);
     this._bannerTimer = setTimeout(() => { el.hidden = true; }, ms);
+  }
+
+  /** Keep the finishing place and wait hint visible until the results screen. */
+  finish(rank) {
+    const el = this._banner;
+    el.className = 'hud-banner finish';
+    this._bannerPrimary.textContent = 'FINISHED! ' + ordinal(rank);
+    this._bannerSecondary.textContent = 'WAITING FOR OTHER RACERS TO FINISH...';
+    this._bannerSecondary.hidden = false;
+    el.hidden = false;
+    repop(el, 'banner-in');
+    clearTimeout(this._bannerTimer);
   }
 
   /** @param {boolean} on */

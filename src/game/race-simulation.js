@@ -7,7 +7,7 @@
 // item pipeline as AI controls.
 
 import { RACE, RACE_STATE, DIFFICULTY, SURFACE } from '../core/constants.js';
-import { clamp, clamp01, loopDelta, angleDelta } from '../core/mathx.js';
+import { clamp, clamp01, loopDelta } from '../core/mathx.js';
 import { deriveRng } from '../core/rng.js';
 import { Kart, resetControls } from './kart.js';
 import { CHARACTERS_BY_ID } from './characters.js';
@@ -20,10 +20,6 @@ const LAP_TELEPORT_GUARD_FRAC = 0.25;
 const WRONG_WAY_WINDOW = 1.5;
 const WRONG_WAY_TRIGGER = -2.5;
 const WRONG_WAY_MIN_SPEED = 3.0;
-const CRUISE_THROTTLE = 0.5;
-const CRUISE_LOOKAHEAD_MIN = 6.0;
-const CRUISE_LOOKAHEAD_SPEED = 0.55;
-const CRUISE_STEER_GAIN = 2.0;
 
 export const CONTROLLER_KIND = Object.freeze({
   HUMAN: 'human',
@@ -199,7 +195,6 @@ export class RaceSimulation {
       rubberBandTargetProgress: null,
     };
     this._gridScratch = { x: 0, y: 0, z: 0, heading: 0, s: 0 };
-    this._pt = { x: 0, y: 0, z: 0, heading: 0 };
     this._finishersThisStep = [];
 
     this._placeGrid();
@@ -375,7 +370,7 @@ export class RaceSimulation {
     for (let i = 0; i < this._karts.length; i++) {
       if (this._controllerKinds[i] !== CONTROLLER_KIND.HUMAN) continue;
       const kart = this._karts[i];
-      if (kart.finished) this._cruise(kart);
+      if (kart.finished) resetControls(kart.controls);
       else this._copyControls(kart.controls, this._controlAt(controlsByKartIndex, i));
     }
   }
@@ -394,19 +389,6 @@ export class RaceSimulation {
     dst.drift = !!src.drift;
     dst.useItem = !!src.useItem;
     dst.lookBack = !!src.lookBack;
-  }
-
-  _cruise(kart) {
-    const c = kart.controls;
-    const look = Math.max(CRUISE_LOOKAHEAD_MIN, kart.speed * CRUISE_LOOKAHEAD_SPEED);
-    this.track.toWorld(kart.s + look, 0, this._pt);
-    const desired = Math.atan2(this._pt.x - kart.x, this._pt.z - kart.z);
-    c.steer = clamp(angleDelta(kart.yaw, desired) * CRUISE_STEER_GAIN, -1, 1);
-    c.throttle = CRUISE_THROTTLE;
-    c.brake = 0;
-    c.drift = false;
-    c.useItem = false;
-    c.lookBack = false;
   }
 
   _syncWorld() {
@@ -491,6 +473,12 @@ export class RaceSimulation {
     kart.finished = true;
     kart.finishTime = this.elapsed;
     kart.wrongWay = false;
+    kart.cancelDrift();
+    kart.boostTimer = 0;
+    kart.boostPower = 1;
+    kart.boostSource = '';
+    kart.speedMul = 1;
+    resetControls(kart.controls);
     kart._finishIndex = this._finishOrder.length;
     this._finishOrder.push(kart);
     kart.rank = kart._finishIndex + 1;

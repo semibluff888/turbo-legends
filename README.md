@@ -52,9 +52,10 @@ counts.
 - A disconnected kart is immediately driven by takeover AI. The player can
   reclaim it with the stored session token for 30 seconds; the earliest joined
   connected player becomes host when needed.
-- Results return to the same lobby when the host requests it, or automatically
-  after 30 seconds. Empty rooms expire after 60 seconds and idle lobbies after
-  15 minutes.
+- Every player can return from results independently and prepare for the next
+  race while remaining players are shown as `IN GAME`. The room becomes fully
+  startable after everyone returns, or automatically after 30 seconds. Empty
+  rooms expire after 60 seconds and idle lobbies after 15 minutes.
 
 Rooms, reconnect tokens, and results are process-memory state. Restarting the
 server clears them; v1 does not include accounts, persistent results, public

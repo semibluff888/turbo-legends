@@ -113,12 +113,11 @@ const AI = {
   rubberDown: 0.10,
   rubberClamp: [0.85, 1.18],
 
-  // Start & post-finish
+  // Start
   startPressBase: 0.13,          // aim: press this long before GO (rocket window)
   startPressWobbleBase: 0.05,
   startPressWobbleSkill: 0.28,   // * (1 - aiSkill)
   startPressClamp: [0.03, 0.55],
-  cruiseThrottle: 0.55,
 };
 
 /** Sign of v with a deadzone, falling back to `fb` when ~zero. */
@@ -236,7 +235,7 @@ export class AiDriver {
 
     if (kart.finished) {
       kart.aiSpeedMul = 1;
-      this._updateCruise(c);
+      this._updateFinished(c);
       return;
     }
 
@@ -350,16 +349,14 @@ export class AiDriver {
     c.throttle = remaining <= this._startPressAt ? 1 : 0;
   }
 
-  /** Post-finish: gentle cruise along the centreline. */
-  _updateCruise(c) {
-    const kart = this.kart;
-    const look = clamp(kart.speed * AI.lookAheadSpeedMul, AI.lookAheadMin, AI.lookAheadMax);
-    this.track.toWorld(kart.s + look, 0, this._pt);
-    const desired = Math.atan2(this._pt.x - kart.x, this._pt.z - kart.z);
-    c.steer = clamp(angleDelta(kart.yaw, desired) * AI.steerGain, -1, 1);
-    c.throttle = AI.cruiseThrottle;
+  /** Post-finish: release the controls and let engine braking stop the kart. */
+  _updateFinished(c) {
+    c.steer = 0;
+    c.throttle = 0;
     c.brake = 0;
     c.drift = false;
+    c.useItem = false;
+    c.lookBack = false;
   }
 
   // ---------------------------------------------------------------------------

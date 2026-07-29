@@ -31,11 +31,18 @@ test('main subscribes to the room, race, result and reconnect event stream', () 
 });
 
 test('main protects prepare/loading ordering and resumed load acknowledgements', () => {
-  assert.match(source, /shouldPresentOnlineLobby\(roomState, race\?\.session\.kind === 'online'\)/);
+  assert.match(source, /shouldPresentOnlineLobby\([\s\S]*roomState,[\s\S]*race\?\.session\.kind === 'online',[\s\S]*onlineClient\.selfId/);
+  assert.match(source, /hasReturnedToOnlineLobby\(roomState, onlineClient\.selfId\)/);
   assert.match(
     source,
     /if \(shouldAcknowledgeRaceLoaded\(message, onlineRoomState\)\) \{\s*onlineClient\.markRaceLoaded\(message\.raceId\);/,
   );
+});
+
+test('results use a settled presentation loop and stop continuous engine audio', () => {
+  assert.match(source, /race\.chase\.settle\?\.\(\);\s*audio\.stopEngine\(\);/);
+  assert.match(source, /function updateResultsFrame\(dt\)/);
+  assert.doesNotMatch(source, /if \(mode === 'online-results'\)[\s\S]*?updateRaceFrame\(dt\);/);
 });
 
 test('main keeps paused online panels alive and neutralizes hidden-page controls', () => {

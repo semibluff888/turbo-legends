@@ -246,6 +246,7 @@ export class OnlineRaceSession {
     this._prevUseItem = !!controls?.useItem;
 
     if (this._hasSnapshot
+      && !this._player.finished
       && (this.state === RACE_STATE.COUNTDOWN || this.state === RACE_STATE.RACING)) {
       this._sendAccumulator += dt;
       while (this._sendAccumulator >= INPUT_DT) {
@@ -368,6 +369,22 @@ export class OnlineRaceSession {
 
   _applyLocalSnapshot(snapshot) {
     const display = this._player;
+    if (snapshot.finished) {
+      const justFinished = !display.finished;
+      if (justFinished) {
+        this._inputHistory.length = 0;
+        this._sendAccumulator = 0;
+        this._prevUseItem = false;
+        this._correction.x = 0;
+        this._correction.y = 0;
+        this._correction.z = 0;
+        this._correction.yaw = 0;
+        this._predictionReady = false;
+      }
+      this._applyRemoteSnapshot(display, snapshot, { blendFirstSnapshot: true });
+      copyKartFields(this._predictedKart, snapshot);
+      return;
+    }
     const wasPredictionReady = this._predictionReady;
     const before = { x: display.x, y: display.y, z: display.z, yaw: display.yaw, state: display.state };
     copyKartFields(display, snapshot);
@@ -401,7 +418,7 @@ export class OnlineRaceSession {
     this._updateLocalDisplay(0);
   }
 
-  _applyRemoteSnapshot(kart, snapshot) {
+  _applyRemoteSnapshot(kart, snapshot, { blendFirstSnapshot = false } = {}) {
     const current = motionState(kart);
     copyKartFields(kart, snapshot, { motion: false });
     const target = {
@@ -420,7 +437,7 @@ export class OnlineRaceSession {
       visualScale: finite(snapshot.visualScale, current.visualScale),
     };
     const distance = Math.hypot(target.x - current.x, target.y - current.y, target.z - current.z);
-    if (!this._remoteMotion.has(kart.index)
+    if ((!blendFirstSnapshot && !this._remoteMotion.has(kart.index))
       || distance > SNAP_DISTANCE
       || snapshot.state === KART_STATE.RESPAWNING) {
       applyMotion(kart, target, target, 1);

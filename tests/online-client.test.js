@@ -123,6 +123,41 @@ test('welcome credentials are persisted and room messages are emitted', () => {
   });
 });
 
+test('returning from results clears the client race id without leaving the room', () => {
+  FakeWebSocket.instances.length = 0;
+  const client = new OnlineClient({
+    WebSocketImpl: FakeWebSocket,
+    location: { protocol: 'http:', host: 'localhost:5173' },
+    sessionStorage: new MemoryStorage(),
+  });
+  client.createRoom('Host');
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  socket.receive({
+    v: 1,
+    type: 'welcome',
+    roomCode: 'ROOM22',
+    participantId: 'host',
+    resumeToken: 'secret',
+  });
+  socket.receive({ v: 1, type: 'prepare_race', raceId: 'race_identifier_123' });
+  assert.equal(client.raceId, 'race_identifier_123');
+
+  socket.receive({
+    v: 1,
+    type: 'room_state',
+    roomCode: 'ROOM22',
+    state: 'results',
+    raceId: 'race_identifier_123',
+    members: [
+      { participantId: 'host', postRaceState: 'lobby', connected: true },
+      { participantId: 'guest', postRaceState: 'results', connected: true },
+    ],
+  });
+  assert.equal(client.raceId, null);
+  assert.equal(client.room.code, 'ROOM22');
+});
+
 test('unexpected close schedules a resume attempt', () => {
   FakeWebSocket.instances.length = 0;
   const storage = new MemoryStorage();

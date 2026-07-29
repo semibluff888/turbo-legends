@@ -56,6 +56,13 @@ export class ChaseCamera {
     this._shake = Math.min(SHAKE_MAX, this._shake + amount);
   }
 
+  /** Remove transient gameplay motion before presenting a stable overlay. */
+  settle() {
+    this._shake = 0;
+    this._lookBackSmooth = 0;
+    this._apply();
+  }
+
   /** Jump straight to the ideal pose for `kart` — call on spawn/respawn/reset. */
   snapTo(kart) {
     const fx = kart.forwardX;

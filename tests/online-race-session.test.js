@@ -225,3 +225,35 @@ test('race events are deduplicated and world VFX drain once', () => {
   assert.equal(session.items.drainVfx().length, 1);
   assert.equal(session.items.drainVfx().length, 0);
 });
+
+test('a finished local kart switches to snapshot interpolation and stops sending input', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  const session = new OnlineRaceSession({
+    client,
+    track,
+    raceId: 'race-finished',
+    roster: roster(),
+    localParticipantId: 'local',
+  });
+  session.applySnapshot({
+    raceId: 'race-finished',
+    state: RACE_STATE.RACING,
+    karts: [snapshotKart(0, { x: 0 }), snapshotKart(1)],
+  });
+  session.update(FIXED_DT, { throttle: 1 });
+  session.update(FIXED_DT, { throttle: 1 });
+  const sentBeforeFinish = client.inputs.length;
+
+  session.applySnapshot({
+    raceId: 'race-finished',
+    state: RACE_STATE.RACING,
+    karts: [snapshotKart(0, { x: 1, speed: 8, finished: true }), snapshotKart(1)],
+  });
+  assert.equal(session.player.x, 0);
+  session.update(0.05, { throttle: 1 });
+  assert.ok(session.player.x > 0 && session.player.x < 1);
+  session.update(0.05, { throttle: 1 });
+  assert.equal(session.player.x, 1);
+  assert.equal(client.inputs.length, sentBeforeFinish);
+});

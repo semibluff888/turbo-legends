@@ -246,6 +246,14 @@ export class OnlineClient {
     } else if (message.type === SERVER_MESSAGE_TYPES.ROOM_STATE) {
       this.room = message.room || message;
       this._captureSession(message);
+      const phase = String(this.room?.phase || this.room?.state || '');
+      const members = this.room?.members || this.room?.participants || this.room?.players || [];
+      const self = Array.isArray(members)
+        ? members.find((member) => String(member?.participantId || member?.id || '') === String(this.selfId || ''))
+        : null;
+      if (phase === 'lobby' || (phase === 'results' && self?.postRaceState === 'lobby')) {
+        this.raceId = null;
+      }
     } else if (message.type === SERVER_MESSAGE_TYPES.PREPARE_RACE) {
       this.raceId = message.raceId;
     } else if (message.type === SERVER_MESSAGE_TYPES.RACE_RESULTS) {

@@ -262,3 +262,64 @@ test('production race factory accepts the announced roster without reordering it
   await harness.manager.tick();
   assert.equal(room.race.tick, 1);
 });
+
+test('late input from the current finished race is ignored but another race id is rejected', async () => {
+  const harness = createHarness();
+  const { host, race } = await startTwoPlayerRace(harness);
+  const room = harness.manager.rooms.get(host.roomCode);
+  harness.manager._finishRace(room, harness.now());
+  const input = {
+    raceId: race.raceId,
+    seq: 1,
+    useItemSeq: 0,
+    throttle: 1,
+    brake: 0,
+    steer: 0,
+    drift: false,
+    lookBack: false,
+  };
+
+  assert.equal(harness.manager.handleInput(host.participantId, input), false);
+  assert.throws(
+    () => harness.manager.handleInput(host.participantId, { ...input, raceId: 'another_race_123' }),
+    (error) => error.code === ERROR_CODES.RACE_MISMATCH,
+  );
+
+  harness.manager.returnToLobby(host.participantId);
+  const guest = harness.manager.getRoomState(host.roomCode).members
+    .find((member) => member.participantId !== host.participantId);
+  harness.manager.returnToLobby(guest.participantId);
+  assert.equal(harness.manager.handleInput(host.participantId, input), false);
+});
+
+test('players return independently and can prepare while others remain in game', async () => {
+  const harness = createHarness();
+  const { host, guest } = await startTwoPlayerRace(harness);
+  const room = harness.manager.rooms.get(host.roomCode);
+  harness.manager._finishRace(room, harness.now());
+
+  harness.manager.returnToLobby(host.participantId);
+  let state = harness.manager.getRoomState(host.roomCode);
+  assert.equal(state.state, ROOM_STATES.RESULTS);
+  assert.equal(state.members.find((member) => member.participantId === host.participantId).activityState, 'lobby');
+  assert.equal(state.members.find((member) => member.participantId === guest.participantId).activityState, 'in_game');
+  assert.deepEqual(
+    harness.manager.getCatchUpMessages(host.participantId).map((message) => message.type),
+    ['room_state'],
+  );
+
+  harness.manager.selectCharacter(host.participantId, 'kit');
+  harness.manager.setRoom(host.participantId, { difficulty: 'hard' });
+  harness.manager.setReady(host.participantId, true);
+  state = harness.manager.getRoomState(host.roomCode);
+  assert.equal(state.members.find((member) => member.participantId === host.participantId).ready, true);
+  assert.equal(state.canStart, false);
+
+  harness.manager.returnToLobby(guest.participantId);
+  state = harness.manager.getRoomState(host.roomCode);
+  assert.equal(state.state, ROOM_STATES.LOBBY);
+  assert.equal(state.settings.difficulty, 'hard');
+  assert.equal(state.members.find((member) => member.participantId === host.participantId).characterId, 'kit');
+  assert.equal(state.members.find((member) => member.participantId === host.participantId).ready, true);
+  assert.equal(state.members.find((member) => member.participantId === guest.participantId).ready, false);
+});

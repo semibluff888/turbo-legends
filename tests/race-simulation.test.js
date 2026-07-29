@@ -178,6 +178,27 @@ test('authoritative race state remains racing after one finisher and only ends g
   assert.equal(simulation.state, RACE_STATE.RESULTS);
 });
 
+test('a finished kart releases controls and coasts to a stop', () => {
+  const simulation = makeSimulation({ kinds: CHARACTERS.map(() => CONTROLLER_KIND.HUMAN) });
+  const kart = simulation.karts[0];
+  simulation.state = RACE_STATE.RACING;
+  kart.speed = 20;
+  kart.boostTimer = 2;
+  kart.boostPower = 1.5;
+  kart.speedMul = 1.5;
+  kart.controls.throttle = 1;
+  kart.controls.steer = 1;
+  simulation._finishKart(kart, false);
+
+  assert.equal(kart.boostTimer, 0);
+  assert.equal(kart.controls.throttle, 0);
+  assert.equal(kart.controls.steer, 0);
+  for (let i = 0; i < 120; i++) simulation.update(FIXED_DT, []);
+  assert.ok(kart.speed > 0 && kart.speed < 20);
+  for (let i = 0; i < 240; i++) simulation.update(FIXED_DT, []);
+  assert.equal(kart.speed, 0);
+});
+
 test('roster and controller validation rejects ambiguous multiplayer state', () => {
   const track = new Track(getTrackDef('sunset-circuit'));
   assert.throws(() => new RaceSimulation(track, { roster: makeRoster().slice(0, 7) }), /exactly 8/);

@@ -1336,6 +1336,7 @@ kbd {
 .online-mini-chip.is-host { color: #fff; background: #b45fe9; }
 .online-ready-chip { margin: 0; color: rgba(255, 255, 255, 0.52); background: rgba(255, 255, 255, 0.08); }
 .online-ready-chip.is-ready { color: #122b22; background: #77f0be; }
+.online-ready-chip.is-in-game { color: #071e31; background: #7fe3ff; }
 
 .online-character-grid { display: grid; grid-template-columns: repeat(4, minmax(70px, 1fr)); gap: 8px; }
 .online-character-option {
@@ -1593,6 +1594,18 @@ kbd {
   color: var(--accent-hot);
   text-shadow: 0 6px 0 rgba(20, 8, 40, 0.5);
   filter: drop-shadow(0 0 34px rgba(255, 95, 162, 0.5));
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.hud-banner:not([hidden]) { display: flex; }
+.hud-banner-secondary {
+  margin-top: 14px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: clamp(13px, 1.7vw, 20px);
+  letter-spacing: 0.09em;
+  -webkit-text-stroke: 0;
+  text-shadow: 0 3px 0 rgba(20, 8, 40, 0.55);
 }
 .hud-banner.final-lap { color: var(--accent); animation-name: banner-in, pulse; }
 .hud-banner.finish    { color: #36d6a0; }

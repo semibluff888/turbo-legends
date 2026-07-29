@@ -282,12 +282,31 @@ test('two WebSocket clients can ready, start, receive snapshots/results, and ret
     const hostMark = host.mark();
     const guestMark = guest.mark();
     host.send({ type: 'return_lobby' });
+    const hostWaiting = await host.next(message => (
+      message.type === 'room_state'
+      && message.state === 'results'
+      && message.members.find(member => member.participantId === hostWelcome.participantId)?.postRaceState === 'lobby'
+    ), hostMark);
+    const guestWaiting = await guest.next(message => (
+      message.type === 'room_state'
+      && message.state === 'results'
+      && message.members.find(member => member.participantId === hostWelcome.participantId)?.postRaceState === 'lobby'
+    ), guestMark);
+    assert.equal(
+      hostWaiting.members.find(member => member.participantId === guestWelcome.participantId)?.activityState,
+      'in_game',
+    );
+    assert.equal(guestWaiting.state, 'results');
+
+    const finalHostMark = host.mark();
+    const finalGuestMark = guest.mark();
+    guest.send({ type: 'return_lobby' });
     const hostLobby = await host.next(message => (
       message.type === 'room_state' && message.state === 'lobby' && message.raceId === null
-    ), hostMark);
+    ), finalHostMark);
     const guestLobby = await guest.next(message => (
       message.type === 'room_state' && message.state === 'lobby' && message.raceId === null
-    ), guestMark);
+    ), finalGuestMark);
     assert.equal(hostLobby.members.every(member => member.ready === false), true);
     assert.equal(guestLobby.members.length, 2);
   } finally {

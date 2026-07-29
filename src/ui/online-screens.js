@@ -132,6 +132,11 @@ export function buildLobbyView(roomState = {}, localParticipantId = '') {
       ready: Boolean(firstDefined(member.ready, member.isReady, false)),
       connected: !['disconnected', 'offline', 'expired'].includes(state),
       connectionState: state,
+      postRaceState: String(firstDefined(member.postRaceState, '')),
+      activityState: String(firstDefined(
+        member.activityState,
+        phase === 'results' && member.postRaceState !== 'lobby' ? 'in_game' : 'lobby',
+      )),
       isHost: participantId === hostId || member.isHost === true,
       isLocal: member.isLocal === true
         || (participantId !== '' && participantId === String(localParticipantId || '')),
@@ -150,6 +155,8 @@ export function buildLobbyView(roomState = {}, localParticipantId = '') {
     ? roomState.canStart
     : onlineMembers.length >= 2 && everyoneReady && phase === 'lobby';
   const isHost = Boolean(localMember?.isHost || (localParticipantId && String(localParticipantId) === hostId));
+  const canManageLobby = phase === 'lobby'
+    || (phase === 'results' && localMember?.postRaceState === 'lobby');
 
   return {
     roomCode: normalizeRoomCode(firstDefined(roomState.roomCode, roomState.code, '')),
@@ -161,6 +168,7 @@ export function buildLobbyView(roomState = {}, localParticipantId = '') {
     capacity: ONLINE_ROOM_CAPACITY,
     everyoneReady,
     isHost,
+    canManageLobby,
     canStart: isHost && serverAllowsStart && phase === 'lobby',
     occupiedCharacterIds,
     trackId: String(firstDefined(settings.trackId, roomState.trackId, TRACKS[0]?.id, '')),
@@ -567,13 +575,16 @@ export class OnlineScreens {
       createNode(this.doc, 'span', 'online-member-character', identity, character?.name || UI_COPY.online.lobby.choosing);
       const badges = createNode(this.doc, 'span', 'online-member-badges', row);
       if (member.isHost) createNode(this.doc, 'span', 'online-mini-chip is-host', badges, UI_COPY.online.lobby.host);
+      const inGame = member.activityState === 'in_game';
       createNode(
         this.doc,
         'span',
-        `online-ready-chip ${member.connected && member.ready ? 'is-ready' : ''}`,
+        `online-ready-chip ${member.connected && member.ready && !inGame ? 'is-ready' : ''}${inGame ? ' is-in-game' : ''}`,
         badges,
         member.connected
-          ? (member.ready ? UI_COPY.online.lobby.ready : UI_COPY.online.lobby.notReady)
+          ? (inGame
+            ? UI_COPY.online.lobby.inGame
+            : (member.ready ? UI_COPY.online.lobby.ready : UI_COPY.online.lobby.notReady))
           : UI_COPY.online.lobby.offline,
       );
     }
@@ -587,7 +598,7 @@ export class OnlineScreens {
       const locked = occupiedByOther.has(id);
       button.classList.toggle('is-selected', selected);
       button.classList.toggle('is-locked', locked);
-      button.disabled = view.phase !== 'lobby' || locked || !view.localMember?.connected;
+      button.disabled = !view.canManageLobby || locked || !view.localMember?.connected;
       button.setAttribute('aria-pressed', String(selected));
     }
 
@@ -595,7 +606,7 @@ export class OnlineScreens {
     const difficultySelect = root.querySelector('[data-room-setting="difficulty"]');
     if ([...trackSelect.options].some((option) => option.value === view.trackId)) trackSelect.value = view.trackId;
     if ([...difficultySelect.options].some((option) => option.value === view.difficulty)) difficultySelect.value = view.difficulty;
-    const settingsDisabled = !view.isHost || view.phase !== 'lobby';
+    const settingsDisabled = !view.isHost || !view.canManageLobby;
     trackSelect.disabled = settingsDisabled;
     difficultySelect.disabled = settingsDisabled;
     root.querySelector('[data-host-note]').textContent = view.isHost
@@ -604,20 +615,22 @@ export class OnlineScreens {
 
     const ready = root.querySelector('[data-action="ready"]');
     ready.textContent = view.localMember?.ready ? UI_COPY.online.lobby.cancelReady : UI_COPY.online.lobby.readyUp;
-    ready.disabled = view.phase !== 'lobby' || !view.localMember?.connected;
+    ready.disabled = !view.canManageLobby || !view.localMember?.connected;
     ready.classList.toggle('is-active', Boolean(view.localMember?.ready));
     const start = root.querySelector('[data-action="start"]');
     start.hidden = !view.isHost;
     start.disabled = !view.canStart;
-    const status = view.phase !== 'lobby'
-      ? UI_COPY.online.lobby.loading
-      : view.onlineCount < 2
-        ? UI_COPY.online.lobby.waitingForRacer
-        : !view.everyoneReady
-          ? UI_COPY.online.lobby.readyCount
-            .replace('{ready}', String(view.members.filter((member) => member.ready && member.connected).length))
-            .replace('{total}', String(view.onlineCount))
-          : view.isHost ? UI_COPY.online.lobby.readyToStart : UI_COPY.online.lobby.waitingForHost;
+    const status = view.phase === 'results' && view.localMember?.postRaceState === 'lobby'
+      ? UI_COPY.online.lobby.waitingForReturn
+      : view.phase !== 'lobby'
+        ? UI_COPY.online.lobby.loading
+        : view.onlineCount < 2
+          ? UI_COPY.online.lobby.waitingForRacer
+          : !view.everyoneReady
+            ? UI_COPY.online.lobby.readyCount
+              .replace('{ready}', String(view.members.filter((member) => member.ready && member.connected).length))
+              .replace('{total}', String(view.onlineCount))
+            : view.isHost ? UI_COPY.online.lobby.readyToStart : UI_COPY.online.lobby.waitingForHost;
     this.showStatus(context.status ?? status, 'lobby');
     if (context.error) this.showError(context.error, 'lobby');
     else if (context.clearError) this.clearError('lobby');
@@ -661,10 +674,8 @@ export class OnlineScreens {
       createNode(this.doc, 'td', 'online-result-time', row, formatOnlineTime(result.bestLap));
     });
     const returnButton = root.querySelector('[data-action="return"]');
-    returnButton.hidden = !view.isHost;
-    const wait = view.isHost
-      ? UI_COPY.online.results.hostHint
-      : UI_COPY.online.results.waitingForHost;
+    returnButton.hidden = false;
+    const wait = UI_COPY.online.results.returnHint;
     const countdown = view.autoReturnSeconds === null
       ? ''
       : ` ${UI_COPY.online.results.autoReturn.replace('{seconds}', String(Math.max(0, Math.ceil(view.autoReturnSeconds))))}`;

@@ -113,6 +113,7 @@ export const UI_COPY = Object.freeze({
       host: 'HOST',
       ready: 'READY',
       notReady: 'NOT READY',
+      inGame: 'IN GAME',
       offline: 'OFFLINE',
       leave: 'LEAVE ROOM',
       readyUp: 'READY UP',
@@ -123,6 +124,7 @@ export const UI_COPY = Object.freeze({
       readyCount: '{ready} / {total} racers ready',
       readyToStart: 'Everyone is ready — start the race!',
       waitingForHost: 'Everyone is ready — waiting for the host',
+      waitingForReturn: 'Waiting for the other racers to return. You can prepare for the next race now.',
     },
     results: {
       official: 'OFFICIAL RESULTS',
@@ -133,8 +135,7 @@ export const UI_COPY = Object.freeze({
       bestLap: 'Best Lap',
       leave: 'LEAVE ROOM',
       returnLobby: 'RETURN TO LOBBY',
-      hostHint: 'Return everyone to the lobby when you are ready.',
-      waitingForHost: 'Waiting for the host to return everyone to the lobby.',
+      returnHint: 'Return to the lobby when you are ready.',
       autoReturn: 'Returning automatically in {seconds}s.',
     },
     errors: {
