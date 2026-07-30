@@ -103,3 +103,22 @@ test('health provider exposes aggregate counts without exposing room data', asyn
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+test('metadata endpoint exposes only the configured version without caching', async () => {
+  const server = createStaticServer(PROJECT_ROOT, {
+    metadataProvider: () => ({ version: '9.8.7' }),
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  try {
+    const response = await getBodyResponse(server.address().port, '/api/meta');
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.headers['cache-control'], 'no-store');
+    assert.deepEqual(JSON.parse(response.body), { version: '9.8.7' });
+    assert.equal(response.body.includes('dependencies'), false);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});

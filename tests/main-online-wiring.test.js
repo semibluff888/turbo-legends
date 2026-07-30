@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+const onlineScreensSource = readFileSync(new URL('../src/ui/online-screens.js', import.meta.url), 'utf8');
 
 test('main maps every online screen action to the transport client', () => {
   const requiredCalls = [
@@ -16,7 +17,7 @@ test('main maps every online screen action to the transport client', () => {
     'onlineClient.startRace()',
     'onlineClient.leaveRoom()',
     'onlineClient.returnRoom()',
-    'onlineClient.disconnect()',
+    'onlineClient.startTelemetry()',
   ];
   for (const call of requiredCalls) {
     assert.equal(source.includes(call), true, `missing main.js wiring: ${call}`);
@@ -25,14 +26,37 @@ test('main maps every online screen action to the transport client', () => {
 
 test('main subscribes to the room, race, result and reconnect event stream', () => {
   for (const event of [
-    'connection', 'lobby_state', 'room_state', 'prepare_race', 'race_results', 'error', 'reconnect_expired',
+    'connection', 'telemetry', 'lobby_state', 'room_state', 'prepare_race', 'race_results', 'error',
+    'reconnect_expired',
   ]) {
     assert.match(source, new RegExp(`onlineClient\\.on\\('${event}'`));
   }
   assert.match(source, /onlineScreens\.updateResults\(message,/);
   assert.match(source, /onlineScreens\.activeScreen === 'lobby'[\s\S]*onlineScreens\.updateLobby/);
   assert.match(source, /onlineScreens\.activeScreen === 'room'[\s\S]*onlineScreens\.updateRoom/);
-  assert.match(source, /if \(isOnlineConnectionError\(message\)\) onlineScreens\.setConnectionState\('error'\);/);
+  assert.match(source, /if \(isOnlineConnectionError\(message\)\) \{[\s\S]*networkStatus\.setConnectionState\('error'\);/);
+});
+
+test('title telemetry keeps the Lobby transport alive without navigating on background updates', () => {
+  assert.match(source, /onBackToTitle\(\) \{\s*goToTitle\(\);\s*\}/);
+  assert.doesNotMatch(source, /onBackToTitle\(\)[\s\S]{0,120}onlineClient\.disconnect\(\)/);
+  assert.match(
+    source,
+    /onlineClient\.on\('lobby_state',[\s\S]*onlineLobbyState = message \|\| \{ rooms: \[\] \};[\s\S]*if \(mode === 'online-lobby'\) showOnlineLobby\(onlineLobbyState\);/,
+  );
+  assert.match(source, /function goToTitle\(\)[\s\S]*networkStatus\.showDetails\(\);[\s\S]*if \(onlineClient\.scope === 'none'\) onlineClient\.enterLobby\(\);/);
+});
+
+test('network telemetry shows full details off-track and compact details during races', () => {
+  assert.match(source, /function openOnlineLobby[\s\S]*networkStatus\.showDetails\(\)/);
+  assert.match(source, /function showOnlineRoom[\s\S]*networkStatus\.showDetails\(\)/);
+  assert.match(source, /function mountRace[\s\S]*networkStatus\.showRace\(\)/);
+  assert.match(source, /session\.state === RACE_STATE\.RESULTS[\s\S]*networkStatus\.showDetails\(\)/);
+  assert.match(source, /void networkStatus\.loadVersion\(\)/);
+});
+
+test('online screens do not render duplicate connection badges', () => {
+  assert.doesNotMatch(onlineScreensSource, /data-online-connection/);
 });
 
 test('main protects prepare/loading ordering and resumed load acknowledgements', () => {

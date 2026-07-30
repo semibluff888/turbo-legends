@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { request } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
@@ -15,6 +16,7 @@ function readJson(port, path) {
       res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => resolve({
         statusCode: res.statusCode,
+        headers: res.headers,
         body: JSON.parse(Buffer.concat(chunks).toString('utf8')),
       }));
     });
@@ -142,6 +144,12 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
   let guest;
   let resumedGuest;
   try {
+    const packageMetadata = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+    const metadata = await readJson(port, '/api/meta');
+    assert.equal(metadata.statusCode, 200);
+    assert.equal(metadata.headers['cache-control'], 'no-store');
+    assert.deepEqual(metadata.body, { version: packageMetadata.version });
+
     host = await connectClient(WebSocket, url, origin);
     assert.equal((await host.next(message => message.type === 'welcome')).session, null);
     host.send({ type: 'enter_lobby' });
@@ -163,7 +171,13 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
     assert.equal(hostRoom.roomType, 'public');
     assert.equal(hostRoom.maxPlayers, 4);
 
+    const twoClientMark = host.mark();
     guest = await connectClient(WebSocket, url, origin);
+    const twoClientStats = await host.next(
+      message => message.type === 'server_stats' && message.onlineCount === 2,
+      twoClientMark,
+    );
+    assert.equal(twoClientStats.onlineCount, 2);
     guest.send({ type: 'enter_lobby' });
     const guestLobby = await guest.next(message => message.type === 'lobby_state');
     assert.deepEqual(guestLobby.rooms[0], {
@@ -190,6 +204,7 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
     assert.equal(guestRoom.self.isHost, false);
     assert.equal(updatedHostRoom.self.isHost, true);
 
+    const oneClientMark = host.mark();
     const guestClosed = new Promise(resolve => guest.socket.once('close', resolve));
     guest.socket.terminate();
     await guestClosed;
@@ -198,6 +213,11 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
       && message.members.some(member => member.participantId === guestWelcome.participantId && !member.connected)
     ));
     assert.equal(disconnectedRoom.members.length, 2);
+    const oneClientStats = await host.next(
+      message => message.type === 'server_stats' && message.onlineCount === 1,
+      oneClientMark,
+    );
+    assert.equal(oneClientStats.onlineCount, 1);
 
     resumedGuest = await connectClient(WebSocket, url, origin);
     resumedGuest.send({

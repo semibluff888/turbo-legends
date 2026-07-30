@@ -316,6 +316,97 @@ kbd {
 .menu-status.is-showing { animation: status-pop 0.22s ease-out both; }
 
 /* ---------------------------------------------------------------------------
+   Shared network telemetry
+--------------------------------------------------------------------------- */
+
+#network-status-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  pointer-events: none;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.09em;
+  text-shadow: var(--ink-shadow);
+}
+
+.network-summary,
+.game-version {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(16, 12, 38, 0.68);
+  box-shadow: 0 6px 18px rgba(8, 4, 22, 0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.network-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+#network-status-overlay[data-context='details'] .network-summary {
+  left: max(16px, env(safe-area-inset-left, 0px) + 10px);
+  bottom: max(16px, env(safe-area-inset-bottom, 0px) + 10px);
+}
+
+#network-status-overlay[data-context='race'] .network-summary {
+  top: max(16px, env(safe-area-inset-top, 0px) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.network-connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.network-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9aa4b0;
+  box-shadow: 0 0 9px currentColor;
+}
+
+.network-connection[data-state='connected'] { color: #77f0be; }
+.network-connection[data-state='connected'] .network-dot { background: #44e49e; }
+.network-connection[data-state='connecting'],
+.network-connection[data-state='reconnecting'] { color: #ffd54a; }
+.network-connection[data-state='connecting'] .network-dot,
+.network-connection[data-state='reconnecting'] .network-dot {
+  background: #ffd54a;
+  animation: pulse 1s ease-in-out infinite;
+}
+.network-connection[data-state='disconnected'],
+.network-connection[data-state='error'] { color: #ff8e9d; }
+.network-connection[data-state='disconnected'] .network-dot,
+.network-connection[data-state='error'] .network-dot { background: #ff5a74; }
+
+.network-separator { color: rgba(255, 255, 255, 0.36); }
+.network-online { color: rgba(255, 255, 255, 0.84); }
+.network-latency[data-level='unknown'] { color: rgba(255, 255, 255, 0.56); }
+.network-latency[data-level='good'] { color: #77f0be; }
+.network-latency[data-level='warning'] { color: #ffd54a; }
+.network-latency[data-level='bad'] { color: #ff6b7f; }
+
+.game-version {
+  right: max(16px, env(safe-area-inset-right, 0px) + 10px);
+  bottom: max(16px, env(safe-area-inset-bottom, 0px) + 10px);
+  padding: 7px 11px;
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
    Cards (shared: character / track / difficulty)
 --------------------------------------------------------------------------- */
 
@@ -1112,40 +1203,6 @@ kbd {
   outline: 2px solid rgba(255, 255, 255, 0.72);
 }
 
-.online-connection {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 28px;
-  padding: 5px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.24);
-  border-radius: 999px;
-  color: rgba(255, 255, 255, 0.76);
-  background: rgba(255, 255, 255, 0.07);
-  font-size: 10px;
-  font-weight: 900;
-  letter-spacing: 0.09em;
-  white-space: nowrap;
-}
-
-.online-connection::before {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #9aa4b0;
-  box-shadow: 0 0 9px currentColor;
-}
-
-.online-connection[data-state='connected'] { color: #77f0be; border-color: rgba(119, 240, 190, 0.45); }
-.online-connection[data-state='connected']::before { background: #44e49e; }
-.online-connection[data-state='connecting'],
-.online-connection[data-state='reconnecting'] { color: #ffd54a; border-color: rgba(255, 213, 74, 0.45); }
-.online-connection[data-state='connecting']::before,
-.online-connection[data-state='reconnecting']::before { background: #ffd54a; animation: pulse 1s ease-in-out infinite; }
-.online-connection[data-state='error'] { color: #ff8e9d; border-color: rgba(255, 90, 116, 0.5); }
-.online-connection[data-state='error']::before { background: #ff5a74; }
-
 .online-heading-wrap { text-align: center; }
 .online-heading-icon { display: block; margin-bottom: 3px; font-size: 42px; }
 .online-heading {
@@ -1421,7 +1478,6 @@ kbd {
 }
 
 .online-directory-header .online-back { justify-self: start; }
-.online-directory-header .online-connection { justify-self: end; }
 .online-heading-wrap-compact .online-heading { font-size: clamp(28px, 4vw, 44px); }
 .online-heading-wrap-compact .online-eyebrow { margin-bottom: 3px; }
 
@@ -2060,6 +2116,10 @@ body.touch #touch-steer-zone { display: block; }
   .logo-legends { font-size: clamp(56px, 15vw, 92px); }
   .main-menu-panel { padding: 18px; }
   .main-menu-option { padding: 10px 13px; }
+  #network-status-overlay[data-context='details'] .network-summary,
+  .game-version {
+    bottom: max(46px, env(safe-area-inset-bottom, 0px) + 40px);
+  }
   .help-controls-grid { grid-template-columns: 1fr; }
 
   .char-grid { grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 8px; }
@@ -2123,6 +2183,18 @@ body.touch #touch-steer-zone { display: block; }
   .help-items-grid,
   .help-gameplay-grid { grid-template-columns: 1fr; }
   .hud-speed { display: none; }
+
+  #network-status-overlay { font-size: 9px; }
+  .network-summary { gap: 6px; padding: 5px 9px; }
+  #network-status-overlay[data-context='details'] .network-summary {
+    left: max(10px, env(safe-area-inset-left, 0px) + 8px);
+    bottom: max(40px, env(safe-area-inset-bottom, 0px) + 36px);
+  }
+  .game-version {
+    right: max(10px, env(safe-area-inset-right, 0px) + 8px);
+    bottom: max(10px, env(safe-area-inset-bottom, 0px) + 8px);
+    padding: 5px 8px;
+  }
 
   .online-screen { justify-content: flex-start; padding: 10px; }
   .online-panel { width: 100%; max-height: calc(100vh - 20px); border-radius: 20px; }

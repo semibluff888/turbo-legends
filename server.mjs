@@ -53,10 +53,22 @@ function isPublicPath(root, filePath) {
   return parts[0] === 'src' || parts[0] === 'vendor' || parts[0] === 'sound';
 }
 
-export function createStaticServer(root = ROOT, { healthProvider = null } = {}) {
+export function createStaticServer(root = ROOT, {
+  healthProvider = null,
+  metadataProvider = null,
+} = {}) {
   const staticRoot = realpathSync(resolve(root));
 
   return createServer(async (req, res) => {
+    if (metadataProvider && req.method === 'GET' && req.url?.split('?')[0] === '/api/meta') {
+      const body = JSON.stringify(metadataProvider());
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': Buffer.byteLength(body),
+        'Cache-Control': 'no-store',
+      }).end(body);
+      return;
+    }
     if (healthProvider && req.method === 'GET' && req.url?.split('?')[0] === '/healthz') {
       const body = JSON.stringify({ status: 'ok', ...healthProvider() });
       res.writeHead(200, {
@@ -128,9 +140,14 @@ export async function createGameServer({
   logger = console,
   webSocketOptions = {},
 } = {}) {
+  const packageMetadata = JSON.parse(await fs.readFile(join(root, 'package.json'), 'utf8'));
+  const version = String(packageMetadata.version || '').trim();
+  if (!version) throw new Error('package.json must define a non-empty version.');
+
   const manager = roomManager ?? createRoomManager(roomManagerOptions);
   let gateway = null;
   const server = createStaticServer(root, {
+    metadataProvider: () => ({ version }),
     healthProvider: () => ({
       uptimeSeconds: process.uptime(),
       rooms: manager.roomCount,

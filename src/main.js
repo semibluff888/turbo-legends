@@ -27,6 +27,7 @@ import { KartVisual } from './render/kartMesh.js';
 import { Effects } from './render/effects.js';
 import { ChaseCamera } from './render/camera.js';
 import { Hud } from './ui/hud.js';
+import { NetworkStatus } from './ui/network-status.js';
 import { Screens } from './ui/screens.js';
 import { OnlineScreens } from './ui/online-screens.js';
 import {
@@ -52,6 +53,7 @@ let gameSettings = loadSettings();
 audio.applySettings(gameSettings);
 
 const hud = new Hud(document.getElementById('hud'), document.getElementById('minimap'));
+const networkStatus = new NetworkStatus(document.getElementById('network-status-overlay'));
 const onlineClient = new OnlineClient();
 
 /** Player selections, persisted across races in this session. */
@@ -110,6 +112,7 @@ const screens = new Screens({
   },
   onSinglePlayer() {
     mode = 'character';
+    networkStatus.showDetails();
     screens.showCharacter(CHARACTERS);
     playUi('confirm');
   },
@@ -159,9 +162,6 @@ const onlineScreens = new OnlineScreens({
   results: document.getElementById('screen-online-results'),
 }, {
   onBackToTitle() {
-    onlineClient.disconnect();
-    onlineLobbyState = null;
-    onlineRoomState = null;
     goToTitle();
   },
   onNicknameChange({ displayName }) {
@@ -227,6 +227,8 @@ const onlineScreens = new OnlineScreens({
 });
 
 wireOnlineClient();
+onlineClient.startTelemetry();
+void networkStatus.loadVersion();
 
 function ensureOnlineDisplayName() {
   if (!onlineDisplayName) onlineDisplayName = loadOnlineDisplayName();
@@ -247,6 +249,7 @@ function openOnlineLobby({ tryResume = true } = {}) {
   const inviteCode = invitationRoomCode(window.location.search);
   const displayName = ensureOnlineDisplayName();
   mode = 'online-lobby';
+  networkStatus.showDetails();
   screens.hideAll();
   hud.hide();
   audio.setGameplaySfxPaused(true);
@@ -271,6 +274,7 @@ function openOnlineLobby({ tryResume = true } = {}) {
 function showOnlineLobby(message) {
   onlineLobbyState = message || { rooms: [] };
   mode = 'online-lobby';
+  networkStatus.showDetails();
   screens.hideAll();
   hud.hide();
   onlineScreens.setBusy(false);
@@ -305,6 +309,7 @@ function showOnlineRoom(message) {
   )) return;
 
   mode = 'online-room';
+  networkStatus.showDetails();
   screens.hideAll();
   hud.hide();
   onlineScreens.setBusy(false);
@@ -339,11 +344,15 @@ function onlineHostId(roomState = onlineRoomState) {
 }
 
 function wireOnlineClient() {
-  onlineClient.on('connection', ({ state, reason }) => {
+  onlineClient.on('connection', ({ state }) => {
     const viewState = state === 'idle' ? 'disconnected' : state;
-    onlineScreens.setConnectionState(viewState, reason || '');
+    networkStatus.setConnectionState(viewState);
   });
-  onlineClient.on('lobby_state', showOnlineLobby);
+  onlineClient.on('telemetry', (metrics) => networkStatus.setMetrics(metrics));
+  onlineClient.on('lobby_state', (message) => {
+    onlineLobbyState = message || { rooms: [] };
+    if (mode === 'online-lobby') showOnlineLobby(onlineLobbyState);
+  });
   onlineClient.on('room_state', showOnlineRoom);
   onlineClient.on('prepare_race', (message) => {
     try {
@@ -365,7 +374,9 @@ function wireOnlineClient() {
   });
   onlineClient.on('error', (message) => {
     onlineScreens.setBusy(false);
-    if (isOnlineConnectionError(message)) onlineScreens.setConnectionState('error');
+    if (isOnlineConnectionError(message)) {
+      networkStatus.setConnectionState('error');
+    }
     reportOnlineError(message);
   });
   onlineClient.on('reconnect_expired', (event) => {
@@ -394,9 +405,11 @@ function goToTitle() {
   onlineScreens.hideAll();
   screens.showTitle();
   hud.hide();
+  networkStatus.showDetails();
   audio.setGameplaySfxPaused(true);
   audio.playMenuMusic();
   buildAttract();
+  if (onlineClient.scope === 'none') onlineClient.enterLobby();
 }
 
 function ensureAudio() {
@@ -416,6 +429,7 @@ function playUi(kind) {
 function openPanel(name) {
   panelReturn = race && paused ? 'pause' : 'title';
   mode = name;
+  if (panelReturn === 'title') networkStatus.showDetails();
   if (name === 'settings') screens.showSettings(gameSettings);
   else screens.showHelp('controls');
   playUi('confirm');
@@ -541,6 +555,7 @@ function mountRace(track, session, def) {
   screens.hideAll();
   onlineScreens.hideAll();
   hud.showRace(session);
+  networkStatus.showRace();
   audio.setGameplaySfxPaused(false);
   audio.playRaceMusic(def.id, { restart: true });
   audio.setFinalLap(false);
@@ -553,6 +568,7 @@ function endRace() {
   race.session.dispose?.();
   audio.stopEngine();
   hud.hide();
+  networkStatus.hide();
   disposeSceneDeep(race.world.scene);
   race = null;
 }
@@ -695,6 +711,7 @@ function updateRaceFrame(dt) {
     race.resultsShown = true;
     race.resultsShownAt = performance.now() / 1000;
     hud.hide(); // the results panel owns the screen now
+    networkStatus.showDetails();
     if (online) {
       mode = 'online-results';
       screens.hideAll();
@@ -905,6 +922,7 @@ ensureAudio();
 {
   const q = new URLSearchParams(window.location.search);
   const devScreen = q.get('screen');
+  if (devScreen) networkStatus.showDetails();
   if (devScreen === 'character') { mode = 'character'; screens.showCharacter(CHARACTERS); }
   else if (devScreen === 'track') { mode = 'track'; screens.showTrack(TRACKS); }
   else if (devScreen === 'difficulty') { mode = 'difficulty'; screens.showDifficulty(); }

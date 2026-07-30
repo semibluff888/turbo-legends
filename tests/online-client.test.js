@@ -5,6 +5,8 @@ import {
   LEGACY_ONLINE_SESSION_STORAGE_KEY,
   OnlineClient,
   ONLINE_SESSION_STORAGE_KEY,
+  TELEMETRY_PING_INTERVAL_MS,
+  TELEMETRY_STALE_MS,
   webSocketUrl,
 } from '../src/net/online-client.js';
 import { PROTOCOL_VERSION } from '../src/net/protocol.js';
@@ -107,6 +109,97 @@ test('enterLobby opens a versioned Lobby subscription', () => {
   socket.open();
   assert.deepEqual(socket.sent, [{ v: PROTOCOL_VERSION, type: 'enter_lobby' }]);
   assert.equal(client.scope, 'lobby');
+});
+
+test('telemetry pings immediately, reports RTT and clears stale metrics', () => {
+  FakeWebSocket.instances.length = 0;
+  const timers = [];
+  let now = 1_000;
+  const client = makeClient({
+    now: () => now,
+    setTimeoutImpl(fn, ms) { timers.push({ fn, ms }); return timers.length; },
+    clearTimeoutImpl() {},
+  });
+  const samples = [];
+  client.on('telemetry', sample => samples.push(sample));
+  client.startTelemetry();
+  client.enterLobby();
+
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  assert.deepEqual(socket.sent, [
+    { v: PROTOCOL_VERSION, type: 'enter_lobby' },
+    { v: PROTOCOL_VERSION, type: 'ping', clientTime: 1_000 },
+  ]);
+  assert.equal(timers[0].ms, TELEMETRY_PING_INTERVAL_MS);
+
+  now = 1_043;
+  socket.receive({
+    v: PROTOCOL_VERSION,
+    type: 'pong',
+    clientTime: 1_000,
+    onlineCount: 12,
+  });
+  assert.deepEqual(samples.at(-1), { latencyMs: 43, onlineCount: 12 });
+
+  socket.receive({
+    v: PROTOCOL_VERSION,
+    type: 'server_stats',
+    onlineCount: 13,
+  });
+  assert.deepEqual(samples.at(-1), { latencyMs: 43, onlineCount: 13 });
+
+  now = 2_000;
+  timers[0].fn();
+  assert.deepEqual(socket.sent.at(-1), {
+    v: PROTOCOL_VERSION,
+    type: 'ping',
+    clientTime: 2_000,
+  });
+
+  now = 2_044.6;
+  socket.receive({
+    v: PROTOCOL_VERSION,
+    type: 'pong',
+    clientTime: 2_000,
+    onlineCount: 13,
+  });
+  assert.deepEqual(samples.at(-1), { latencyMs: 45, onlineCount: 13 });
+
+  now = 2_044.6 + TELEMETRY_STALE_MS + 1;
+  timers[1].fn();
+  assert.deepEqual(samples.at(-1), { latencyMs: null, onlineCount: null });
+  assert.deepEqual(socket.sent.at(-1), {
+    v: PROTOCOL_VERSION,
+    type: 'ping',
+    clientTime: now,
+  });
+});
+
+test('telemetry pauses on disconnect and resumes with the Lobby reconnect', () => {
+  FakeWebSocket.instances.length = 0;
+  const timers = [];
+  const cleared = [];
+  const client = makeClient({
+    now: () => 2_000,
+    setTimeoutImpl(fn, ms) { timers.push({ fn, ms }); return timers.length; },
+    clearTimeoutImpl(id) { cleared.push(id); },
+  });
+  client.startTelemetry();
+  client.enterLobby();
+  FakeWebSocket.instances[0].open();
+  FakeWebSocket.instances[0].close(1006, 'network');
+
+  assert.equal(cleared.includes(1), true);
+  const reconnect = timers.find(timer => timer.ms === 250);
+  assert.ok(reconnect);
+  reconnect.fn();
+  const replacement = FakeWebSocket.instances[1];
+  replacement.open();
+  assert.deepEqual(replacement.sent, [
+    { v: PROTOCOL_VERSION, type: 'enter_lobby' },
+    { v: PROTOCOL_VERSION, type: 'ping', clientTime: 2_000 },
+  ]);
 });
 
 test('create, join and quick match reuse the existing Lobby socket', () => {

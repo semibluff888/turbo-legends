@@ -17,6 +17,8 @@ const SESSION_STORAGE_KEY = 'turbo-legends.online-session.v2';
 const LEGACY_SESSION_STORAGE_KEY = 'turbo-legends.online-session.v1';
 const RECONNECT_DELAYS_MS = [250, 500, 1000, 2000, 4000];
 const RECONNECT_WINDOW_MS = 30_000;
+export const TELEMETRY_PING_INTERVAL_MS = 5_000;
+export const TELEMETRY_STALE_MS = 15_000;
 
 function storageForCleanup(candidate) {
   return candidate && typeof candidate.removeItem === 'function' ? candidate : null;
@@ -56,7 +58,7 @@ export class OnlineClient {
     sessionStorage = globalThis.sessionStorage,
     setTimeoutImpl = globalThis.setTimeout,
     clearTimeoutImpl = globalThis.clearTimeout,
-    now = () => Date.now(),
+    now = () => globalThis.performance?.now?.() ?? Date.now(),
   } = {}) {
     this.WebSocketImpl = WebSocketImpl;
     this.url = webSocketUrl(location);
@@ -80,6 +82,11 @@ export class OnlineClient {
     this._reconnectTimer = null;
     this._reconnectAttempt = 0;
     this._reconnectDeadline = 0;
+    this._telemetryEnabled = false;
+    this._telemetryTimer = null;
+    this._lastPongAt = null;
+    this.latencyMs = null;
+    this.onlineCount = null;
 
     // Participant IDs and resume tokens are deliberately memory-only. Remove
     // credentials left by older builds without ever replaying or migrating them.
@@ -206,8 +213,21 @@ export class OnlineClient {
     return this.send({ type: CLIENT_MESSAGE_TYPES.INPUT, raceId: this.raceId, ...input });
   }
 
-  ping(clientTime = (globalThis.performance?.now?.() ?? this._now())) {
+  ping(clientTime = this._now()) {
     return this.send({ type: CLIENT_MESSAGE_TYPES.PING, clientTime });
+  }
+
+  startTelemetry() {
+    if (this._telemetryEnabled) return true;
+    this._telemetryEnabled = true;
+    if (this.socket?.readyState === 1) this._startTelemetryLoop();
+    return true;
+  }
+
+  stopTelemetry() {
+    this._telemetryEnabled = false;
+    this._stopTelemetryLoop({ clearMetrics: true });
+    return true;
   }
 
   send(message) {
@@ -235,6 +255,7 @@ export class OnlineClient {
   /** Close online transport when returning from the Lobby to the title. */
   disconnect({ clearSession = true } = {}) {
     this._cancelReconnect();
+    this._stopTelemetryLoop({ clearMetrics: true });
     this._pendingMessages.length = 0;
     this._connectionPurpose = null;
     this.scope = 'none';
@@ -245,6 +266,7 @@ export class OnlineClient {
   }
 
   dispose() {
+    this.stopTelemetry();
     this.disconnect({ clearSession: false });
     this._listeners.clear();
   }
@@ -264,6 +286,7 @@ export class OnlineClient {
       return;
     }
     this._cancelReconnect({ resetAttempts: false });
+    this._stopTelemetryLoop({ clearMetrics: true });
     this._closeCurrentSocket('replaced');
 
     this._connectionPurpose = initialMessage.type;
@@ -280,6 +303,7 @@ export class OnlineClient {
         socket.send(JSON.stringify({ v: PROTOCOL_VERSION, ...message }));
       }
       this._emit('connection', { state: this.state });
+      if (this._telemetryEnabled) this._startTelemetryLoop();
     });
     socket.addEventListener('message', (event) => {
       if (socket !== this.socket) return;
@@ -345,6 +369,10 @@ export class OnlineClient {
       this.raceId = message.raceId;
     } else if (message.type === SERVER_MESSAGE_TYPES.RACE_RESULTS) {
       this.raceId = message.raceId || this.raceId;
+    } else if (message.type === SERVER_MESSAGE_TYPES.PONG) {
+      this._captureTelemetry(message);
+    } else if (message.type === SERVER_MESSAGE_TYPES.SERVER_STATS) {
+      this._captureOnlineCount(message);
     } else if (message.type === SERVER_MESSAGE_TYPES.ERROR
       && this._connectionPurpose === CLIENT_MESSAGE_TYPES.RESUME
       && (message.code === ERROR_CODES.SESSION_NOT_FOUND
@@ -382,6 +410,7 @@ export class OnlineClient {
   }
 
   _handleClose(event) {
+    this._stopTelemetryLoop({ clearMetrics: true });
     this.state = 'disconnected';
     this._emit('connection', {
       state: this.state,
@@ -451,6 +480,77 @@ export class OnlineClient {
       this._reconnectAttempt = 0;
       this._reconnectDeadline = 0;
     }
+  }
+
+  _startTelemetryLoop() {
+    if (!this._telemetryEnabled || this.socket?.readyState !== 1) return;
+    if (this._telemetryTimer != null) this._clearTimeout(this._telemetryTimer);
+    this._telemetryTimer = null;
+    this._runTelemetryCycle();
+  }
+
+  _runTelemetryCycle() {
+    if (!this._telemetryEnabled || this.socket?.readyState !== 1) {
+      this._telemetryTimer = null;
+      return;
+    }
+    const now = this._now();
+    if (this._lastPongAt != null && now - this._lastPongAt >= TELEMETRY_STALE_MS) {
+      this._resetTelemetryMetrics();
+    }
+    this.ping(now);
+    this._telemetryTimer = this._setTimeout(() => {
+      this._telemetryTimer = null;
+      this._runTelemetryCycle();
+    }, TELEMETRY_PING_INTERVAL_MS);
+  }
+
+  _stopTelemetryLoop({ clearMetrics = false } = {}) {
+    if (this._telemetryTimer != null) this._clearTimeout(this._telemetryTimer);
+    this._telemetryTimer = null;
+    this._lastPongAt = null;
+    if (clearMetrics) this._resetTelemetryMetrics();
+  }
+
+  _captureTelemetry(message) {
+    const now = this._now();
+    const clientTime = Number(message.clientTime);
+    const onlineCount = Number(message.onlineCount);
+    const hasClientTime = message.clientTime !== null && message.clientTime !== undefined
+      && message.clientTime !== '';
+    const hasOnlineCount = message.onlineCount !== null && message.onlineCount !== undefined
+      && message.onlineCount !== '';
+    this._lastPongAt = now;
+    this.latencyMs = hasClientTime && Number.isFinite(clientTime)
+      ? Math.max(0, Math.round(now - clientTime))
+      : null;
+    this.onlineCount = hasOnlineCount && Number.isFinite(onlineCount) && onlineCount >= 0
+      ? Math.trunc(onlineCount)
+      : null;
+    this._emit('telemetry', {
+      latencyMs: this.latencyMs,
+      onlineCount: this.onlineCount,
+    });
+  }
+
+  _captureOnlineCount(message) {
+    const onlineCount = Number(message.onlineCount);
+    const hasOnlineCount = message.onlineCount !== null && message.onlineCount !== undefined
+      && message.onlineCount !== '';
+    this.onlineCount = hasOnlineCount && Number.isFinite(onlineCount) && onlineCount >= 0
+      ? Math.trunc(onlineCount)
+      : null;
+    this._emit('telemetry', {
+      latencyMs: this.latencyMs,
+      onlineCount: this.onlineCount,
+    });
+  }
+
+  _resetTelemetryMetrics() {
+    if (this.latencyMs === null && this.onlineCount === null) return;
+    this.latencyMs = null;
+    this.onlineCount = null;
+    this._emit('telemetry', { latencyMs: null, onlineCount: null });
   }
 
   _closeCurrentSocket(reason) {

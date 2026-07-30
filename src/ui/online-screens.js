@@ -17,9 +17,6 @@ export const ONLINE_ROOM_CODE_LENGTH = 6;
 export const ONLINE_ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 const ROOM_CODE_CHARS = new Set(ONLINE_ROOM_CODE_ALPHABET);
-const CONNECTION_STATES = new Set([
-  'connecting', 'connected', 'reconnecting', 'disconnected', 'error',
-]);
 const ROOM_TYPES = new Set(['public', 'private']);
 const IN_GAME_PHASES = new Set(['loading', 'countdown', 'racing', 'race', 'results', 'in_game', 'ingame']);
 const MEDALS = ['\u{1F947}', '\u{1F948}', '\u{1F949}'];
@@ -384,7 +381,6 @@ export class OnlineScreens {
     this._roomView = buildRoomView();
     this._resultsState = {};
     this._localParticipantId = '';
-    this._connection = { state: 'disconnected', message: '' };
     this._activeDialog = null;
 
     this._buildLobby();
@@ -428,7 +424,6 @@ export class OnlineScreens {
             <h2 class="online-heading" data-screen-heading tabindex="-1">${copy.heading}</h2>
             <p class="online-subtitle">${copy.subtitle}</p>
           </div>
-          <span class="online-connection" data-online-connection role="status"></span>
         </header>
 
         <section class="online-lobby-toolbar" aria-label="${copy.playerSetup}">
@@ -583,7 +578,6 @@ export class OnlineScreens {
               </button>
             </div>
           </div>
-          <span class="online-connection" data-online-connection role="status"></span>
         </header>
 
         <div class="online-room-grid">
@@ -664,7 +658,6 @@ export class OnlineScreens {
             <h2 class="online-heading" data-screen-heading tabindex="-1">${copy.heading}</h2>
             <p class="online-results-track" data-results-track></p>
           </div>
-          <span class="online-connection" data-online-connection role="status"></span>
         </header>
         <div class="online-results-scroll">
           <table class="online-results-table">
@@ -980,7 +973,6 @@ export class OnlineScreens {
       if (root) root.hidden = key !== name;
     }
     this._screen = name;
-    this._syncConnectionIndicators();
     this.roots[name]?.querySelector('[data-screen-heading]')?.focus({ preventScroll: true });
   }
 
@@ -1179,22 +1171,6 @@ export class OnlineScreens {
     else if (context.clearError) this.clearError('results');
     root.querySelector('[data-action="return"]').disabled = this._busy;
     return view;
-  }
-
-  setConnectionState(state, message = '') {
-    const normalized = CONNECTION_STATES.has(state) ? state : 'disconnected';
-    this._connection = { state: normalized, message: String(message || '') };
-    this._syncConnectionIndicators();
-  }
-
-  _syncConnectionIndicators() {
-    const labels = UI_COPY.online.connection;
-    for (const root of Object.values(this.roots)) {
-      const node = root?.querySelector('[data-online-connection]');
-      if (!node) continue;
-      node.dataset.state = this._connection.state;
-      node.textContent = this._connection.message || labels[this._connection.state] || labels.disconnected;
-    }
   }
 
   setBusy(busy) {

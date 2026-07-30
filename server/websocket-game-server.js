@@ -126,6 +126,18 @@ export function attachGameWebSocket(httpServer, {
     });
   }
 
+  function serverStats() {
+    return serverMessage(SERVER_MESSAGE_TYPES.SERVER_STATS, {
+      onlineCount: sessions.size,
+      serverTime: Date.now(),
+    });
+  }
+
+  function broadcastServerStats() {
+    const message = serverStats();
+    for (const session of sessions) send(session, message);
+  }
+
   function subscribeLobby(session, { sendState = true } = {}) {
     session.inLobby = true;
     if (sendState) send(session, lobbyState());
@@ -289,6 +301,7 @@ export function attachGameWebSocket(httpServer, {
         send(session, serverMessage(SERVER_MESSAGE_TYPES.PONG, {
           clientTime: message.clientTime,
           serverTime: Date.now(),
+          onlineCount: sessions.size,
           tick: room?.race?.tick ?? null,
         }));
         break;
@@ -363,6 +376,7 @@ export function attachGameWebSocket(httpServer, {
     socket.on('close', () => {
       sessions.delete(session);
       unbindParticipant(session, true);
+      broadcastServerStats();
     });
     socket.on('message', (data, isBinary) => {
       if (isBinary || data.byteLength > MAX_CLIENT_MESSAGE_BYTES) {
@@ -390,6 +404,7 @@ export function attachGameWebSocket(httpServer, {
       protocolVersion: PROTOCOL_VERSION,
       session: null,
     }));
+    broadcastServerStats();
   }
 
   httpServer.on('upgrade', onUpgrade);

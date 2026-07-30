@@ -35,6 +35,7 @@ export const SERVER_MESSAGE_TYPES = Object.freeze({
   RACE_RESULTS: 'race_results',
   ERROR: 'error',
   PONG: 'pong',
+  SERVER_STATS: 'server_stats',
 });
 
 // Short aliases are useful to UI code while the longer names remain the

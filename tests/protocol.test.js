@@ -21,6 +21,7 @@ test('protocol v2 exports Lobby, Room, and matchmaking message names', () => {
   assert.equal(CLIENT_MESSAGE_TYPES.LEAVE_ROOM, 'leave_room');
   assert.equal(SERVER_MESSAGE_TYPES.LOBBY_STATE, 'lobby_state');
   assert.equal(SERVER_MESSAGE_TYPES.PREPARE_RACE, 'prepare_race');
+  assert.equal(SERVER_MESSAGE_TYPES.SERVER_STATS, 'server_stats');
   assert.equal(ROOM_STATES.WAITING, 'waiting');
   assert.equal(ROOM_TYPES.PUBLIC, 'public');
   assert.equal(ROOM_TYPES.PRIVATE, 'private');
