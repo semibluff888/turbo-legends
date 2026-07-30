@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 
 import { CHARACTERS } from '../src/game/characters.js';
@@ -9,17 +9,23 @@ import {
   CONTROLLER_KINDS,
   ERROR_CODES,
   ROOM_STATES,
+  ROOM_TYPES,
   SERVER_MESSAGE_TYPES,
   serverMessage,
   validateDisplayName,
+  validateRoomCapacity,
+  validateRoomName,
+  validateRoomPassword,
+  validateRoomType,
 } from '../src/net/protocol.js';
 import { GameError } from './game-error.js';
 
 const ROOM_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const POST_RACE_STATES = Object.freeze({
   RESULTS: 'results',
-  LOBBY: 'lobby',
+  ROOM: 'room',
 });
+const PASSWORD_HASH_BYTES = 32;
 const DEFAULT_ZERO_INPUT = Object.freeze({
   throttle: 0,
   brake: 0,
@@ -34,6 +40,19 @@ function opaqueId(bytes = 16) {
 
 function randomSeed() {
   return randomBytes(4).readUInt32LE(0);
+}
+
+function requireValid(result) {
+  if (!result.ok) throw new GameError(result.error.code, result.error.message);
+  return result.value;
+}
+
+function occupiedMembers(room) {
+  return [...room.members.values()].filter((member) => !member.abandoned);
+}
+
+function hasOnlineMember(room) {
+  return occupiedMembers(room).some((member) => member.connected);
 }
 
 function finiteOrNull(value) {
@@ -168,6 +187,8 @@ export class RoomManager extends EventEmitter {
     raceIdFactory = () => opaqueId(12),
     seedFactory = randomSeed,
     roomCodeFactory = null,
+    random = Math.random,
+    passwordSaltFactory = () => randomBytes(16),
   } = {}) {
     super();
     this.now = now;
@@ -176,7 +197,7 @@ export class RoomManager extends EventEmitter {
     this.characters = characters.slice();
     this.characterIds = new Set(characters.map((character) => character.id));
     this.difficulties = new Set(difficulties);
-    this.maxPlayers = Math.min(maxPlayers, characters.length);
+    this.maxPlayers = Math.min(8, maxPlayers, characters.length);
     this.loadTimeoutMs = loadTimeoutMs;
     this.resumeTimeoutMs = resumeTimeoutMs;
     this.emptyRoomTtlMs = emptyRoomTtlMs;
@@ -191,6 +212,9 @@ export class RoomManager extends EventEmitter {
     this.raceIdFactory = raceIdFactory;
     this.seedFactory = seedFactory;
     this.roomCodeFactory = roomCodeFactory;
+    this.random = random;
+    this.passwordSaltFactory = passwordSaltFactory;
+    this._passwordVerifiers = new WeakMap();
     this.rooms = new Map();
     this.participantRooms = new Map();
     this._joinOrder = 0;
@@ -200,7 +224,7 @@ export class RoomManager extends EventEmitter {
 
   get activeRaceCount() {
     let count = 0;
-    for (const room of this.rooms.values()) if (room.state !== ROOM_STATES.LOBBY) count++;
+    for (const room of this.rooms.values()) if (room.state !== ROOM_STATES.WAITING) count++;
     return count;
   }
 
@@ -208,14 +232,63 @@ export class RoomManager extends EventEmitter {
     return { rooms: this.roomCount, races: this.activeRaceCount };
   }
 
-  createRoom({ displayName, characterId } = {}) {
+  listRooms() {
+    const rooms = [];
+    for (const room of this.rooms.values()) {
+      if (!hasOnlineMember(room)) continue;
+      const members = occupiedMembers(room);
+      const playerCount = members.length;
+      const isWaiting = room.state === ROOM_STATES.WAITING;
+      const isFull = isWaiting && playerCount >= room.maxPlayers;
+      const host = room.members.get(room.hostParticipantId);
+      rooms.push({
+        roomCode: room.code,
+        roomName: room.roomName,
+        roomType: room.roomType,
+        requiresPassword: room.roomType === ROOM_TYPES.PRIVATE,
+        playerCount,
+        maxPlayers: room.maxPlayers,
+        hostDisplayName: host?.displayName ?? '',
+        status: !isWaiting ? 'in_game' : isFull ? 'full' : 'waiting',
+        joinable: isWaiting && !isFull,
+      });
+    }
+    return rooms;
+  }
+
+  createRoom(options = {}) {
+    const displayName = requireValid(validateDisplayName(options.displayName));
+    const characterId = options.characterId;
+    const roomName = requireValid(validateRoomName(
+      options.roomName ?? `${displayName}'s Room`,
+    ));
+    const roomType = requireValid(validateRoomType(options.roomType ?? ROOM_TYPES.PUBLIC));
+    const maxPlayers = requireValid(validateRoomCapacity(options.maxPlayers ?? this.maxPlayers));
+    if (maxPlayers > this.maxPlayers) {
+      throw new GameError(
+        ERROR_CODES.ROOM_CAPACITY_INVALID,
+        `This server supports at most ${this.maxPlayers} players per room.`,
+      );
+    }
+    const password = requireValid(validateRoomPassword(options.password, {
+      required: roomType === ROOM_TYPES.PRIVATE,
+    }));
+    const passwordVerifier = roomType === ROOM_TYPES.PRIVATE
+      ? (() => {
+        const salt = this.passwordSaltFactory();
+        return { salt, hash: scryptSync(password, salt, PASSWORD_HASH_BYTES) };
+      })()
+      : null;
     const now = this.now();
     const roomCode = this._allocateRoomCode();
     const track = this.tracks.values().next().value;
     if (!track) throw new GameError(ERROR_CODES.INVALID_SETTING, 'No tracks are configured.');
     const room = {
       code: roomCode,
-      state: ROOM_STATES.LOBBY,
+      roomName,
+      roomType,
+      maxPlayers,
+      state: ROOM_STATES.WAITING,
       hostParticipantId: null,
       settings: { trackId: track.id, difficulty: 'normal' },
       members: new Map(),
@@ -225,26 +298,57 @@ export class RoomManager extends EventEmitter {
       lastActivityAt: now,
       emptySince: null,
     };
+    if (passwordVerifier) this._passwordVerifiers.set(room, passwordVerifier);
     this.rooms.set(roomCode, room);
-    const session = this._addParticipant(room, { displayName, characterId }, now);
+    let session;
+    try {
+      session = this._addParticipant(room, { displayName, characterId }, now);
+    } catch (error) {
+      this.rooms.delete(roomCode);
+      throw error;
+    }
     room.hostParticipantId = session.participantId;
     this._broadcastRoomState(room);
     return { ...session, roomCode, roomState: this.getRoomState(roomCode) };
   }
 
-  joinRoom(roomCode, { displayName, characterId } = {}) {
+  joinRoom(roomCode, { displayName, characterId, password } = {}) {
     const room = this._requireRoom(roomCode);
-    if (room.state !== ROOM_STATES.LOBBY) {
+    if (room.state !== ROOM_STATES.WAITING) {
       throw new GameError(ERROR_CODES.ROOM_LOCKED, 'This race has already started.');
     }
-    if (room.members.size >= this.maxPlayers) {
+    if (occupiedMembers(room).length >= room.maxPlayers) {
       throw new GameError(ERROR_CODES.ROOM_FULL, 'This room is full.');
     }
+    this._verifyPassword(room, password);
     const session = this._addParticipant(room, { displayName, characterId }, this.now());
     if (!room.hostParticipantId) this._migrateHost(room);
     this._touch(room);
     this._broadcastRoomState(room);
     return { ...session, roomCode: room.code, roomState: this.getRoomState(room.code) };
+  }
+
+  quickMatch({ displayName, characterId } = {}) {
+    displayName = requireValid(validateDisplayName(displayName));
+    const candidates = [...this.rooms.values()].filter((room) => {
+      if (room.roomType !== ROOM_TYPES.PUBLIC
+        || room.state !== ROOM_STATES.WAITING
+        || !hasOnlineMember(room)
+        || occupiedMembers(room).length >= room.maxPlayers) return false;
+      if (characterId === undefined) return true;
+      return !occupiedMembers(room).some((member) => member.characterId === characterId);
+    });
+    if (candidates.length === 0) {
+      throw new GameError(
+        ERROR_CODES.NO_MATCHING_ROOM,
+        'No joinable public room is available.',
+      );
+    }
+    const index = Math.min(
+      candidates.length - 1,
+      Math.max(0, Math.floor(this.random() * candidates.length)),
+    );
+    return this.joinRoom(candidates[index].code, { displayName, characterId });
   }
 
   resume(roomCode, participantId, resumeToken) {
@@ -301,7 +405,7 @@ export class RoomManager extends EventEmitter {
 
   leave(participantId) {
     const { room, member } = this._findParticipant(participantId);
-    if (room.state === ROOM_STATES.LOBBY) {
+    if (room.state === ROOM_STATES.WAITING) {
       this._removeParticipant(room, member);
     } else {
       member.abandoned = true;
@@ -315,12 +419,13 @@ export class RoomManager extends EventEmitter {
     }
     if (![...room.members.values()].some((candidate) => candidate.connected)) room.emptySince = this.now();
     this._touch(room);
+    if (this._maybeReturnRoom(room)) return;
     this._broadcastRoomState(room);
   }
 
   selectCharacter(participantId, characterId) {
     const { room, member } = this._findParticipant(participantId);
-    this._requireMemberLobby(room, member);
+    this._requireMemberRoom(room, member);
     if (!this.characterIds.has(characterId)) {
       throw new GameError(ERROR_CODES.CHARACTER_INVALID, 'That character does not exist.');
     }
@@ -340,7 +445,7 @@ export class RoomManager extends EventEmitter {
 
   setRoom(participantId, patch) {
     const { room, member } = this._findParticipant(participantId);
-    this._requireMemberLobby(room, member);
+    this._requireMemberRoom(room, member);
     this._requireHost(room, participantId);
     let changed = false;
     if (patch.trackId !== undefined) {
@@ -371,7 +476,7 @@ export class RoomManager extends EventEmitter {
 
   setReady(participantId, ready) {
     const { room, member } = this._findParticipant(participantId);
-    this._requireMemberLobby(room, member);
+    this._requireMemberRoom(room, member);
     member.ready = Boolean(ready);
     this._touch(room);
     this._broadcastRoomState(room);
@@ -380,7 +485,7 @@ export class RoomManager extends EventEmitter {
 
   startRace(participantId) {
     const { room } = this._findParticipant(participantId);
-    this._requireLobby(room);
+    this._requireWaiting(room);
     this._requireHost(room, participantId);
     const members = [...room.members.values()].filter((member) => !member.abandoned);
     const connected = members.filter((member) => member.connected);
@@ -494,18 +599,18 @@ export class RoomManager extends EventEmitter {
     return accepted;
   }
 
-  returnToLobby(participantId) {
+  returnToRoom(participantId) {
     const { room, member } = this._findParticipant(participantId);
-    if (room.state === ROOM_STATES.LOBBY) return this.getRoomState(room.code);
+    if (room.state === ROOM_STATES.WAITING) return this.getRoomState(room.code);
     if (room.state !== ROOM_STATES.RESULTS) {
       throw new GameError(ERROR_CODES.INVALID_STATE, 'The race is not showing results.');
     }
-    if (member.postRaceState !== POST_RACE_STATES.LOBBY) {
-      member.postRaceState = POST_RACE_STATES.LOBBY;
+    if (member.postRaceState !== POST_RACE_STATES.ROOM) {
+      member.postRaceState = POST_RACE_STATES.ROOM;
       member.ready = false;
     }
     this._touch(room);
-    if (!this._maybeReturnLobby(room)) this._broadcastRoomState(room);
+    if (!this._maybeReturnRoom(room)) this._broadcastRoomState(room);
     return this.getRoomState(room.code);
   }
 
@@ -523,14 +628,17 @@ export class RoomManager extends EventEmitter {
         connected: member.connected,
         postRaceState: member.postRaceState,
         activityState: room.state === ROOM_STATES.RESULTS
-          && member.postRaceState !== POST_RACE_STATES.LOBBY
+          && member.postRaceState !== POST_RACE_STATES.ROOM
           ? 'in_game'
-          : 'lobby',
+          : 'room',
         loaded: room.state === ROOM_STATES.LOADING ? member.raceLoaded : undefined,
         controllerKind: member.controllerKind,
       }));
     return serverMessage(SERVER_MESSAGE_TYPES.ROOM_STATE, {
       roomCode: room.code,
+      roomName: room.roomName,
+      roomType: room.roomType,
+      maxPlayers: room.maxPlayers,
       state: room.state,
       hostParticipantId: room.hostParticipantId,
       settings: {
@@ -548,7 +656,7 @@ export class RoomManager extends EventEmitter {
     const { room, member } = this._findParticipant(participantId);
     const messages = [this.getRoomState(room.code)];
     const returnedFromResults = room.state === ROOM_STATES.RESULTS
-      && member.postRaceState === POST_RACE_STATES.LOBBY;
+      && member.postRaceState === POST_RACE_STATES.ROOM;
     if (room.race && !returnedFromResults) {
       messages.push(serverMessage(SERVER_MESSAGE_TYPES.PREPARE_RACE, {
         raceId: room.race.raceId,
@@ -577,8 +685,8 @@ export class RoomManager extends EventEmitter {
         this._destroyRoom(room);
         continue;
       }
-      if (room.state === ROOM_STATES.LOBBY) {
-        this._expireLobbyMembers(room, now);
+      if (room.state === ROOM_STATES.WAITING) {
+        this._expireWaitingMembers(room, now);
         if (room.members.size === 0 || now - room.lastActivityAt >= this.idleLobbyTtlMs) {
           this._destroyRoom(room);
         }
@@ -595,10 +703,15 @@ export class RoomManager extends EventEmitter {
       }
       if (room.state === ROOM_STATES.RESULTS
         && now - room.race.resultsAt >= this.resultsTimeoutMs) {
-        this._returnLobby(room);
+        this._returnRoom(room);
       }
     }
-    if (launches.length) await Promise.allSettled(launches);
+    if (launches.length) {
+      const results = await Promise.allSettled(launches);
+      for (const result of results) {
+        if (result.status === 'rejected') this.emit('managerError', result.reason);
+      }
+    }
   }
 
   close() {
@@ -612,12 +725,6 @@ export class RoomManager extends EventEmitter {
       throw new GameError(validatedName.error.code, validatedName.error.message);
     }
     displayName = validatedName.value;
-    const foldedName = displayName.toLocaleLowerCase('en-US');
-    for (const member of room.members.values()) {
-      if (member.displayName.toLocaleLowerCase('en-US') === foldedName) {
-        throw new GameError(ERROR_CODES.NAME_TAKEN, 'That nickname is already used in this room.');
-      }
-    }
     const usedCharacters = new Set([...room.members.values()].map((member) => member.characterId));
     const selectedCharacter = characterId ?? this.characters.find((character) => !usedCharacters.has(character.id))?.id;
     if (!this.characterIds.has(selectedCharacter)) {
@@ -683,14 +790,15 @@ export class RoomManager extends EventEmitter {
   }
 
   async _beginRace(room, now) {
-    if (room.state !== ROOM_STATES.LOADING || room.race.simulation) return;
-    if (room.race.launchPromise) return room.race.launchPromise;
+    const race = room.race;
+    if (room.state !== ROOM_STATES.LOADING || !race || race.simulation) return;
+    if (race.launchPromise) return race.launchPromise;
     const launchPromise = (async () => {
       const activeHumans = [...room.members.values()]
         .filter((member) => member.connected && member.raceLoaded && !member.abandoned);
       if (activeHumans.length < 2) {
-        this._resetLobbyMembers(room);
-        room.state = ROOM_STATES.LOBBY;
+        this._finalizeRaceMembers(room, { resetReady: true });
+        room.state = ROOM_STATES.WAITING;
         room.race = null;
         this._emitToRoom(room, serverMessage(SERVER_MESSAGE_TYPES.ERROR, {
           code: ERROR_CODES.NOT_ENOUGH_PLAYERS,
@@ -702,7 +810,6 @@ export class RoomManager extends EventEmitter {
       if (!this.raceFactory) {
         throw new GameError(ERROR_CODES.INTERNAL_ERROR, 'No authoritative race factory is configured.');
       }
-      const race = room.race;
       const simulation = await this.raceFactory({
         raceId: race.raceId,
         seed: race.seed,
@@ -734,9 +841,9 @@ export class RoomManager extends EventEmitter {
       this._touch(room, now);
       this._broadcastRoomState(room);
     })().catch((error) => {
-      if (room.state === ROOM_STATES.LOADING) {
-        this._resetLobbyMembers(room);
-        room.state = ROOM_STATES.LOBBY;
+      if (room.state === ROOM_STATES.LOADING && room.race === race) {
+        this._finalizeRaceMembers(room, { resetReady: true });
+        room.state = ROOM_STATES.WAITING;
         room.race = null;
         this._emitToRoom(room, serverMessage(SERVER_MESSAGE_TYPES.ERROR, {
           code: error instanceof GameError ? error.code : ERROR_CODES.INTERNAL_ERROR,
@@ -746,7 +853,7 @@ export class RoomManager extends EventEmitter {
       }
       this.emit('managerError', error);
     });
-    room.race.launchPromise = launchPromise;
+    race.launchPromise = launchPromise;
     return launchPromise;
   }
 
@@ -858,47 +965,46 @@ export class RoomManager extends EventEmitter {
     this._broadcastRoomState(room);
   }
 
-  _returnLobby(room) {
+  _returnRoom(room) {
     room.race?.simulation?.dispose?.();
     room.lastRaceId = room.race?.raceId ?? room.lastRaceId;
-    for (const member of [...room.members.values()]) {
-      if (!member.connected || member.abandoned) {
-        this._removeParticipant(room, member);
-        continue;
-      }
-      member.raceLoaded = false;
-      member.kartIndex = null;
-      member.controllerKind = CONTROLLER_KINDS.HUMAN;
-      member.pendingUseItems = 0;
-      member.postRaceState = null;
-    }
+    this._finalizeRaceMembers(room);
     room.race = null;
-    room.state = ROOM_STATES.LOBBY;
+    room.state = ROOM_STATES.WAITING;
     this._migrateHost(room);
     this._touch(room);
     this._broadcastRoomState(room);
   }
 
-  _resetLobbyMembers(room) {
-    for (const member of room.members.values()) {
-      member.ready = false;
+  _finalizeRaceMembers(room, { resetReady = false, now = this.now() } = {}) {
+    for (const member of [...room.members.values()]) {
+      const reconnectWindowExpired = member.resumeExpired
+        || (!member.connected
+          && member.resumeExpiresAt !== null
+          && now > member.resumeExpiresAt);
+      if (member.abandoned || reconnectWindowExpired) {
+        this._removeParticipant(room, member);
+        continue;
+      }
+      if (resetReady) member.ready = false;
       member.raceLoaded = false;
       member.kartIndex = null;
       member.controllerKind = CONTROLLER_KINDS.HUMAN;
       member.pendingUseItems = 0;
       member.postRaceState = null;
     }
+    this._migrateHost(room);
   }
 
-  _maybeReturnLobby(room) {
+  _maybeReturnRoom(room) {
     if (room.state !== ROOM_STATES.RESULTS) return false;
     const active = [...room.members.values()]
       .filter((member) => member.connected && !member.abandoned);
     if (active.length === 0
-      || active.some((member) => member.postRaceState !== POST_RACE_STATES.LOBBY)) {
+      || active.some((member) => member.postRaceState !== POST_RACE_STATES.ROOM)) {
       return false;
     }
-    this._returnLobby(room);
+    this._returnRoom(room);
     return true;
   }
 
@@ -911,12 +1017,12 @@ export class RoomManager extends EventEmitter {
   }
 
   _canStart(room) {
-    if (room.state !== ROOM_STATES.LOBBY) return false;
+    if (room.state !== ROOM_STATES.WAITING) return false;
     const members = [...room.members.values()].filter((member) => !member.abandoned);
     return members.length >= 2 && members.every((member) => member.connected && member.ready);
   }
 
-  _expireLobbyMembers(room, now) {
+  _expireWaitingMembers(room, now) {
     let changed = false;
     for (const member of [...room.members.values()]) {
       if (!member.connected && member.resumeExpiresAt !== null && now > member.resumeExpiresAt) {
@@ -931,13 +1037,16 @@ export class RoomManager extends EventEmitter {
   }
 
   _expireRaceSessions(room, now) {
+    let changed = false;
     for (const member of room.members.values()) {
       if (!member.connected && member.resumeExpiresAt !== null && now > member.resumeExpiresAt) {
         member.resumeExpiresAt = null;
         member.abandoned = true;
         member.resumeExpired = true;
+        changed = true;
       }
     }
+    if (changed) this._broadcastRoomState(room);
   }
 
   _removeParticipant(room, member) {
@@ -959,6 +1068,7 @@ export class RoomManager extends EventEmitter {
     for (const participantId of room.members.keys()) this.participantRooms.delete(participantId);
     this.rooms.delete(room.code);
     this.emit('roomDestroyed', { roomCode: room.code });
+    this.emit('lobbyChanged');
   }
 
   _requireRoom(roomCode, code = ERROR_CODES.ROOM_NOT_FOUND) {
@@ -975,17 +1085,17 @@ export class RoomManager extends EventEmitter {
     return room && member ? { room, member } : null;
   }
 
-  _requireLobby(room) {
-    if (room.state !== ROOM_STATES.LOBBY) {
-      throw new GameError(ERROR_CODES.INVALID_STATE, 'This action is only available in the lobby.');
+  _requireWaiting(room) {
+    if (room.state !== ROOM_STATES.WAITING) {
+      throw new GameError(ERROR_CODES.INVALID_STATE, 'This action is only available while the room is waiting.');
     }
   }
 
-  _requireMemberLobby(room, member) {
-    if (room.state === ROOM_STATES.LOBBY) return;
+  _requireMemberRoom(room, member) {
+    if (room.state === ROOM_STATES.WAITING) return;
     if (room.state === ROOM_STATES.RESULTS
-      && member.postRaceState === POST_RACE_STATES.LOBBY) return;
-    throw new GameError(ERROR_CODES.INVALID_STATE, 'Return to the lobby before doing that.');
+      && member.postRaceState === POST_RACE_STATES.ROOM) return;
+    throw new GameError(ERROR_CODES.INVALID_STATE, 'Return to the room before doing that.');
   }
 
   _requireHost(room, participantId) {
@@ -1012,9 +1122,29 @@ export class RoomManager extends EventEmitter {
     throw new GameError(ERROR_CODES.SERVER_BUSY, 'Could not allocate a room code.');
   }
 
+  _verifyPassword(room, password) {
+    if (room.roomType !== ROOM_TYPES.PRIVATE) return;
+    if (password === undefined || password === null || password === '') {
+      throw new GameError(ERROR_CODES.PASSWORD_REQUIRED, 'A password is required for this room.');
+    }
+    const validated = validateRoomPassword(password);
+    if (!validated.ok) {
+      throw new GameError(ERROR_CODES.PASSWORD_INVALID, 'The room password is incorrect.');
+    }
+    const verifier = this._passwordVerifiers.get(room);
+    if (!verifier) {
+      throw new GameError(ERROR_CODES.INTERNAL_ERROR, 'Room password verifier is unavailable.');
+    }
+    const candidate = scryptSync(validated.value, verifier.salt, PASSWORD_HASH_BYTES);
+    if (!timingSafeEqual(candidate, verifier.hash)) {
+      throw new GameError(ERROR_CODES.PASSWORD_INVALID, 'The room password is incorrect.');
+    }
+  }
+
   _broadcastRoomState(room) {
     if (!this.rooms.has(room.code)) return;
     this._emitToRoom(room, this.getRoomState(room.code));
+    this.emit('lobbyChanged');
   }
 
   _emitToRoom(room, message) {

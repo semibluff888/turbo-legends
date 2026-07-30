@@ -1,34 +1,38 @@
-// Browser-side WebSocket client for room/lobby lifecycle.
+// Browser-side WebSocket client for Lobby / Room lifecycle.
 //
 // Race rendering and prediction live in online-race-session.js. This class
-// owns transport, reconnect credentials, lobby commands, and typed event
-// delivery. It deliberately does not touch the DOM.
+// owns one reusable transport, in-memory Room reconnect credentials, Lobby commands,
+// and typed event delivery. It deliberately does not touch the DOM.
 
 import {
   CLIENT_MESSAGE_TYPES,
   ERROR_CODES,
   PROTOCOL_VERSION,
+  ROOM_STATES,
+  ROOM_TYPES,
   SERVER_MESSAGE_TYPES,
 } from './protocol.js';
 
-const SESSION_STORAGE_KEY = 'turbo-legends.online-session.v1';
+const SESSION_STORAGE_KEY = 'turbo-legends.online-session.v2';
+const LEGACY_SESSION_STORAGE_KEY = 'turbo-legends.online-session.v1';
 const RECONNECT_DELAYS_MS = [250, 500, 1000, 2000, 4000];
 const RECONNECT_WINDOW_MS = 30_000;
 
-function safeStorage(candidate) {
-  if (!candidate) return null;
-  try {
-    const probe = '__turbo_legends_probe__';
-    candidate.setItem(probe, '1');
-    candidate.removeItem(probe);
-    return candidate;
-  } catch {
-    return null;
-  }
+function storageForCleanup(candidate) {
+  return candidate && typeof candidate.removeItem === 'function' ? candidate : null;
 }
 
 function normalizeCode(code) {
   return String(code || '').trim().toUpperCase();
+}
+
+function displayNameOf(value) {
+  return String(value || '').trim().replace(/\s+/gu, ' ');
+}
+
+function roomCommandPayload(value, legacyDisplayName) {
+  if (value && typeof value === 'object') return value;
+  return { roomCode: value, displayName: legacyDisplayName };
 }
 
 export function webSocketUrl(locationLike = globalThis.location) {
@@ -56,26 +60,30 @@ export class OnlineClient {
   } = {}) {
     this.WebSocketImpl = WebSocketImpl;
     this.url = webSocketUrl(location);
-    this.storage = safeStorage(sessionStorage);
+    this.storage = storageForCleanup(sessionStorage);
     this._setTimeout = setTimeoutImpl;
     this._clearTimeout = clearTimeoutImpl;
     this._now = now;
 
     this.socket = null;
     this.state = 'idle';
+    this.scope = 'none';
+    this.lobby = null;
     this.room = null;
     this.selfId = null;
     this.resumeToken = null;
     this.raceId = null;
 
     this._listeners = new Map();
-    this._initialMessage = null;
-    this._intentionalClose = false;
+    this._connectionPurpose = null;
+    this._pendingMessages = [];
     this._reconnectTimer = null;
     this._reconnectAttempt = 0;
     this._reconnectDeadline = 0;
 
-    this._loadStoredSession();
+    // Participant IDs and resume tokens are deliberately memory-only. Remove
+    // credentials left by older builds without ever replaying or migrating them.
+    this._purgePersistedSessions();
   }
 
   on(type, listener) {
@@ -95,60 +103,111 @@ export class OnlineClient {
     if (all) for (const listener of [...all]) listener({ type, value });
   }
 
-  createRoom(nickname) {
-    this._clearStoredSession();
-    this._open({
+  /** Enter (or re-enter) the public Lobby subscription. */
+  enterLobby({ discardRoomSession = false } = {}) {
+    if (discardRoomSession) this._clearRoomSession();
+    this.scope = 'lobby';
+    this._cancelReconnect();
+
+    if (this.socket?.readyState === 1) {
+      return this.send({ type: CLIENT_MESSAGE_TYPES.ENTER_LOBBY });
+    }
+    if (this.socket?.readyState === 0
+      && this._connectionPurpose === CLIENT_MESSAGE_TYPES.ENTER_LOBBY) return true;
+
+    this._open({ type: CLIENT_MESSAGE_TYPES.ENTER_LOBBY });
+    return true;
+  }
+
+  /** Create a Room through the already-subscribed Lobby connection. */
+  createRoom(options = {}) {
+    const value = typeof options === 'string' ? { displayName: options } : options;
+    this._clearRoomSession();
+    this.scope = 'lobby';
+    const displayName = displayNameOf(value.displayName);
+    const roomType = String(value.roomType || ROOM_TYPES.PUBLIC).trim().toLowerCase();
+    const message = {
       type: CLIENT_MESSAGE_TYPES.CREATE_ROOM,
-      displayName: String(nickname || '').trim(),
-    });
+      displayName,
+      roomName: String(value.roomName ?? `${displayName}'s Room`).trim().replace(/\s+/gu, ' '),
+      roomType,
+      maxPlayers: Number(value.maxPlayers ?? 8),
+    };
+    if (roomType === ROOM_TYPES.PRIVATE && value.password !== undefined) {
+      message.password = String(value.password);
+    }
+    if (value.characterId) message.characterId = String(value.characterId);
+    return this._sendLobbyCommand(message);
   }
 
-  joinRoom(code, nickname) {
-    this._clearStoredSession();
-    this._open({
-      type: 'join_room',
-      roomCode: normalizeCode(code),
-      displayName: String(nickname || '').trim(),
-    });
+  /** Join either a public Room or a password-protected friend Room. */
+  joinRoom(options, legacyDisplayName) {
+    const value = roomCommandPayload(options, legacyDisplayName);
+    this._clearRoomSession();
+    this.scope = 'lobby';
+    const message = {
+      type: CLIENT_MESSAGE_TYPES.JOIN_ROOM,
+      roomCode: normalizeCode(value.roomCode),
+      displayName: displayNameOf(value.displayName),
+    };
+    if (value.password !== undefined && value.password !== '') {
+      message.password = String(value.password);
+    }
+    if (value.characterId) message.characterId = String(value.characterId);
+    return this._sendLobbyCommand(message);
   }
 
-  resumeStored() {
+  /** Ask the server to atomically choose and join an available public Room. */
+  quickMatch(options = {}) {
+    const value = typeof options === 'string' ? { displayName: options } : options;
+    this._clearRoomSession();
+    this.scope = 'lobby';
+    const message = {
+      type: CLIENT_MESSAGE_TYPES.QUICK_MATCH,
+      displayName: displayNameOf(value.displayName),
+    };
+    if (value.characterId) message.characterId = String(value.characterId);
+    return this._sendLobbyCommand(message);
+  }
+
+  resumeRoomSession() {
     if (!this.room?.code || !this.selfId || !this.resumeToken) return false;
+    this.scope = 'room';
     this._open(this._resumeMessage(), true);
     return true;
   }
 
   selectCharacter(characterId) {
-    return this.send({ type: 'select_character', characterId });
+    return this.send({ type: CLIENT_MESSAGE_TYPES.SELECT_CHARACTER, characterId });
   }
 
   setRoom(settings) {
-    return this.send({ type: 'set_room', ...settings });
+    return this.send({ type: CLIENT_MESSAGE_TYPES.SET_ROOM, ...settings });
   }
 
   setReady(ready) {
-    return this.send({ type: 'set_ready', ready: !!ready });
+    return this.send({ type: CLIENT_MESSAGE_TYPES.SET_READY, ready: !!ready });
   }
 
   startRace() {
-    return this.send({ type: 'start_race' });
+    return this.send({ type: CLIENT_MESSAGE_TYPES.START_RACE });
   }
 
   markRaceLoaded(raceId = this.raceId) {
-    return this.send({ type: 'race_loaded', raceId });
+    return this.send({ type: CLIENT_MESSAGE_TYPES.RACE_LOADED, raceId });
   }
 
-  returnLobby() {
-    return this.send({ type: 'return_lobby', raceId: this.raceId });
+  returnRoom() {
+    return this.send({ type: CLIENT_MESSAGE_TYPES.RETURN_ROOM });
   }
 
   sendInput(input) {
     if (!this.raceId) return false;
-    return this.send({ type: 'input', raceId: this.raceId, ...input });
+    return this.send({ type: CLIENT_MESSAGE_TYPES.INPUT, raceId: this.raceId, ...input });
   }
 
   ping(clientTime = (globalThis.performance?.now?.() ?? this._now())) {
-    return this.send({ type: 'ping', clientTime });
+    return this.send({ type: CLIENT_MESSAGE_TYPES.PING, clientTime });
   }
 
   send(message) {
@@ -158,27 +217,45 @@ export class OnlineClient {
     return true;
   }
 
-  leave() {
-    this._intentionalClose = true;
-    if (this._reconnectTimer != null) this._clearTimeout(this._reconnectTimer);
-    this._reconnectTimer = null;
-    this._reconnectAttempt = 0;
-    this._reconnectDeadline = 0;
-    this.send({ type: 'leave', raceId: this.raceId });
-    this._clearStoredSession();
-    this.raceId = null;
-    if (this.socket && this.socket.readyState < 2) this.socket.close(1000, 'left room');
+  /** Leave the current Room but keep the socket subscribed to the Lobby. */
+  leaveRoom() {
+    this._cancelReconnect();
+    const open = this.socket?.readyState === 1;
+    if (open) {
+      this.send({ type: CLIENT_MESSAGE_TYPES.LEAVE_ROOM });
+    } else {
+      this._closeCurrentSocket('leave room');
+    }
+    this._clearRoomSession();
+    this.scope = 'lobby';
+    if (!open) this._open({ type: CLIENT_MESSAGE_TYPES.ENTER_LOBBY });
+    return true;
+  }
+
+  /** Close online transport when returning from the Lobby to the title. */
+  disconnect({ clearSession = true } = {}) {
+    this._cancelReconnect();
+    this._pendingMessages.length = 0;
+    this._connectionPurpose = null;
+    this.scope = 'none';
+    if (clearSession) this._clearRoomSession();
+    this._closeCurrentSocket('left online');
     this.state = 'idle';
     this._emit('connection', { state: this.state });
   }
 
   dispose() {
-    this._intentionalClose = true;
-    if (this._reconnectTimer != null) this._clearTimeout(this._reconnectTimer);
-    this._reconnectTimer = null;
-    if (this.socket && this.socket.readyState < 2) this.socket.close(1000, 'disposed');
-    this.socket = null;
+    this.disconnect({ clearSession: false });
     this._listeners.clear();
+  }
+
+  _sendLobbyCommand(message) {
+    if (this.send(message)) return true;
+    this._pendingMessages.push(message);
+    if (!this.socket || this.socket.readyState >= 2) {
+      this._open({ type: CLIENT_MESSAGE_TYPES.ENTER_LOBBY });
+    }
+    return true;
   }
 
   _open(initialMessage, reconnecting = false) {
@@ -186,15 +263,10 @@ export class OnlineClient {
       this._emit('error', { code: 'websocket_unavailable', message: 'WebSocket is unavailable.' });
       return;
     }
-    if (this._reconnectTimer != null) this._clearTimeout(this._reconnectTimer);
-    this._reconnectTimer = null;
-    if (this.socket && this.socket.readyState < 2) {
-      this._intentionalClose = true;
-      this.socket.close(1000, 'replaced');
-    }
+    this._cancelReconnect({ resetAttempts: false });
+    this._closeCurrentSocket('replaced');
 
-    this._intentionalClose = false;
-    this._initialMessage = { v: PROTOCOL_VERSION, ...initialMessage };
+    this._connectionPurpose = initialMessage.type;
     this.state = reconnecting ? 'reconnecting' : 'connecting';
     this._emit('connection', { state: this.state });
 
@@ -203,7 +275,10 @@ export class OnlineClient {
     socket.addEventListener('open', () => {
       if (socket !== this.socket) return;
       this.state = reconnecting ? 'reconnecting' : 'connected';
-      socket.send(JSON.stringify(this._initialMessage));
+      socket.send(JSON.stringify({ v: PROTOCOL_VERSION, ...initialMessage }));
+      for (const message of this._pendingMessages.splice(0)) {
+        socket.send(JSON.stringify({ v: PROTOCOL_VERSION, ...message }));
+      }
       this._emit('connection', { state: this.state });
     });
     socket.addEventListener('message', (event) => {
@@ -237,37 +312,54 @@ export class OnlineClient {
     let resumeRejected = null;
     if (message.type === SERVER_MESSAGE_TYPES.WELCOME) {
       this._captureSession(message);
-      if (message.participantId || message.session?.participantId) {
+      const hasBoundSession = Boolean(message.participantId || message.session?.participantId);
+      if (hasBoundSession) {
+        this.scope = 'room';
         this._reconnectAttempt = 0;
         this._reconnectDeadline = 0;
+        this._connectionPurpose = null;
       }
       this.state = 'connected';
       this._emit('connection', { state: this.state });
+    } else if (message.type === SERVER_MESSAGE_TYPES.LOBBY_STATE) {
+      this.lobby = message;
+      // lobby_state is authoritative proof that this connection is no longer
+      // bound to a Room (leave, expiry, destruction, or a fresh subscription).
+      this._clearRoomSession();
+      this.scope = 'lobby';
+      this._reconnectAttempt = 0;
+      this._connectionPurpose = null;
+      this.state = 'connected';
     } else if (message.type === SERVER_MESSAGE_TYPES.ROOM_STATE) {
       this.room = message.room || message;
+      this.scope = 'room';
       this._captureSession(message);
+      this._connectionPurpose = null;
       const phase = String(this.room?.phase || this.room?.state || '');
       const members = this.room?.members || this.room?.participants || this.room?.players || [];
       const self = Array.isArray(members)
         ? members.find((member) => String(member?.participantId || member?.id || '') === String(this.selfId || ''))
         : null;
-      if (phase === 'lobby' || (phase === 'results' && self?.postRaceState === 'lobby')) {
-        this.raceId = null;
-      }
+      if (phase === ROOM_STATES.WAITING || self?.postRaceState === 'room') this.raceId = null;
     } else if (message.type === SERVER_MESSAGE_TYPES.PREPARE_RACE) {
       this.raceId = message.raceId;
     } else if (message.type === SERVER_MESSAGE_TYPES.RACE_RESULTS) {
       this.raceId = message.raceId || this.raceId;
     } else if (message.type === SERVER_MESSAGE_TYPES.ERROR
-      && this._initialMessage?.type === CLIENT_MESSAGE_TYPES.RESUME
+      && this._connectionPurpose === CLIENT_MESSAGE_TYPES.RESUME
       && (message.code === ERROR_CODES.SESSION_NOT_FOUND
         || message.code === ERROR_CODES.SESSION_EXPIRED)) {
       resumeRejected = { roomCode: this.room?.code || null, code: message.code };
-      this._clearStoredSession();
+      this._clearRoomSession();
+      this.scope = 'lobby';
+      this._connectionPurpose = null;
     }
 
     this._emit(message.type, message);
-    if (resumeRejected) this._emit('reconnect_expired', resumeRejected);
+    if (resumeRejected) {
+      this._emit('reconnect_expired', resumeRejected);
+      this.send({ type: CLIENT_MESSAGE_TYPES.ENTER_LOBBY });
+    }
   }
 
   _captureSession(message) {
@@ -278,7 +370,6 @@ export class OnlineClient {
       || message.roomCode
       || message.room?.roomCode
       || message.room?.code
-      || message.code
       || this.room?.roomCode
       || this.room?.code;
     if (participantId) this.selfId = participantId;
@@ -288,14 +379,9 @@ export class OnlineClient {
         ? { ...this.room, code: normalizeCode(code) }
         : { code: normalizeCode(code) };
     }
-    this._saveStoredSession();
   }
 
   _handleClose(event) {
-    if (this._intentionalClose) {
-      this._intentionalClose = false;
-      return;
-    }
     this.state = 'disconnected';
     this._emit('connection', {
       state: this.state,
@@ -303,77 +389,97 @@ export class OnlineClient {
       reason: event?.reason || '',
     });
 
-    // The server uses 4001 when the same credentials are resumed by another
-    // browser. Retrying from this stale socket would make the two clients
-    // repeatedly evict each other, so retire the old credentials immediately.
+    // A replaced Room session must not resume and evict the other window back.
+    // It may still reconnect anonymously to the Lobby.
     if (event?.code === 4001) {
       const replaced = { roomCode: this.room?.code || null, code: 'session_replaced' };
-      this._clearStoredSession();
+      this._clearRoomSession();
+      this.scope = 'lobby';
       this._emit('reconnect_expired', replaced);
       this._emit('error', {
         code: 'session_replaced',
         message: 'This room session was resumed in another window.',
       });
+      this._scheduleLobbyReconnect();
       return;
     }
-    if (!this.room?.code || !this.selfId || !this.resumeToken) return;
+
+    if (this.scope === 'lobby') {
+      this._scheduleLobbyReconnect();
+      return;
+    }
+    if (this.scope !== 'room' || !this.room?.code || !this.selfId || !this.resumeToken) return;
 
     if (!this._reconnectDeadline) this._reconnectDeadline = this._now() + RECONNECT_WINDOW_MS;
     if (this._now() >= this._reconnectDeadline) {
       const expired = { roomCode: this.room.code, code: ERROR_CODES.SESSION_EXPIRED };
-      this._clearStoredSession();
+      this._clearRoomSession();
+      this.scope = 'lobby';
       this._emit('reconnect_expired', expired);
+      this._scheduleLobbyReconnect();
       return;
     }
-    const delay = RECONNECT_DELAYS_MS[
-      Math.min(this._reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)
-    ];
-    this._reconnectAttempt++;
+    const delay = this._nextReconnectDelay();
     this._reconnectTimer = this._setTimeout(() => {
       this._reconnectTimer = null;
       this._open(this._resumeMessage(), true);
     }, delay);
   }
 
+  _scheduleLobbyReconnect() {
+    const delay = this._nextReconnectDelay();
+    this._reconnectTimer = this._setTimeout(() => {
+      this._reconnectTimer = null;
+      if (this.scope === 'lobby') {
+        this._open({ type: CLIENT_MESSAGE_TYPES.ENTER_LOBBY }, true);
+      }
+    }, delay);
+  }
+
+  _nextReconnectDelay() {
+    const delay = RECONNECT_DELAYS_MS[
+      Math.min(this._reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)
+    ];
+    this._reconnectAttempt++;
+    return delay;
+  }
+
+  _cancelReconnect({ resetAttempts = true } = {}) {
+    if (this._reconnectTimer != null) this._clearTimeout(this._reconnectTimer);
+    this._reconnectTimer = null;
+    if (resetAttempts) {
+      this._reconnectAttempt = 0;
+      this._reconnectDeadline = 0;
+    }
+  }
+
+  _closeCurrentSocket(reason) {
+    const socket = this.socket;
+    this.socket = null;
+    if (socket && socket.readyState < 2) socket.close(1000, reason);
+  }
+
   _resumeMessage() {
     return {
-      type: 'resume',
+      type: CLIENT_MESSAGE_TYPES.RESUME,
       roomCode: this.room.code,
       participantId: this.selfId,
       resumeToken: this.resumeToken,
     };
   }
 
-  _loadStoredSession() {
+  _purgePersistedSessions() {
     if (!this.storage) return;
     try {
-      const value = JSON.parse(this.storage.getItem(SESSION_STORAGE_KEY) || 'null');
-      if (!value || typeof value !== 'object') return;
-      if (value.code) this.room = { code: normalizeCode(value.code) };
-      if (value.participantId) this.selfId = value.participantId;
-      if (value.resumeToken) this.resumeToken = value.resumeToken;
-    } catch {
+      this.storage.removeItem(LEGACY_SESSION_STORAGE_KEY);
       this.storage.removeItem(SESSION_STORAGE_KEY);
-    }
-  }
-
-  _saveStoredSession() {
-    if (!this.storage || !this.room?.code || !this.selfId || !this.resumeToken) return;
-    try {
-      this.storage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
-        code: this.room.code,
-        participantId: this.selfId,
-        resumeToken: this.resumeToken,
-      }));
     } catch {
-      // Storage can disappear in privacy modes; the live socket still works.
+      // Storage can disappear in privacy modes; live in-memory play still works.
     }
   }
 
-  _clearStoredSession() {
-    if (this.storage) {
-      try { this.storage.removeItem(SESSION_STORAGE_KEY); } catch {}
-    }
+  _clearRoomSession() {
+    this._purgePersistedSessions();
     this.room = null;
     this.selfId = null;
     this.resumeToken = null;
@@ -382,3 +488,4 @@ export class OnlineClient {
 }
 
 export const ONLINE_SESSION_STORAGE_KEY = SESSION_STORAGE_KEY;
+export const LEGACY_ONLINE_SESSION_STORAGE_KEY = LEGACY_SESSION_STORAGE_KEY;

@@ -18,8 +18,8 @@ npm start
 
 Open `http://127.0.0.1:5173/`. ES modules require an HTTP origin, so opening
 `index.html` directly from disk will not work. To test multiplayer, open the
-page in two browser windows, create a room in one, and join its six-character
-room code from the other.
+page in two browser windows, create a room from the multiplayer lobby in one,
+and join it from the room list in the other.
 
 For other devices on the same LAN, listen on all interfaces and open the host
 machine's LAN address (for example, `http://192.168.1.20:5173/`):
@@ -38,31 +38,43 @@ counts.
 
 ## Multiplayer
 
-- Private, in-memory rooms for 2–8 human players; AI fills every race to eight
-  karts.
+- A live multiplayer lobby lists public and password-protected friends rooms,
+  with search, direct joining, invite codes, and quick match for available
+  public rooms.
+- Rooms choose a 2–8 human-player capacity; AI fills every race to eight karts.
+  Full rooms and rooms already in a race remain visible but cannot be joined.
+- Room names may repeat. Friends rooms require a case-sensitive 4–20 character
+  password, stored by the server only as a salted scrypt digest.
 - The host chooses the track and AI difficulty. Every connected player must be
   ready before the host can start.
-- Nicknames and character selections must be unique within a room. Changing a
-  character clears that player's ready state; changing track or difficulty
-  clears everyone's ready state.
+- Nicknames are display-only and may repeat. A racing-themed nickname is chosen
+  on first use and can be edited in the lobby; participant IDs remain the sole
+  identity for permissions, reconnects, input, and results. Character selections
+  remain unique within a room.
+- Changing a character clears that player's ready state; changing track or
+  difficulty clears everyone's ready state.
 - Starting a race creates a seeded grid and a 10-second loading phase. If fewer
   than two connected players finish loading, the race is cancelled.
 - The Node server owns physics, items, laps, ranks, and results. Browsers send
   inputs and locally smooth/predict presentation.
-- A disconnected kart is immediately driven by takeover AI. The player can
-  reclaim it with the stored session token for 30 seconds; the earliest joined
+- A disconnected kart is immediately driven by takeover AI. The same live page
+  can reclaim it with its in-memory session token for 30 seconds; the earliest joined
   connected player becomes host when needed.
 - Every player can return from results independently and prepare for the next
   race while remaining players are shown as `IN GAME`. The room becomes fully
   startable after everyone returns, or automatically after 30 seconds. Empty
-  rooms expire after 60 seconds and idle lobbies after 15 minutes.
+  rooms expire after 60 seconds and idle waiting rooms after 15 minutes.
+- Leaving a room or an online race returns to the multiplayer lobby. The online
+  results screen only offers `RETURN TO ROOM`.
 
 Rooms, reconnect tokens, and results are process-memory state. Restarting the
-server clears them; v1 does not include accounts, persistent results, public
-matchmaking, chat, or cross-process room migration.
+server clears them; v2 does not include accounts, persistent results, chat, or
+cross-process room migration.
 
-Invite links may include `?room=ROOMCODE`. The browser stores the nickname in
-`localStorage` and the active room credentials in `sessionStorage`.
+Invite links may include `?room=ROOMCODE`. The lobby locates that room and asks
+for a password when required; passwords are never placed in URLs or browser
+storage. The browser stores only the nickname in `localStorage`; `participantId`
+and `resumeToken` remain in memory and legacy v1/v2 session records are purged.
 
 ## Controls
 
@@ -110,7 +122,7 @@ page is served over HTTPS. For public deployment, terminate TLS in the hosting
 platform or reverse proxy and ensure WebSocket Upgrade requests for `/ws` are
 forwarded to this process.
 
-Protocol v1 is JSON. The shared message names, validators, limits, room states,
+Protocol v2 is JSON. The shared message names, validators, limits, room states,
 and error codes are defined in `src/net/protocol.js`.
 
 ## Development

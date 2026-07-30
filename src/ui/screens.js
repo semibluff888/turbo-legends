@@ -408,7 +408,11 @@ export class Screens {
     const restart = root.querySelector('[data-value="restart"]');
     const quit = root.querySelector('[data-value="quit"]');
     if (restart) restart.hidden = online;
-    if (quit) quit.textContent = online ? UI_COPY.online.lobby.leave : UI_COPY.pause.items.at(-1)[1];
+    if (quit) {
+      quit.textContent = online
+        ? (UI_COPY.online.room?.leave || UI_COPY.online.lobby?.leave || 'LEAVE ROOM')
+        : UI_COPY.pause.items.at(-1)[1];
+    }
     root.hidden = false;
     this._screen = 'pause';
     this._cols = 1;

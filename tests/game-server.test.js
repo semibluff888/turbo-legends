@@ -54,7 +54,8 @@ async function connectClient(WebSocket, url, origin) {
       });
     },
     mark() { return messages.length; },
-    send(message) { socket.send(JSON.stringify({ v: 1, ...message })); },
+    messagesAfter(mark = 0) { return messages.slice(mark); },
+    send(message) { socket.send(JSON.stringify({ v: 2, ...message })); },
     close() {
       if (socket.readyState === WebSocket.CLOSED) return Promise.resolve();
       return new Promise(resolve => {
@@ -124,7 +125,7 @@ class QuickRaceSimulation {
   }
 }
 
-test('game server creates and joins a room over /ws and reports aggregate health', {
+test('game server subscribes to Lobby, creates and joins a room, and reports aggregate health', {
   skip: wsModule ? false : 'ws dependency is not installed in this workspace',
 }, async () => {
   const { WebSocket } = wsModule;
@@ -143,17 +144,43 @@ test('game server creates and joins a room over /ws and reports aggregate health
   try {
     host = await connectClient(WebSocket, url, origin);
     assert.equal((await host.next(message => message.type === 'welcome')).session, null);
-    host.send({ type: 'create_room', nickname: 'Host', characterId: 'pip' });
+    host.send({ type: 'enter_lobby' });
+    assert.deepEqual((await host.next(message => message.type === 'lobby_state')).rooms, []);
+    host.send({
+      type: 'create_room',
+      displayName: 'Host',
+      roomName: 'Host Raceway',
+      roomType: 'public',
+      maxPlayers: 4,
+      characterId: 'pip',
+    });
     const hostWelcome = await host.next(message => message.type === 'welcome' && message.session);
     const hostRoom = await host.next(message => message.type === 'room_state' && message.members.length === 1);
     assert.equal(hostRoom.self.participantId, hostWelcome.participantId);
     assert.equal(hostRoom.self.isHost, true);
+    assert.equal(hostRoom.state, 'waiting');
+    assert.equal(hostRoom.roomName, 'Host Raceway');
+    assert.equal(hostRoom.roomType, 'public');
+    assert.equal(hostRoom.maxPlayers, 4);
 
     guest = await connectClient(WebSocket, url, origin);
+    guest.send({ type: 'enter_lobby' });
+    const guestLobby = await guest.next(message => message.type === 'lobby_state');
+    assert.deepEqual(guestLobby.rooms[0], {
+      roomCode: hostWelcome.roomCode,
+      roomName: 'Host Raceway',
+      roomType: 'public',
+      requiresPassword: false,
+      playerCount: 1,
+      maxPlayers: 4,
+      hostDisplayName: 'Host',
+      status: 'waiting',
+      joinable: true,
+    });
     guest.send({
       type: 'join_room',
-      code: hostWelcome.roomCode,
-      nickname: 'Guest',
+      roomCode: hostWelcome.roomCode,
+      displayName: 'Guest',
       characterId: 'nova',
     });
     const guestWelcome = await guest.next(message => message.type === 'welcome' && message.session);
@@ -185,6 +212,18 @@ test('game server creates and joins a room over /ws and reports aggregate health
     assert.equal(resumedRoom.self.participantId, guestWelcome.participantId);
     assert.equal(resumedRoom.self.connected, true);
 
+    const leaveMark = resumedGuest.mark();
+    resumedGuest.send({ type: 'leave_room' });
+    const lobbyAfterLeave = await resumedGuest.next(
+      message => message.type === 'lobby_state', leaveMark,
+    );
+    assert.equal(lobbyAfterLeave.rooms[0].playerCount, 1);
+    assert.equal(resumedGuest.messagesAfter(leaveMark)[0].type, 'lobby_state');
+    assert.equal(
+      resumedGuest.messagesAfter(leaveMark).some(message => message.type === 'room_state'),
+      false,
+    );
+
     const health = await readJson(port, '/healthz');
     assert.equal(health.statusCode, 200);
     assert.equal(health.body.rooms, 1);
@@ -198,7 +237,57 @@ test('game server creates and joins a room over /ws and reports aggregate health
   }
 });
 
-test('two WebSocket clients can ready, start, receive snapshots/results, and return to lobby', {
+test('quick match stays subscribed after no-match and can join a later public room with a duplicate name', {
+  skip: wsModule ? false : 'ws dependency is not installed in this workspace',
+}, async () => {
+  const { WebSocket } = wsModule;
+  const logger = { info() {}, warn() {}, error() {} };
+  const server = await createGameServer({ root: PROJECT_ROOT, logger });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const port = server.address().port;
+  const origin = `http://127.0.0.1:${port}`;
+  const url = `ws://127.0.0.1:${port}/ws`;
+  let browser;
+  let host;
+  try {
+    browser = await connectClient(WebSocket, url, origin);
+    browser.send({ type: 'enter_lobby' });
+    await browser.next(message => message.type === 'lobby_state');
+    browser.send({ type: 'quick_match', displayName: 'Same Name' });
+    const noMatch = await browser.next(message => message.type === 'error');
+    assert.equal(noMatch.code, 'no_matching_room');
+
+    host = await connectClient(WebSocket, url, origin);
+    host.send({
+      type: 'create_room', displayName: 'Same Name', roomName: 'Open Sprint',
+      roomType: 'public', maxPlayers: 2, characterId: 'pip',
+    });
+    const hostWelcome = await host.next(message => message.type === 'welcome' && message.session);
+    const listed = await browser.next(message => (
+      message.type === 'lobby_state'
+      && message.rooms.some(room => room.roomCode === hostWelcome.roomCode)
+    ));
+    assert.equal(listed.rooms[0].joinable, true);
+
+    browser.send({ type: 'quick_match', displayName: 'Same Name' });
+    const matchedWelcome = await browser.next(message => message.type === 'welcome' && message.session);
+    const matchedRoom = await browser.next(message => (
+      message.type === 'room_state' && message.members.length === 2
+    ));
+    assert.equal(matchedWelcome.roomCode, hostWelcome.roomCode);
+    assert.deepEqual(matchedRoom.members.map(member => member.displayName), ['Same Name', 'Same Name']);
+    assert.equal(new Set(matchedRoom.members.map(member => member.participantId)).size, 2);
+  } finally {
+    await browser?.close();
+    await host?.close();
+    await server.shutdown();
+  }
+});
+
+test('two WebSocket clients can ready, race, receive results, and return to their room', {
   skip: wsModule ? false : 'ws dependency is not installed in this workspace',
 }, async () => {
   const { WebSocket } = wsModule;
@@ -221,14 +310,17 @@ test('two WebSocket clients can ready, start, receive snapshots/results, and ret
   let guest;
   try {
     host = await connectClient(WebSocket, url, origin);
-    host.send({ type: 'create_room', nickname: 'Host', characterId: 'pip' });
+    host.send({
+      type: 'create_room', displayName: 'Host', characterId: 'pip',
+      roomName: 'Race Night', roomType: 'public', maxPlayers: 8,
+    });
     const hostWelcome = await host.next(message => message.type === 'welcome' && message.session);
 
     guest = await connectClient(WebSocket, url, origin);
     guest.send({
       type: 'join_room',
-      code: hostWelcome.roomCode,
-      nickname: 'Guest',
+      roomCode: hostWelcome.roomCode,
+      displayName: 'Guest',
       characterId: 'nova',
     });
     const guestWelcome = await guest.next(message => message.type === 'welcome' && message.session);
@@ -281,16 +373,16 @@ test('two WebSocket clients can ready, start, receive snapshots/results, and ret
 
     const hostMark = host.mark();
     const guestMark = guest.mark();
-    host.send({ type: 'return_lobby' });
+    host.send({ type: 'return_room' });
     const hostWaiting = await host.next(message => (
       message.type === 'room_state'
       && message.state === 'results'
-      && message.members.find(member => member.participantId === hostWelcome.participantId)?.postRaceState === 'lobby'
+      && message.members.find(member => member.participantId === hostWelcome.participantId)?.postRaceState === 'room'
     ), hostMark);
     const guestWaiting = await guest.next(message => (
       message.type === 'room_state'
       && message.state === 'results'
-      && message.members.find(member => member.participantId === hostWelcome.participantId)?.postRaceState === 'lobby'
+      && message.members.find(member => member.participantId === hostWelcome.participantId)?.postRaceState === 'room'
     ), guestMark);
     assert.equal(
       hostWaiting.members.find(member => member.participantId === guestWelcome.participantId)?.activityState,
@@ -300,12 +392,12 @@ test('two WebSocket clients can ready, start, receive snapshots/results, and ret
 
     const finalHostMark = host.mark();
     const finalGuestMark = guest.mark();
-    guest.send({ type: 'return_lobby' });
+    guest.send({ type: 'return_room' });
     const hostLobby = await host.next(message => (
-      message.type === 'room_state' && message.state === 'lobby' && message.raceId === null
+      message.type === 'room_state' && message.state === 'waiting' && message.raceId === null
     ), finalHostMark);
     const guestLobby = await guest.next(message => (
-      message.type === 'room_state' && message.state === 'lobby' && message.raceId === null
+      message.type === 'room_state' && message.state === 'waiting' && message.raceId === null
     ), finalGuestMark);
     assert.equal(hostLobby.members.every(member => member.ready === false), true);
     assert.equal(guestLobby.members.length, 2);

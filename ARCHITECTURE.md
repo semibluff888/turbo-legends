@@ -33,7 +33,7 @@ but do not decide authoritative physics, items, laps, ranks, or results.
 - `server/` owns process-memory rooms, WebSocket connections, authoritative
   race scheduling, snapshots, event delivery, and cleanup.
 - `src/net/protocol.js` is browser-safe and imported by both client and server;
-  it is the canonical source for protocol v1 names and validation.
+  it is the canonical source for protocol v2 names and validation.
 - Rooms are local to one Node process. There is no database, durable result
   store, account system, or cross-process room migration.
 
@@ -120,14 +120,14 @@ the existing renderer and HUD:
 | `src/game/race-simulation.js` | Generic eight-kart authoritative race pipeline |
 | `src/game/race.js` | Backward-compatible single-player `RaceDirector` adapter |
 | `src/session/local-race-session.js` | Presentation-facing wrapper for local races |
-| `src/net/protocol.js` | Shared protocol v1 constants and client-message validation |
-| `src/net/online-client.js` | Browser transport, room commands, credentials, and reconnect loop |
+| `src/net/protocol.js` | Shared protocol v2 constants and client-message validation |
+| `src/net/online-client.js` | Browser transport, lobby subscription, room commands, credentials, and reconnect loop |
 | `src/net/online-race-session.js` | Snapshot mirror, input sampling, prediction, and correction |
 | `server/room-manager.js` | Room lifecycle, scheduler, authoritative input and snapshot flow |
 | `server/websocket-game-server.js` | Upgrade/origin checks, connection limits, routing, and heartbeat |
 | `server/race-factory.js` | Builds a Track and `RaceSimulation` for an online room |
 | `src/render/*` | Three.js scene, track/kart visuals, particles, and camera |
-| `src/ui/*` | Menus, lobby, HUD, settings, and local/online results |
+| `src/ui/*` | Menus, multiplayer lobby/room views, HUD, settings, and local/online results |
 | `src/audio/*` | WebAudio gameplay/UI SFX and local MP3 background music |
 | `src/input/*` | Keyboard, gamepad, and touch controls |
 | `src/main.js` | Browser boot, mode routing, session mounting, and presentation loop |
@@ -257,14 +257,20 @@ Local sessions additionally expose `reset()`.
 ## Room lifecycle and rules
 
 ```text
-lobby → loading → countdown → racing → results → lobby
+waiting → loading → countdown → racing → results → waiting
 ```
 
 - Room codes are six characters from an alphabet that omits `I`, `L`, `O`,
   `0`, and `1`. Codes are case-insensitive.
-- A room accepts up to eight humans only while in `lobby`.
-- Nicknames are 1–20 visible characters, case-insensitively unique per room,
-  and reject control/bidirectional formatting characters.
+- Rooms have an immutable display name, `public` or `private` type, and a human
+  capacity from two to eight. AI still fills every race to eight karts.
+- Both room types appear in the multiplayer lobby. Private rooms require a
+  case-sensitive 4–20 character password; only a salted scrypt digest is kept.
+- A room accepts humans only while in `waiting` and below its own capacity.
+  Reserved reconnect seats count toward the displayed occupancy and capacity.
+- Nicknames are 1–20 visible characters, may repeat, and reject control or
+  bidirectional formatting characters. `participantId` is the only identity
+  used for host permissions, reconnects, input ownership, and results.
 - Human character selections are unique. AI fills unused characters until the
   race has eight karts.
 - The first member is host. If the host disconnects or leaves, ownership moves
@@ -275,7 +281,7 @@ lobby → loading → countdown → racing → results → lobby
   The room then locks against new joins and sends `prepare_race`.
 - Clients build the track/roster and answer `race_loaded`. The loading deadline
   is 10 seconds; unready clients use takeover AI. Fewer than two connected,
-  loaded humans cancels the launch and resets the lobby.
+  loaded humans cancels the launch and resets the room to `waiting`.
 - A disconnect immediately enables takeover AI and opens a 30-second resume
   window. A successful resume restores human control. An explicit leave during
   a race abandons the session and cannot be resumed; its AI finishes the race.
@@ -286,38 +292,48 @@ lobby → loading → countdown → racing → results → lobby
   are shown as `IN GAME`; starting stays disabled until everyone returns. Results
   return globally after the last connected player returns or after 30 seconds.
   Disconnected or abandoned members are removed then.
-- A room with no connected members expires after 60 seconds. An inactive lobby
-  expires after 15 minutes.
+- A room with no connected members is hidden from the lobby and expires after
+  60 seconds. An inactive waiting room expires after 15 minutes.
+- The server publishes full lobby directory snapshots after room visibility,
+  occupancy, host, or status changes. Quick match atomically chooses an available
+  public waiting room and never creates a room implicitly.
 
-## Protocol v1
+## Protocol v2
 
 The WebSocket endpoint is `/ws`. Every application message is a JSON object
-with `v: 1` and a `type`. Unknown fields in client messages are discarded by the
+with `v: 2` and a `type`. Unknown fields in client messages are discarded by the
 shared validator.
 
 Client → server:
 
 ```text
-create_room, join_room, resume,
+enter_lobby, create_room, join_room, quick_match, resume,
 select_character, set_room, set_ready,
 start_race, race_loaded, input,
-return_lobby, leave, ping
+return_room, leave_room, ping
 ```
 
 Server → client:
 
 ```text
-welcome, room_state, prepare_race,
+welcome, lobby_state, room_state, prepare_race,
 snapshot, race_events, race_results,
 error, pong
 ```
+
+`lobby_state` contains public-safe summaries for both public and private rooms:
+room code/name/type, password requirement, occupied/capacity counts, host display
+name, status, and whether the room is joinable. It never contains member IDs,
+resume tokens, passwords, or password digests. `create_room` supplies room
+name/type/capacity and an optional private-room password; `join_room` supplies
+the password only when needed.
 
 The authoritative driving message is:
 
 ```js
 {
   type: 'input',
-  v: 1,
+  v: 2,
   raceId,
   seq,
   useItemSeq,
@@ -340,9 +356,9 @@ replacement state and may be skipped under backpressure. `race_events` carries
 globally increasing event IDs and is not intentionally skipped.
 
 `welcome` returns opaque `participantId` and `resumeToken` credentials after a
-room action. The browser stores active credentials only in `sessionStorage` and
-automatically retries with delays of 250, 500, 1,000, 2,000, and 4,000 ms within
-the 30-second resume window.
+room action. The browser keeps them only in memory and automatically retries
+with delays of 250, 500, 1,000, 2,000, and 4,000 ms within the 30-second resume
+window. Refreshing or opening another tab does not transfer those credentials.
 
 ## WebSocket safety and health
 
@@ -350,7 +366,8 @@ the 30-second resume window.
   Same-origin HTTP/HTTPS is accepted; `ALLOWED_ORIGINS` adds explicit origins.
 - Client messages are limited to 16 KiB and 90 messages per second per
   connection.
-- Create/join/resume attempts are limited to 20 per IP per minute by default.
+- Create/join/quick-match/resume attempts are limited to 20 per IP per minute
+  by default. Wrong private-room passwords consume the same budget.
 - Binary client messages are rejected. Per-message compression is disabled.
 - Ping/pong heartbeat runs every 15 seconds and terminates dead sockets.
 - A snapshot is skipped when buffered output exceeds 256 KiB. Connections are
@@ -360,14 +377,22 @@ the 30-second resume window.
 
 ## Browser flow
 
-`src/main.js` routes title, local selection, online entry/lobby, race, pause,
+`src/main.js` routes title, local selection, multiplayer lobby/room, race, pause,
 settings/help, and result modes. Both race types are mounted through the common
 session interface, then share Track/Kart visuals, Effects, camera, HUD, and audio.
 
 `OnlineClient` owns transport and room commands; `online-screens.js` owns DOM
-entry/lobby/result views. `prepare_race` builds the Track and
+lobby/room/result views. Entering multiplayer keeps one WebSocket subscribed to
+`lobby_state`; create, join, and quick match reuse it. Leaving a room returns the
+same connection to lobby subscription, while an active room reconnect uses the
+in-memory participant credentials. `prepare_race` builds the Track and
 `OnlineRaceSession`, then the client sends `race_loaded`. A `?room=CODE` query
-prefills the join flow.
+locates the corresponding lobby row and requests a password when required.
+
+The first multiplayer visit selects a name from a bundled racing nickname list.
+Valid edited names are kept in `localStorage`; names may repeat and are never
+used as identifiers. Active room credentials are never written to browser
+storage, and obsolete v1/v2 session records are removed on client startup.
 
 Online pause and `visibilitychange` set neutral controls but continue session
 updates, snapshot processing, rendering, and server time. Local pause stops the

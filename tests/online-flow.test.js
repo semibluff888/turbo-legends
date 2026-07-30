@@ -2,29 +2,30 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  hasReturnedToOnlineLobby,
+  hasReturnedToOnlineRoom,
   invitationRoomCode,
   isOnlineConnectionError,
+  onlineErrorMessage,
   shouldAcknowledgeRaceLoaded,
-  shouldPresentOnlineLobby,
-  shouldResumeStoredOnlineSession,
+  shouldPresentOnlineRoom,
+  shouldResumeOnlineRoomSession,
   shouldUpdateOnlineRaceBehindPanel,
 } from '../src/net/online-flow.js';
 
-test('an invite link wins over unrelated stored reconnect credentials', () => {
+test('an invite link wins over unrelated in-memory reconnect credentials', () => {
   assert.equal(invitationRoomCode('?room=FAST22'), 'FAST22');
-  assert.equal(shouldResumeStoredOnlineSession({
+  assert.equal(shouldResumeOnlineRoomSession({
     search: '?room=FAST22',
     roomCode: 'OLD234',
     participantId: 'participant',
     resumeToken: 'token',
   }), false);
-  assert.equal(shouldResumeStoredOnlineSession({
+  assert.equal(shouldResumeOnlineRoomSession({
     roomCode: 'OLD234',
     participantId: 'participant',
     resumeToken: 'token',
   }), true);
-  assert.equal(shouldResumeStoredOnlineSession({
+  assert.equal(shouldResumeOnlineRoomSession({
     search: '?room=OLD234',
     roomCode: 'old234',
     participantId: 'participant',
@@ -32,26 +33,26 @@ test('an invite link wins over unrelated stored reconnect credentials', () => {
   }), true);
 });
 
-test('loading room state cannot replace a race already mounted from prepare_race', () => {
-  assert.equal(shouldPresentOnlineLobby({ state: 'loading' }, false), true);
-  assert.equal(shouldPresentOnlineLobby({ state: 'loading' }, true), false);
-  assert.equal(shouldPresentOnlineLobby({ state: 'countdown' }, true), false);
-  assert.equal(shouldPresentOnlineLobby({ state: 'racing' }, true), false);
-  assert.equal(shouldPresentOnlineLobby({ state: 'lobby' }, true), true);
+test('loading Room state cannot replace a race already mounted from prepare_race', () => {
+  assert.equal(shouldPresentOnlineRoom({ state: 'loading' }, false), true);
+  assert.equal(shouldPresentOnlineRoom({ state: 'loading' }, true), false);
+  assert.equal(shouldPresentOnlineRoom({ state: 'countdown' }, true), false);
+  assert.equal(shouldPresentOnlineRoom({ state: 'racing' }, true), false);
+  assert.equal(shouldPresentOnlineRoom({ state: 'waiting' }, true), true);
 });
 
-test('a participant who returned from results is routed to the lobby independently', () => {
+test('a participant who returned from results is routed to the Room independently', () => {
   const room = {
     state: 'results',
     members: [
-      { participantId: 'host', postRaceState: 'lobby' },
+      { participantId: 'host', postRaceState: 'room' },
       { participantId: 'guest', postRaceState: 'results' },
     ],
   };
-  assert.equal(hasReturnedToOnlineLobby(room, 'host'), true);
-  assert.equal(hasReturnedToOnlineLobby(room, 'guest'), false);
-  assert.equal(shouldPresentOnlineLobby(room, true, 'host'), true);
-  assert.equal(shouldPresentOnlineLobby(room, true, 'guest'), false);
+  assert.equal(hasReturnedToOnlineRoom(room, 'host'), true);
+  assert.equal(hasReturnedToOnlineRoom(room, 'guest'), false);
+  assert.equal(shouldPresentOnlineRoom(room, true, 'host'), true);
+  assert.equal(shouldPresentOnlineRoom(room, true, 'guest'), false);
 });
 
 test('resumed catch-up only acknowledges loading races', () => {
@@ -60,7 +61,7 @@ test('resumed catch-up only acknowledges loading races', () => {
   assert.equal(shouldAcknowledgeRaceLoaded(resumed, { state: 'countdown' }), false);
   assert.equal(shouldAcknowledgeRaceLoaded(resumed, { state: 'racing' }), false);
   assert.equal(shouldAcknowledgeRaceLoaded(resumed, { state: 'results' }), false);
-  assert.equal(shouldAcknowledgeRaceLoaded({ raceId: 'race-id-1234' }, { state: 'lobby' }), true);
+  assert.equal(shouldAcknowledgeRaceLoaded({ raceId: 'race-id-1234' }, { state: 'waiting' }), true);
 });
 
 test('online races keep updating behind paused settings and help panels', () => {
@@ -75,4 +76,16 @@ test('business-rule errors preserve a healthy connection indicator', () => {
   assert.equal(isOnlineConnectionError({ code: 'not_ready' }), false);
   assert.equal(isOnlineConnectionError({ code: 'socket_error' }), true);
   assert.equal(isOnlineConnectionError({ code: 'protocol_mismatch' }), true);
+});
+
+test('stable protocol codes drive Lobby and Room error copy', () => {
+  assert.equal(
+    onlineErrorMessage({ code: 'password_invalid', message: 'server-specific prose' }),
+    'Incorrect room password.',
+  );
+  assert.equal(
+    onlineErrorMessage({ code: 'no_matching_room' }),
+    'No available public rooms were found.',
+  );
+  assert.equal(onlineErrorMessage({ code: 'future_error', message: 'Future failure.' }), 'Future failure.');
 });

@@ -11,12 +11,13 @@ import { OnlineClient } from './net/online-client.js';
 import { OnlineRaceSession } from './net/online-race-session.js';
 import {
   invitationRoomCode,
-  hasReturnedToOnlineLobby,
+  hasReturnedToOnlineRoom,
   isOnlineConnectionError,
+  onlineErrorMessage,
   onlineRoomPhase,
   shouldAcknowledgeRaceLoaded,
-  shouldPresentOnlineLobby,
-  shouldResumeStoredOnlineSession,
+  shouldPresentOnlineRoom,
+  shouldResumeOnlineRoomSession,
   shouldUpdateOnlineRaceBehindPanel,
 } from './net/online-flow.js';
 import { makeControls, resetControls } from './game/kart.js';
@@ -28,6 +29,10 @@ import { ChaseCamera } from './render/camera.js';
 import { Hud } from './ui/hud.js';
 import { Screens } from './ui/screens.js';
 import { OnlineScreens } from './ui/online-screens.js';
+import {
+  loadOnlineDisplayName,
+  saveOnlineDisplayName,
+} from './ui/online-nickname.js';
 import { loadSettings, resetSettings, saveSettings } from './ui/settings-store.js';
 import { AudioManager } from './audio/audio.js';
 import { InputManager } from './input/input.js?v=20260726-steering-fix';
@@ -64,9 +69,11 @@ let panelReturn = 'title';
 
 /** Everything belonging to the current race; null between races. */
 let race = null;
+let onlineLobbyState = null;
 let onlineRoomState = null;
 let onlineResultsState = null;
 let pendingOnlineError = '';
+let onlineDisplayName = '';
 
 const playerControls = makeControls();
 
@@ -108,7 +115,7 @@ const screens = new Screens({
   },
   onMultiplayer() {
     playUi('confirm');
-    openOnlineEntry();
+    openOnlineLobby();
   },
   onOpenSettings() { openPanel('settings'); },
   onOpenHelp() { openPanel('help'); },
@@ -132,7 +139,10 @@ const screens = new Screens({
     startRace();
   },
   onQuit() {
-    if (race?.session.kind === 'online') onlineClient.leave();
+    if (race?.session.kind === 'online') {
+      leaveCurrentOnlineRoom();
+      return;
+    }
     paused = false;
     endRace();
     goToTitle();
@@ -144,28 +154,52 @@ const screens = new Screens({
 });
 
 const onlineScreens = new OnlineScreens({
-  entry: document.getElementById('screen-online-entry'),
   lobby: document.getElementById('screen-online-lobby'),
+  room: document.getElementById('screen-online-room'),
   results: document.getElementById('screen-online-results'),
 }, {
   onBackToTitle() {
-    onlineClient.leave();
+    onlineClient.disconnect();
+    onlineLobbyState = null;
     onlineRoomState = null;
     goToTitle();
   },
-  onCreateRoom({ displayName }) {
-    saveOnlineDisplayName(displayName);
-    pendingOnlineError = '';
-    onlineScreens.setBusy(true);
-    onlineScreens.clearError();
-    onlineClient.createRoom(displayName);
+  onNicknameChange({ displayName }) {
+    acceptOnlineDisplayName(displayName);
   },
-  onJoinRoom({ displayName, roomCode }) {
-    saveOnlineDisplayName(displayName);
+  onCreateRoom({ displayName, roomName, roomType, maxPlayers, password }) {
+    const savedName = acceptOnlineDisplayName(displayName);
+    if (!savedName) return;
     pendingOnlineError = '';
     onlineScreens.setBusy(true);
     onlineScreens.clearError();
-    onlineClient.joinRoom(roomCode, displayName);
+    onlineClient.createRoom({
+      displayName: savedName,
+      roomName,
+      roomType,
+      maxPlayers,
+      ...(password !== undefined ? { password } : {}),
+    });
+  },
+  onJoinRoom({ displayName, roomCode, password }) {
+    const savedName = acceptOnlineDisplayName(displayName);
+    if (!savedName) return;
+    pendingOnlineError = '';
+    onlineScreens.setBusy(true);
+    onlineScreens.clearError();
+    onlineClient.joinRoom({
+      roomCode,
+      displayName: savedName,
+      ...(password !== undefined ? { password } : {}),
+    });
+  },
+  onQuickMatch({ displayName }) {
+    const savedName = acceptOnlineDisplayName(displayName);
+    if (!savedName) return;
+    pendingOnlineError = '';
+    onlineScreens.setBusy(true);
+    onlineScreens.clearError();
+    onlineClient.quickMatch({ displayName: savedName });
   },
   onSelectCharacter({ characterId }) {
     onlineScreens.clearError();
@@ -184,87 +218,117 @@ const onlineScreens = new OnlineScreens({
     onlineClient.startRace();
   },
   onLeaveRoom() {
-    onlineClient.leave();
-    onlineRoomState = null;
-    if (race) endRace();
-    goToTitle();
+    leaveCurrentOnlineRoom();
   },
-  onReturnLobby() {
+  onReturnRoom() {
     onlineScreens.clearError();
-    onlineClient.returnLobby();
+    onlineClient.returnRoom();
   },
 });
 
 wireOnlineClient();
 
-const ONLINE_NAME_KEY = 'turbo-legends.online-name.v1';
-
-function loadOnlineDisplayName() {
-  try {
-    return String(globalThis.localStorage?.getItem(ONLINE_NAME_KEY) || 'Racer');
-  } catch {
-    return 'Racer';
-  }
+function ensureOnlineDisplayName() {
+  if (!onlineDisplayName) onlineDisplayName = loadOnlineDisplayName();
+  return onlineDisplayName;
 }
 
-function saveOnlineDisplayName(value) {
-  try {
-    globalThis.localStorage?.setItem(ONLINE_NAME_KEY, String(value || '').trim());
-  } catch {
-    // A blocked localStorage must not prevent anonymous online play.
+function acceptOnlineDisplayName(value) {
+  const saved = saveOnlineDisplayName(value);
+  if (!saved) {
+    reportOnlineError({ code: 'name_invalid' });
+    return '';
   }
+  onlineDisplayName = saved;
+  return saved;
 }
 
-function openOnlineEntry({ tryResume = true } = {}) {
+function openOnlineLobby({ tryResume = true } = {}) {
   const inviteCode = invitationRoomCode(window.location.search);
-  mode = 'online-entry';
+  const displayName = ensureOnlineDisplayName();
+  mode = 'online-lobby';
   screens.hideAll();
   hud.hide();
   audio.setGameplaySfxPaused(true);
   audio.playMenuMusic();
-  onlineScreens.showEntry({
-    displayName: loadOnlineDisplayName(),
-    roomCode: inviteCode,
-    connectionState: onlineClient.state === 'idle' ? 'disconnected' : onlineClient.state,
+  onlineScreens.showLobby(onlineLobbyState || { rooms: [] }, {
+    displayName,
+    inviteRoomCode: inviteCode,
   });
-  if (tryResume && shouldResumeStoredOnlineSession({
+  if (tryResume && shouldResumeOnlineRoomSession({
     search: window.location.search,
     roomCode: onlineClient.room?.code,
     participantId: onlineClient.selfId,
     resumeToken: onlineClient.resumeToken,
   })) {
     onlineScreens.setBusy(true);
-    onlineClient.resumeStored();
+    onlineClient.resumeRoomSession();
+  } else {
+    onlineClient.enterLobby({ discardRoomSession: true });
   }
 }
 
 function showOnlineLobby(message) {
-  const roomState = message?.room || message || {};
-  onlineRoomState = roomState;
-  const phase = onlineRoomPhase(roomState);
-  const returnedFromResults = hasReturnedToOnlineLobby(roomState, onlineClient.selfId);
-  if ((phase === 'lobby' || returnedFromResults) && race?.session.kind === 'online') {
-    endRace();
-    buildAttract();
-  }
-  if (!shouldPresentOnlineLobby(
-    roomState,
-    race?.session.kind === 'online',
-    onlineClient.selfId,
-  )) return;
-
+  onlineLobbyState = message || { rooms: [] };
   mode = 'online-lobby';
   screens.hideAll();
   hud.hide();
   onlineScreens.setBusy(false);
   const error = pendingOnlineError;
   pendingOnlineError = '';
-  onlineScreens.showLobby(roomState, {
+  const renderLobby = onlineScreens.activeScreen === 'lobby'
+    ? onlineScreens.updateLobby.bind(onlineScreens)
+    : onlineScreens.showLobby.bind(onlineScreens);
+  renderLobby(onlineLobbyState, {
+    displayName: ensureOnlineDisplayName(),
+    inviteRoomCode: invitationRoomCode(window.location.search),
+    ...(error ? { error } : { clearError: true }),
+  });
+  audio.setGameplaySfxPaused(true);
+  audio.playMenuMusic();
+  if (!race) buildAttract();
+}
+
+function showOnlineRoom(message) {
+  const roomState = message?.room || message || {};
+  onlineRoomState = roomState;
+  const phase = onlineRoomPhase(roomState);
+  const returnedFromResults = hasReturnedToOnlineRoom(roomState, onlineClient.selfId);
+  if ((phase === 'waiting' || returnedFromResults) && race?.session.kind === 'online') {
+    endRace();
+    buildAttract();
+  }
+  if (!shouldPresentOnlineRoom(
+    roomState,
+    race?.session.kind === 'online',
+    onlineClient.selfId,
+  )) return;
+
+  mode = 'online-room';
+  screens.hideAll();
+  hud.hide();
+  onlineScreens.setBusy(false);
+  const error = pendingOnlineError;
+  pendingOnlineError = '';
+  const renderRoom = onlineScreens.activeScreen === 'room'
+    ? onlineScreens.updateRoom.bind(onlineScreens)
+    : onlineScreens.showRoom.bind(onlineScreens);
+  renderRoom(roomState, {
     localParticipantId: onlineClient.selfId,
     ...(error ? { error } : { clearError: true }),
   });
   audio.setGameplaySfxPaused(true);
   audio.playMenuMusic();
+}
+
+function leaveCurrentOnlineRoom() {
+  onlineClient.leaveRoom();
+  onlineRoomState = null;
+  onlineResultsState = null;
+  paused = false;
+  if (race) endRace();
+  buildAttract();
+  showOnlineLobby(onlineLobbyState || { rooms: [] });
 }
 
 function onlineHostId(roomState = onlineRoomState) {
@@ -279,7 +343,8 @@ function wireOnlineClient() {
     const viewState = state === 'idle' ? 'disconnected' : state;
     onlineScreens.setConnectionState(viewState, reason || '');
   });
-  onlineClient.on('room_state', showOnlineLobby);
+  onlineClient.on('lobby_state', showOnlineLobby);
+  onlineClient.on('room_state', showOnlineRoom);
   onlineClient.on('prepare_race', (message) => {
     try {
       startOnlineRace(message);
@@ -301,21 +366,23 @@ function wireOnlineClient() {
   onlineClient.on('error', (message) => {
     onlineScreens.setBusy(false);
     if (isOnlineConnectionError(message)) onlineScreens.setConnectionState('error');
-    reportOnlineError(message?.message || 'Online request failed.');
+    reportOnlineError(message);
   });
   onlineClient.on('reconnect_expired', (event) => {
     pendingOnlineError = '';
     if (race?.session.kind === 'online') endRace();
-    openOnlineEntry({ tryResume: false });
+    onlineRoomState = null;
+    buildAttract();
+    openOnlineLobby({ tryResume: false });
     onlineScreens.setBusy(false);
-    onlineScreens.showError(event?.code === 'session_replaced'
+    onlineScreens.showError(onlineErrorMessage(event, event?.code === 'session_replaced'
       ? 'This room session was resumed in another window.'
-      : 'The reconnect window expired. Join the room again.');
+      : 'The reconnect window expired. Join the room again.'));
   });
 }
 
 function reportOnlineError(message) {
-  const text = String(message || 'Online request failed.');
+  const text = onlineErrorMessage(message);
   if (onlineScreens.activeScreen) onlineScreens.showError(text);
   else pendingOnlineError = text;
 }
@@ -863,9 +930,8 @@ ensureAudio();
       }
       for (const kart of race.session.karts) kart.clearEvents();
     }
-  } else if (!devScreen && (q.get('room')
-    || (onlineClient.room?.code && onlineClient.selfId && onlineClient.resumeToken))) {
-    openOnlineEntry();
+  } else if (!devScreen && q.get('room')) {
+    openOnlineLobby();
   }
 }
 

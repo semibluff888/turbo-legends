@@ -1,16 +1,18 @@
-// Turbo Legends multiplayer protocol v1.
+// Turbo Legends multiplayer protocol v2.
 //
 // This module is intentionally browser-safe: both the Node server and the
 // native browser WebSocket client import the same message names and input
 // validator, preventing the two sides from silently drifting apart.
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const MAX_CLIENT_MESSAGE_BYTES = 16 * 1024;
 export const MAX_CLIENT_MESSAGES_PER_SECOND = 90;
 
 export const CLIENT_MESSAGE_TYPES = Object.freeze({
+  ENTER_LOBBY: 'enter_lobby',
   CREATE_ROOM: 'create_room',
   JOIN_ROOM: 'join_room',
+  QUICK_MATCH: 'quick_match',
   RESUME: 'resume',
   SELECT_CHARACTER: 'select_character',
   SET_ROOM: 'set_room',
@@ -18,13 +20,14 @@ export const CLIENT_MESSAGE_TYPES = Object.freeze({
   START_RACE: 'start_race',
   RACE_LOADED: 'race_loaded',
   INPUT: 'input',
-  RETURN_LOBBY: 'return_lobby',
-  LEAVE: 'leave',
+  RETURN_ROOM: 'return_room',
+  LEAVE_ROOM: 'leave_room',
   PING: 'ping',
 });
 
 export const SERVER_MESSAGE_TYPES = Object.freeze({
   WELCOME: 'welcome',
+  LOBBY_STATE: 'lobby_state',
   ROOM_STATE: 'room_state',
   PREPARE_RACE: 'prepare_race',
   SNAPSHOT: 'snapshot',
@@ -40,11 +43,16 @@ export const CLIENT_MESSAGES = CLIENT_MESSAGE_TYPES;
 export const SERVER_MESSAGES = SERVER_MESSAGE_TYPES;
 
 export const ROOM_STATES = Object.freeze({
-  LOBBY: 'lobby',
+  WAITING: 'waiting',
   LOADING: 'loading',
   COUNTDOWN: 'countdown',
   RACING: 'racing',
   RESULTS: 'results',
+});
+
+export const ROOM_TYPES = Object.freeze({
+  PUBLIC: 'public',
+  PRIVATE: 'private',
 });
 
 export const CONTROLLER_KINDS = Object.freeze({
@@ -63,8 +71,13 @@ export const ERROR_CODES = Object.freeze({
   ROOM_NOT_FOUND: 'room_not_found',
   ROOM_FULL: 'room_full',
   ROOM_LOCKED: 'room_locked',
+  ROOM_NAME_INVALID: 'room_name_invalid',
+  ROOM_TYPE_INVALID: 'room_type_invalid',
+  ROOM_CAPACITY_INVALID: 'room_capacity_invalid',
+  PASSWORD_REQUIRED: 'password_required',
+  PASSWORD_INVALID: 'password_invalid',
+  NO_MATCHING_ROOM: 'no_matching_room',
   NAME_INVALID: 'name_invalid',
-  NAME_TAKEN: 'name_taken',
   CHARACTER_INVALID: 'character_invalid',
   CHARACTER_TAKEN: 'character_taken',
   FORBIDDEN: 'forbidden',
@@ -81,6 +94,7 @@ export const ERROR_CODES = Object.freeze({
 });
 
 const CLIENT_TYPE_SET = new Set(Object.values(CLIENT_MESSAGE_TYPES));
+const ROOM_TYPE_SET = new Set(Object.values(ROOM_TYPES));
 const CONTROL_OR_BIDI = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/;
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 const OPAQUE_ID_PATTERN = /^[A-Za-z0-9_-]{12,128}$/;
@@ -117,6 +131,55 @@ export function isValidRoomCode(value) {
 export function normalizeDisplayName(value) {
   if (typeof value !== 'string') return '';
   return value.trim().replace(/\s+/gu, ' ');
+}
+
+export function normalizeRoomName(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().replace(/\s+/gu, ' ');
+}
+
+export function validateRoomName(value) {
+  const roomName = normalizeRoomName(value);
+  const length = Array.from(roomName).length;
+  if (length < 1 || length > 32 || CONTROL_OR_BIDI.test(roomName)) {
+    return fail(ERROR_CODES.ROOM_NAME_INVALID, 'Room name must contain 1 to 32 visible characters.');
+  }
+  return { ok: true, value: roomName };
+}
+
+export function normalizeRoomType(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+export function validateRoomType(value) {
+  const roomType = normalizeRoomType(value);
+  if (!ROOM_TYPE_SET.has(roomType)) {
+    return fail(ERROR_CODES.ROOM_TYPE_INVALID, 'Room type must be public or private.');
+  }
+  return { ok: true, value: roomType };
+}
+
+export function validateRoomCapacity(value) {
+  if (!Number.isSafeInteger(value) || value < 2 || value > 8) {
+    return fail(ERROR_CODES.ROOM_CAPACITY_INVALID, 'Room capacity must be an integer from 2 to 8.');
+  }
+  return { ok: true, value };
+}
+
+export function validateRoomPassword(value, { required = false } = {}) {
+  if (value === undefined || value === null || value === '') {
+    return required
+      ? fail(ERROR_CODES.PASSWORD_REQUIRED, 'A password is required for a private room.')
+      : { ok: true, value: undefined };
+  }
+  if (typeof value !== 'string') {
+    return fail(ERROR_CODES.PASSWORD_INVALID, 'Password must contain 4 to 20 visible characters.');
+  }
+  const length = Array.from(value).length;
+  if (length < 4 || length > 20 || value.trim() !== value || CONTROL_OR_BIDI.test(value)) {
+    return fail(ERROR_CODES.PASSWORD_INVALID, 'Password must contain 4 to 20 visible characters.');
+  }
+  return { ok: true, value };
 }
 
 export function validateDisplayName(value) {
@@ -156,18 +219,37 @@ export function validateClientMessage(message) {
   const base = { type: message.type, v: PROTOCOL_VERSION };
   switch (message.type) {
     case CLIENT_MESSAGE_TYPES.CREATE_ROOM:
-    case CLIENT_MESSAGE_TYPES.JOIN_ROOM: {
+    case CLIENT_MESSAGE_TYPES.JOIN_ROOM:
+    case CLIENT_MESSAGE_TYPES.QUICK_MATCH: {
       const name = validateDisplayName(message.displayName ?? message.nickname);
       if (!name.ok) return name;
       if (!optionalId(message.characterId)) {
         return fail(ERROR_CODES.CHARACTER_INVALID, 'Invalid character id.');
       }
-      if (message.type === CLIENT_MESSAGE_TYPES.JOIN_ROOM) {
+      if (message.type === CLIENT_MESSAGE_TYPES.CREATE_ROOM) {
+        const roomName = validateRoomName(message.roomName);
+        if (!roomName.ok) return roomName;
+        const roomType = validateRoomType(message.roomType);
+        if (!roomType.ok) return roomType;
+        const capacity = validateRoomCapacity(message.maxPlayers);
+        if (!capacity.ok) return capacity;
+        const password = validateRoomPassword(message.password, {
+          required: roomType.value === ROOM_TYPES.PRIVATE,
+        });
+        if (!password.ok) return password;
+        base.roomName = roomName.value;
+        base.roomType = roomType.value;
+        base.maxPlayers = capacity.value;
+        if (roomType.value === ROOM_TYPES.PRIVATE) base.password = password.value;
+      } else if (message.type === CLIENT_MESSAGE_TYPES.JOIN_ROOM) {
         const roomCode = normalizeRoomCode(message.roomCode ?? message.code);
         if (!ROOM_CODE_PATTERN.test(roomCode)) {
           return fail(ERROR_CODES.ROOM_NOT_FOUND, 'Invalid room code.');
         }
         base.roomCode = roomCode;
+        const password = validateRoomPassword(message.password);
+        if (!password.ok) return password;
+        if (password.value !== undefined) base.password = password.value;
       }
       base.displayName = name.value;
       if (message.characterId !== undefined) base.characterId = message.characterId;
@@ -257,9 +339,10 @@ export function validateClientMessage(message) {
         value: message.clientTime === undefined ? base : { ...base, clientTime: message.clientTime },
       };
 
+    case CLIENT_MESSAGE_TYPES.ENTER_LOBBY:
     case CLIENT_MESSAGE_TYPES.START_RACE:
-    case CLIENT_MESSAGE_TYPES.RETURN_LOBBY:
-    case CLIENT_MESSAGE_TYPES.LEAVE:
+    case CLIENT_MESSAGE_TYPES.RETURN_ROOM:
+    case CLIENT_MESSAGE_TYPES.LEAVE_ROOM:
       return { ok: true, value: base };
 
     default:

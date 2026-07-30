@@ -2,15 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  LEGACY_ONLINE_SESSION_STORAGE_KEY,
   OnlineClient,
   ONLINE_SESSION_STORAGE_KEY,
   webSocketUrl,
 } from '../src/net/online-client.js';
+import { PROTOCOL_VERSION } from '../src/net/protocol.js';
 
 class MemoryStorage {
-  constructor() { this.data = new Map(); }
+  constructor() { this.data = new Map(); this.writes = []; }
   getItem(key) { return this.data.has(key) ? this.data.get(key) : null; }
-  setItem(key, value) { this.data.set(key, String(value)); }
+  setItem(key, value) { this.writes.push([key, String(value)]); this.data.set(key, String(value)); }
   removeItem(key) { this.data.delete(key); }
 }
 
@@ -55,6 +57,35 @@ class FakeWebSocket {
   }
 }
 
+function makeClient(options = {}) {
+  return new OnlineClient({
+    WebSocketImpl: FakeWebSocket,
+    location: { protocol: 'http:', host: 'localhost:5173' },
+    sessionStorage: new MemoryStorage(),
+    ...options,
+  });
+}
+
+function boundWelcome(socket, overrides = {}) {
+  socket.receive({
+    v: PROTOCOL_VERSION,
+    type: 'welcome',
+    session: {
+      roomCode: 'ROOM22',
+      participantId: 'p2',
+      resumeToken: 'resume_token_1234567890',
+      ...overrides,
+    },
+  });
+}
+
+function seedInMemoryRoomSession(client, overrides = {}) {
+  client.room = { code: overrides.roomCode || 'ROOM22' };
+  client.selfId = overrides.participantId || 'p2';
+  client.resumeToken = overrides.resumeToken || 'resume_token_1234567890';
+  client.scope = 'room';
+}
+
 test('webSocketUrl follows the page protocol and host', () => {
   assert.equal(
     webSocketUrl({ protocol: 'https:', host: 'game.example' }),
@@ -66,91 +97,119 @@ test('webSocketUrl follows the page protocol and host', () => {
   );
 });
 
-test('createRoom opens a socket and sends a versioned command', () => {
+test('enterLobby opens a versioned Lobby subscription', () => {
   FakeWebSocket.instances.length = 0;
-  const client = new OnlineClient({
-    WebSocketImpl: FakeWebSocket,
-    location: { protocol: 'http:', host: 'localhost:5173' },
-    sessionStorage: new MemoryStorage(),
-  });
+  const client = makeClient();
 
-  client.createRoom('Nova');
+  assert.equal(client.enterLobby(), true);
   const socket = FakeWebSocket.instances[0];
   assert.equal(socket.url, 'ws://localhost:5173/ws');
   socket.open();
-  assert.deepEqual(socket.sent[0], {
-    v: 1,
-    type: 'create_room',
-    displayName: 'Nova',
-  });
+  assert.deepEqual(socket.sent, [{ v: PROTOCOL_VERSION, type: 'enter_lobby' }]);
+  assert.equal(client.scope, 'lobby');
 });
 
-test('welcome credentials are persisted and room messages are emitted', () => {
+test('create, join and quick match reuse the existing Lobby socket', () => {
   FakeWebSocket.instances.length = 0;
-  const storage = new MemoryStorage();
-  const client = new OnlineClient({
-    WebSocketImpl: FakeWebSocket,
-    location: { protocol: 'http:', host: 'localhost:5173' },
-    sessionStorage: storage,
-  });
-  const received = [];
-  client.on('room_state', (message) => received.push(message));
-
-  client.joinRoom('ab2cd3', 'Kit');
+  const client = makeClient();
+  client.enterLobby();
   const socket = FakeWebSocket.instances[0];
   socket.open();
-  socket.receive({
-    v: 1,
-    type: 'welcome',
-    code: 'AB2CD3',
-    participantId: 'p1',
-    resumeToken: 'secret',
+  socket.receive({ v: PROTOCOL_VERSION, type: 'lobby_state', rooms: [] });
+
+  client.createRoom({
+    displayName: 'Nova', roomName: 'Nova Grid', roomType: 'private', maxPlayers: 6, password: 'FastPass',
   });
+  client.joinRoom({ roomCode: 'ab2cd3', displayName: 'Nova', password: 'FastPass' });
+  client.quickMatch({ displayName: 'Nova' });
+
+  assert.equal(FakeWebSocket.instances.length, 1);
+  assert.deepEqual(socket.sent.slice(1), [
+    {
+      v: PROTOCOL_VERSION,
+      type: 'create_room',
+      displayName: 'Nova',
+      roomName: 'Nova Grid',
+      roomType: 'private',
+      maxPlayers: 6,
+      password: 'FastPass',
+    },
+    {
+      v: PROTOCOL_VERSION,
+      type: 'join_room',
+      roomCode: 'AB2CD3',
+      displayName: 'Nova',
+      password: 'FastPass',
+    },
+    { v: PROTOCOL_VERSION, type: 'quick_match', displayName: 'Nova' },
+  ]);
+});
+
+test('a command issued while connecting is queued behind enter_lobby', () => {
+  FakeWebSocket.instances.length = 0;
+  const client = makeClient();
+  client.enterLobby();
+  client.quickMatch({ displayName: 'Drift Comet' });
+
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  assert.deepEqual(socket.sent, [
+    { v: PROTOCOL_VERSION, type: 'enter_lobby' },
+    { v: PROTOCOL_VERSION, type: 'quick_match', displayName: 'Drift Comet' },
+  ]);
+});
+
+test('welcome credentials stay in memory and room messages are emitted', () => {
+  FakeWebSocket.instances.length = 0;
+  const storage = new MemoryStorage();
+  const client = makeClient({ sessionStorage: storage });
+  const received = [];
+  client.on('room_state', (message) => received.push(message));
+  client.enterLobby();
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  boundWelcome(socket, { participantId: 'p1', resumeToken: 'resume_secret_1234' });
   socket.receive({
-    v: 1,
+    v: PROTOCOL_VERSION,
     type: 'room_state',
-    room: { code: 'AB2CD3', state: 'lobby', players: [] },
+    roomCode: 'ROOM22',
+    state: 'waiting',
+    members: [],
   });
 
   assert.equal(client.selfId, 'p1');
-  assert.equal(client.resumeToken, 'secret');
-  assert.equal(client.room.code, 'AB2CD3');
+  assert.equal(client.resumeToken, 'resume_secret_1234');
+  assert.equal(client.room.code, 'ROOM22');
   assert.equal(received.length, 1);
-  assert.deepEqual(JSON.parse(storage.getItem(ONLINE_SESSION_STORAGE_KEY)), {
-    code: 'AB2CD3',
-    participantId: 'p1',
-    resumeToken: 'secret',
-  });
+  assert.equal(storage.getItem(ONLINE_SESSION_STORAGE_KEY), null);
+  assert.deepEqual(storage.writes, []);
+  assert.equal(
+    [...storage.data.values()].some((value) => /p1|resume_secret_1234/.test(value)),
+    false,
+  );
 });
 
-test('returning from results clears the client race id without leaving the room', () => {
+test('returnRoom keeps the Room session and clears race id after the local return', () => {
   FakeWebSocket.instances.length = 0;
-  const client = new OnlineClient({
-    WebSocketImpl: FakeWebSocket,
-    location: { protocol: 'http:', host: 'localhost:5173' },
-    sessionStorage: new MemoryStorage(),
-  });
-  client.createRoom('Host');
+  const client = makeClient();
+  client.enterLobby();
   const socket = FakeWebSocket.instances[0];
   socket.open();
-  socket.receive({
-    v: 1,
-    type: 'welcome',
-    roomCode: 'ROOM22',
-    participantId: 'host',
-    resumeToken: 'secret',
-  });
-  socket.receive({ v: 1, type: 'prepare_race', raceId: 'race_identifier_123' });
-  assert.equal(client.raceId, 'race_identifier_123');
+  boundWelcome(socket, { participantId: 'host' });
+  socket.receive({ v: PROTOCOL_VERSION, type: 'prepare_race', raceId: 'race_identifier_123' });
 
+  assert.equal(client.returnRoom(), true);
+  assert.deepEqual(socket.sent.at(-1), {
+    v: PROTOCOL_VERSION,
+    type: 'return_room',
+  });
   socket.receive({
-    v: 1,
+    v: PROTOCOL_VERSION,
     type: 'room_state',
     roomCode: 'ROOM22',
     state: 'results',
-    raceId: 'race_identifier_123',
     members: [
-      { participantId: 'host', postRaceState: 'lobby', connected: true },
+      { participantId: 'host', postRaceState: 'room', connected: true },
       { participantId: 'guest', postRaceState: 'results', connected: true },
     ],
   });
@@ -158,131 +217,67 @@ test('returning from results clears the client race id without leaving the room'
   assert.equal(client.room.code, 'ROOM22');
 });
 
-test('unexpected close schedules a resume attempt', () => {
+test('unexpected Room close schedules a resume attempt', () => {
   FakeWebSocket.instances.length = 0;
-  const storage = new MemoryStorage();
-  storage.setItem(ONLINE_SESSION_STORAGE_KEY, JSON.stringify({
-    code: 'ROOM22',
-    participantId: 'p2',
-    resumeToken: 'token2',
-  }));
   const timers = [];
-  const client = new OnlineClient({
-    WebSocketImpl: FakeWebSocket,
-    location: { protocol: 'http:', host: 'localhost:5173' },
-    sessionStorage: storage,
+  const client = makeClient({
     setTimeoutImpl(fn, ms) { timers.push({ fn, ms }); return timers.length; },
     clearTimeoutImpl() {},
     now: () => 1000,
   });
 
-  assert.equal(client.resumeStored(), true);
+  client.enterLobby();
   const socket = FakeWebSocket.instances[0];
   socket.open();
+  boundWelcome(socket);
   socket.close(1006, 'network');
-  assert.equal(timers.length, 1);
   assert.equal(timers[0].ms, 250);
 
   timers[0].fn();
   const resumed = FakeWebSocket.instances[1];
   resumed.open();
   assert.deepEqual(resumed.sent[0], {
-    v: 1,
+    v: PROTOCOL_VERSION,
     type: 'resume',
     roomCode: 'ROOM22',
     participantId: 'p2',
-    resumeToken: 'token2',
+    resumeToken: 'resume_token_1234567890',
   });
 });
 
-test('the reconnect deadline clears stale credentials', () => {
+test('unexpected Lobby close reconnects with enter_lobby instead of resume', () => {
   FakeWebSocket.instances.length = 0;
-  const storage = new MemoryStorage();
-  storage.setItem(ONLINE_SESSION_STORAGE_KEY, JSON.stringify({
-    code: 'ROOM22',
-    participantId: 'p2',
-    resumeToken: 'token2',
-  }));
   const timers = [];
-  const expired = [];
-  let now = 1_000;
-  const client = new OnlineClient({
-    WebSocketImpl: FakeWebSocket,
-    location: { protocol: 'http:', host: 'localhost:5173' },
-    sessionStorage: storage,
+  const client = makeClient({
     setTimeoutImpl(fn, ms) { timers.push({ fn, ms }); return timers.length; },
     clearTimeoutImpl() {},
-    now: () => now,
   });
-  client.on('reconnect_expired', (event) => expired.push(event));
-
-  client.resumeStored();
+  client.enterLobby();
   FakeWebSocket.instances[0].open();
   FakeWebSocket.instances[0].close(1006, 'network');
+
+  assert.equal(timers[0].ms, 250);
   timers[0].fn();
   FakeWebSocket.instances[1].open();
-  now = 31_001;
-  FakeWebSocket.instances[1].close(1006, 'network');
-
-  assert.equal(storage.getItem(ONLINE_SESSION_STORAGE_KEY), null);
-  assert.equal(client.room, null);
-  assert.deepEqual(expired, [{ roomCode: 'ROOM22', code: 'session_expired' }]);
+  assert.deepEqual(FakeWebSocket.instances[1].sent[0], {
+    v: PROTOCOL_VERSION,
+    type: 'enter_lobby',
+  });
 });
 
-test('a session replaced by another window does not start a reconnect fight', () => {
+test('an anonymous welcome does not hide a later rejected resume', () => {
   FakeWebSocket.instances.length = 0;
   const storage = new MemoryStorage();
-  storage.setItem(ONLINE_SESSION_STORAGE_KEY, JSON.stringify({
-    code: 'ROOM22',
-    participantId: 'p2',
-    resumeToken: 'token2',
-  }));
-  const timers = [];
-  const errors = [];
   const expired = [];
-  const client = new OnlineClient({
-    WebSocketImpl: FakeWebSocket,
-    location: { protocol: 'http:', host: 'localhost:5173' },
-    sessionStorage: storage,
-    setTimeoutImpl(fn, ms) { timers.push({ fn, ms }); return timers.length; },
-    clearTimeoutImpl() {},
-  });
-  client.on('error', (error) => errors.push(error));
+  const client = makeClient({ sessionStorage: storage });
   client.on('reconnect_expired', (event) => expired.push(event));
-
-  client.resumeStored();
+  seedInMemoryRoomSession(client);
+  client.resumeRoomSession();
   const socket = FakeWebSocket.instances[0];
   socket.open();
-  socket.close(4001, 'Session resumed elsewhere');
-
-  assert.equal(timers.length, 0);
-  assert.equal(storage.getItem(ONLINE_SESSION_STORAGE_KEY), null);
-  assert.equal(client.room, null);
-  assert.equal(errors.at(-1).code, 'session_replaced');
-  assert.deepEqual(expired, [{ roomCode: 'ROOM22', code: 'session_replaced' }]);
-});
-
-test('a rejected stored resume is cleared instead of looping on every refresh', () => {
-  FakeWebSocket.instances.length = 0;
-  const storage = new MemoryStorage();
-  storage.setItem(ONLINE_SESSION_STORAGE_KEY, JSON.stringify({
-    code: 'ROOM22',
-    participantId: 'p2',
-    resumeToken: 'token2',
-  }));
-  const expired = [];
-  const client = new OnlineClient({
-    WebSocketImpl: FakeWebSocket,
-    location: { protocol: 'http:', host: 'localhost:5173' },
-    sessionStorage: storage,
-  });
-  client.on('reconnect_expired', (event) => expired.push(event));
-
-  client.resumeStored();
-  const socket = FakeWebSocket.instances[0];
-  socket.open();
+  socket.receive({ v: PROTOCOL_VERSION, type: 'welcome', session: null });
   socket.receive({
-    v: 1,
+    v: PROTOCOL_VERSION,
     type: 'error',
     code: 'session_expired',
     message: 'The reconnect window has expired.',
@@ -291,83 +286,125 @@ test('a rejected stored resume is cleared instead of looping on every refresh', 
   assert.equal(storage.getItem(ONLINE_SESSION_STORAGE_KEY), null);
   assert.equal(client.room, null);
   assert.deepEqual(expired, [{ roomCode: 'ROOM22', code: 'session_expired' }]);
+  assert.deepEqual(socket.sent.at(-1), { v: PROTOCOL_VERSION, type: 'enter_lobby' });
 });
 
-test('leave clears resume credentials', () => {
+test('the Room reconnect deadline retires credentials and falls back to Lobby', () => {
   FakeWebSocket.instances.length = 0;
   const storage = new MemoryStorage();
-  const client = new OnlineClient({
-    WebSocketImpl: FakeWebSocket,
-    location: { protocol: 'http:', host: 'localhost:5173' },
+  const timers = [];
+  const expired = [];
+  let now = 1_000;
+  const client = makeClient({
     sessionStorage: storage,
+    setTimeoutImpl(fn, ms) { timers.push({ fn, ms }); return timers.length; },
+    clearTimeoutImpl() {},
+    now: () => now,
   });
-  client.createRoom('Kit');
+  client.on('reconnect_expired', (event) => expired.push(event));
+
+  client.enterLobby();
+  FakeWebSocket.instances[0].open();
+  boundWelcome(FakeWebSocket.instances[0]);
+  FakeWebSocket.instances[0].close(1006, 'network');
+  timers[0].fn();
+  FakeWebSocket.instances[1].open();
+  now = 31_001;
+  FakeWebSocket.instances[1].close(1006, 'network');
+
+  assert.equal(storage.getItem(ONLINE_SESSION_STORAGE_KEY), null);
+  assert.equal(client.room, null);
+  assert.equal(client.scope, 'lobby');
+  assert.deepEqual(expired, [{ roomCode: 'ROOM22', code: 'session_expired' }]);
+  assert.equal(timers.length, 2);
+});
+
+test('leaveRoom clears credentials, sends leave_room, and keeps the socket open', () => {
+  FakeWebSocket.instances.length = 0;
+  const storage = new MemoryStorage();
+  const client = makeClient({ sessionStorage: storage });
+  client.enterLobby();
   const socket = FakeWebSocket.instances[0];
   socket.open();
-  socket.receive({
-    v: 1,
-    type: 'welcome',
-    code: 'ROOM33',
-    participantId: 'p3',
-    resumeToken: 'token3',
-  });
+  boundWelcome(socket, { participantId: 'p3', resumeToken: 'resume_token_3333333333' });
 
-  client.leave();
+  client.leaveRoom();
+
+  assert.deepEqual(socket.sent.at(-1), { v: PROTOCOL_VERSION, type: 'leave_room' });
+  assert.equal(socket.readyState, 1);
   assert.equal(storage.getItem(ONLINE_SESSION_STORAGE_KEY), null);
   assert.equal(client.room, null);
   assert.equal(client.selfId, null);
+  assert.equal(client.scope, 'lobby');
 });
 
-test('leave cancels a pending automatic reconnect', () => {
+test('an authoritative lobby_state also retires stale Room credentials', () => {
   FakeWebSocket.instances.length = 0;
   const storage = new MemoryStorage();
-  storage.setItem(ONLINE_SESSION_STORAGE_KEY, JSON.stringify({
-    code: 'ROOM22',
-    participantId: 'p2',
-    resumeToken: 'token2',
-  }));
+  const client = makeClient({ sessionStorage: storage });
+  client.enterLobby();
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  boundWelcome(socket);
+  assert.equal(client.room.code, 'ROOM22');
+
+  socket.receive({ v: PROTOCOL_VERSION, type: 'lobby_state', rooms: [] });
+  assert.equal(client.scope, 'lobby');
+  assert.equal(client.room, null);
+  assert.equal(client.selfId, null);
+  assert.equal(storage.getItem(ONLINE_SESSION_STORAGE_KEY), null);
+});
+
+test('leaveRoom cancels a pending Room reconnect and opens a Lobby connection', () => {
+  FakeWebSocket.instances.length = 0;
+  const storage = new MemoryStorage();
   const timers = [];
   const cleared = [];
-  const client = new OnlineClient({
-    WebSocketImpl: FakeWebSocket,
-    location: { protocol: 'http:', host: 'localhost:5173' },
+  const client = makeClient({
     sessionStorage: storage,
     setTimeoutImpl(fn, ms) { timers.push({ fn, ms }); return timers.length; },
     clearTimeoutImpl(id) { cleared.push(id); },
   });
 
-  client.resumeStored();
+  client.enterLobby();
   FakeWebSocket.instances[0].open();
+  boundWelcome(FakeWebSocket.instances[0]);
   FakeWebSocket.instances[0].close(1006, 'network');
-  client.leave();
+  client.leaveRoom();
 
-  assert.equal(timers.length, 1);
   assert.deepEqual(cleared, [1]);
   assert.equal(client._reconnectTimer, null);
-  assert.equal(client.room, null);
+  const lobbySocket = FakeWebSocket.instances[1];
+  lobbySocket.open();
+  assert.deepEqual(lobbySocket.sent[0], { v: PROTOCOL_VERSION, type: 'enter_lobby' });
 });
 
-test('server roomCode/session fields are accepted for reconnect credentials', () => {
+test('disconnect is the operation that closes the Lobby transport', () => {
   FakeWebSocket.instances.length = 0;
-  const storage = new MemoryStorage();
-  const client = new OnlineClient({
-    WebSocketImpl: FakeWebSocket,
-    location: { protocol: 'http:', host: 'localhost:5173' },
-    sessionStorage: storage,
-  });
-  client.createRoom('Pip');
+  const client = makeClient();
+  client.enterLobby();
   const socket = FakeWebSocket.instances[0];
   socket.open();
-  socket.receive({
-    v: 1,
-    type: 'welcome',
-    session: {
-      participantId: 'p4',
-      resumeToken: 'token4',
-      roomCode: 'FAST22',
-    },
-  });
 
-  assert.equal(client.room.code, 'FAST22');
-  assert.equal(JSON.parse(storage.getItem(ONLINE_SESSION_STORAGE_KEY)).code, 'FAST22');
+  client.disconnect();
+  assert.equal(socket.readyState, 3);
+  assert.equal(client.socket, null);
+  assert.equal(client.state, 'idle');
+  assert.equal(client.scope, 'none');
+});
+
+test('protocol-v1 and v2 browser credentials are discarded instead of migrated', () => {
+  const storage = new MemoryStorage();
+  storage.setItem(LEGACY_ONLINE_SESSION_STORAGE_KEY, JSON.stringify({
+    code: 'OLD234', participantId: 'old', resumeToken: 'old_token_123456',
+  }));
+  storage.setItem(ONLINE_SESSION_STORAGE_KEY, JSON.stringify({
+    code: 'NEW234', participantId: 'new', resumeToken: 'new_token_123456',
+  }));
+  const client = makeClient({ sessionStorage: storage });
+
+  assert.equal(storage.getItem(LEGACY_ONLINE_SESSION_STORAGE_KEY), null);
+  assert.equal(storage.getItem(ONLINE_SESSION_STORAGE_KEY), null);
+  assert.equal(client.room, null);
+  assert.equal(client.resumeRoomSession(), false);
 });

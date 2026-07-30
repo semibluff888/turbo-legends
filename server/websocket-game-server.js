@@ -17,6 +17,7 @@ import { asErrorMessage, GameError } from './game-error.js';
 const AUTH_ACTIONS = new Set([
   CLIENT_MESSAGE_TYPES.CREATE_ROOM,
   CLIENT_MESSAGE_TYPES.JOIN_ROOM,
+  CLIENT_MESSAGE_TYPES.QUICK_MATCH,
   CLIENT_MESSAGE_TYPES.RESUME,
 ]);
 
@@ -119,11 +120,23 @@ export function attachGameWebSocket(httpServer, {
     send(session, serverMessage(SERVER_MESSAGE_TYPES.ERROR, payload));
   }
 
+  function lobbyState() {
+    return serverMessage(SERVER_MESSAGE_TYPES.LOBBY_STATE, {
+      rooms: roomManager.listRooms(),
+    });
+  }
+
+  function subscribeLobby(session, { sendState = true } = {}) {
+    session.inLobby = true;
+    if (sendState) send(session, lobbyState());
+  }
+
   function bindParticipant(session, result) {
     const previous = participantSessions.get(result.participantId);
     if (previous && previous !== session) previous.socket.close(4001, 'Session resumed elsewhere');
     session.participantId = result.participantId;
     session.roomCode = result.roomCode;
+    session.inLobby = false;
     participantSessions.set(result.participantId, session);
     const sessionState = {
       roomCode: result.roomCode,
@@ -153,6 +166,7 @@ export function attachGameWebSocket(httpServer, {
     }
     session.participantId = null;
     session.roomCode = null;
+    session.inLobby = false;
   }
 
   function consumeMessageBudget(session) {
@@ -186,23 +200,59 @@ export function attachGameWebSocket(httpServer, {
       if (!consumeAuthBudget(session.ip)) {
         throw new GameError(ERROR_CODES.RATE_LIMITED, 'Too many room attempts. Try again shortly.');
       }
-    } else if (!session.participantId && message.type !== CLIENT_MESSAGE_TYPES.PING) {
+    } else if (!session.participantId
+      && message.type !== CLIENT_MESSAGE_TYPES.ENTER_LOBBY
+      && message.type !== CLIENT_MESSAGE_TYPES.PING) {
       throw new GameError(ERROR_CODES.NOT_IN_ROOM, 'Create, join, or resume a room first.');
     }
 
     switch (message.type) {
+      case CLIENT_MESSAGE_TYPES.ENTER_LOBBY:
+        if (session.participantId) {
+          throw new GameError(ERROR_CODES.ALREADY_IN_ROOM, 'Leave the current room first.');
+        }
+        subscribeLobby(session);
+        break;
       case CLIENT_MESSAGE_TYPES.CREATE_ROOM:
-        bindParticipant(session, roomManager.createRoom(message));
+        session.inLobby = false;
+        try {
+          bindParticipant(session, roomManager.createRoom(message));
+        } catch (error) {
+          session.inLobby = true;
+          throw error;
+        }
         logger.info?.(`[multiplayer] room created by ${session.ip}`);
         break;
       case CLIENT_MESSAGE_TYPES.JOIN_ROOM:
-        bindParticipant(session, roomManager.joinRoom(message.roomCode, message));
+        session.inLobby = false;
+        try {
+          bindParticipant(session, roomManager.joinRoom(message.roomCode, message));
+        } catch (error) {
+          session.inLobby = true;
+          throw error;
+        }
         logger.info?.(`[multiplayer] room joined from ${session.ip}`);
         break;
+      case CLIENT_MESSAGE_TYPES.QUICK_MATCH:
+        session.inLobby = false;
+        try {
+          bindParticipant(session, roomManager.quickMatch(message));
+        } catch (error) {
+          session.inLobby = true;
+          throw error;
+        }
+        logger.info?.(`[multiplayer] quick match joined from ${session.ip}`);
+        break;
       case CLIENT_MESSAGE_TYPES.RESUME:
-        bindParticipant(session, roomManager.resume(
-          message.roomCode, message.participantId, message.resumeToken,
-        ));
+        session.inLobby = false;
+        try {
+          bindParticipant(session, roomManager.resume(
+            message.roomCode, message.participantId, message.resumeToken,
+          ));
+        } catch (error) {
+          session.inLobby = false;
+          throw error;
+        }
         logger.info?.(`[multiplayer] session resumed from ${session.ip}`);
         break;
       case CLIENT_MESSAGE_TYPES.SELECT_CHARACTER:
@@ -224,13 +274,14 @@ export function attachGameWebSocket(httpServer, {
       case CLIENT_MESSAGE_TYPES.INPUT:
         roomManager.handleInput(session.participantId, message);
         break;
-      case CLIENT_MESSAGE_TYPES.RETURN_LOBBY:
-        roomManager.returnToLobby(session.participantId);
+      case CLIENT_MESSAGE_TYPES.RETURN_ROOM:
+        roomManager.returnToRoom(session.participantId);
         break;
-      case CLIENT_MESSAGE_TYPES.LEAVE: {
+      case CLIENT_MESSAGE_TYPES.LEAVE_ROOM: {
         const participantId = session.participantId;
-        roomManager.leave(participantId);
         unbindParticipant(session, false);
+        roomManager.leave(participantId);
+        subscribeLobby(session);
         break;
       }
       case CLIENT_MESSAGE_TYPES.PING: {
@@ -257,11 +308,19 @@ export function attachGameWebSocket(httpServer, {
     }
   }
 
+  function onLobbyChanged() {
+    const message = lobbyState();
+    for (const session of sessions) {
+      if (session.inLobby && !session.participantId) send(session, message);
+    }
+  }
+
   function onRoomDestroyed({ roomCode }) {
     for (const session of sessions) {
       if (session.roomCode !== roomCode) continue;
       sendError(session, new GameError(ERROR_CODES.ROOM_NOT_FOUND, 'The room expired.'));
       unbindParticipant(session, false);
+      subscribeLobby(session);
     }
   }
 
@@ -293,6 +352,7 @@ export function attachGameWebSocket(httpServer, {
       ip: clientAddress(request),
       participantId: null,
       roomCode: null,
+      inLobby: false,
       alive: true,
       messageWindowStartedAt: Date.now(),
       messageCount: 0,
@@ -335,6 +395,7 @@ export function attachGameWebSocket(httpServer, {
   httpServer.on('upgrade', onUpgrade);
   wss.on('connection', onConnection);
   roomManager.on('message', onManagerMessage);
+  roomManager.on('lobbyChanged', onLobbyChanged);
   roomManager.on('roomDestroyed', onRoomDestroyed);
 
   const heartbeat = setInterval(() => {
@@ -361,6 +422,7 @@ export function attachGameWebSocket(httpServer, {
     clearInterval(heartbeat);
     httpServer.off('upgrade', onUpgrade);
     roomManager.off('message', onManagerMessage);
+    roomManager.off('lobbyChanged', onLobbyChanged);
     roomManager.off('roomDestroyed', onRoomDestroyed);
     for (const session of sessions) session.socket.close(code, reason);
     await new Promise((resolve) => wss.close(resolve));
