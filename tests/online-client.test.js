@@ -111,6 +111,33 @@ test('enterLobby opens a versioned Lobby subscription', () => {
   assert.equal(client.scope, 'lobby');
 });
 
+test('telemetry keeps the browser-global receiver for native timer functions', () => {
+  FakeWebSocket.instances.length = 0;
+  const receivers = [];
+  const timers = [];
+  function browserSetTimeout(fn, ms) {
+    receivers.push(this);
+    timers.push({ fn, ms });
+    return timers.length;
+  }
+  function browserClearTimeout() {
+    receivers.push(this);
+  }
+  const client = makeClient({
+    setTimeoutImpl: browserSetTimeout,
+    clearTimeoutImpl: browserClearTimeout,
+  });
+  client.startTelemetry();
+  client.enterLobby();
+
+  FakeWebSocket.instances[0].open();
+  assert.equal(receivers[0], globalThis);
+  assert.equal(timers[0].ms, TELEMETRY_PING_INTERVAL_MS);
+
+  client.stopTelemetry();
+  assert.equal(receivers[1], globalThis);
+});
+
 test('telemetry pings immediately, reports RTT and clears stale metrics', () => {
   FakeWebSocket.instances.length = 0;
   const timers = [];

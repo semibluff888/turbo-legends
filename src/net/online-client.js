@@ -63,8 +63,12 @@ export class OnlineClient {
     this.WebSocketImpl = WebSocketImpl;
     this.url = webSocketUrl(location);
     this.storage = storageForCleanup(sessionStorage);
-    this._setTimeout = setTimeoutImpl;
-    this._clearTimeout = clearTimeoutImpl;
+    // Browser timer functions are Web API methods and some runtimes require
+    // their receiver to remain the global Window/Worker scope. Storing them on
+    // OnlineClient and calling `this._setTimeout(...)` would otherwise pass the
+    // client instance as `this`, which can abort the loop after its first ping.
+    this._setTimeout = setTimeoutImpl.bind(globalThis);
+    this._clearTimeout = clearTimeoutImpl.bind(globalThis);
     this._now = now;
 
     this.socket = null;
