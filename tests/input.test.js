@@ -90,3 +90,31 @@ test('Tab standings are held only in gameplay context and clear on release or bl
   assert.equal(input.standingsHeld, false);
   input.dispose();
 });
+
+test('touch race controls expose brake and an edge-triggered pause action', () => {
+  const target = new FakeTarget();
+  const input = new InputManager(target);
+  const controls = emptyControls();
+  const event = { preventDefault() {} };
+
+  input._lastKind = 'touch';
+  input._touchEnabled = true;
+  input._onBrakeDown(event);
+  input.readControls(controls);
+  assert.equal(controls.throttle, 0, 'braking releases touch auto-accelerate so reverse can engage');
+  assert.equal(controls.brake, 1, 'brake button maps to full braking');
+
+  input._onBrakeUp();
+  input.readControls(controls);
+  assert.equal(controls.throttle, 1, 'touch auto-accelerate resumes after releasing the brake');
+  assert.equal(controls.brake, 0);
+
+  input._onPauseDown(event);
+  input._onPauseUp();
+  input.update();
+  assert.equal(input.menu.pause, true, 'a quick touch pause tap survives until the next update');
+  input.update();
+  assert.equal(input.menu.pause, false, 'touch pause is an edge, not a held action');
+
+  input.dispose();
+});

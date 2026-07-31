@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Turbo Legends</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🏎️</text></svg>" />
-  <link rel="stylesheet" href="./src/styles.css?v=20260731-race-status" />
+  <link rel="stylesheet" href="./src/styles.css?v=20260731-mobile-controls" />
   <script type="importmap">
     {
       "imports": {
@@ -41,17 +41,39 @@
       <canvas id="minimap" width="220" height="220"></canvas>
     </div>
 
-    <!-- Touch controls (shown only when body has the .touch class) -->
-    <div id="touch-steer-zone"></div>
-    <div id="touch-controls">
-      <button class="btn btn-item" aria-label="Use item">🎁</button>
-      <button class="btn btn-drift" aria-label="Drift">🌀</button>
+    <!-- Mobile race controls: auto-accelerate, drag left to steer. -->
+    <div id="touch-steer-zone" aria-label="Drag left or right to steer">
+      <div class="touch-steer-pad" aria-hidden="true">
+        <span class="touch-steer-arrow touch-steer-arrow-left">‹</span>
+        <span class="touch-steer-rail"><span class="touch-steer-knob"></span></span>
+        <span class="touch-steer-arrow touch-steer-arrow-right">›</span>
+        <span class="touch-steer-label">STEER</span>
+      </div>
+    </div>
+    <div id="touch-controls" aria-label="Race controls">
+      <button class="btn btn-pause" type="button" aria-label="Pause race">
+        <span class="touch-pause-icon" aria-hidden="true"></span>
+      </button>
+      <div class="touch-action-cluster">
+        <button class="btn btn-item" type="button" aria-label="Use item">
+          <span class="touch-action-icon touch-item-icon" aria-hidden="true">?</span>
+          <span class="touch-action-label">ITEM</span>
+        </button>
+        <button class="btn btn-brake" type="button" aria-label="Brake or reverse">
+          <span class="touch-action-icon" aria-hidden="true">▼</span>
+          <span class="touch-action-label">BRAKE</span>
+        </button>
+        <button class="btn btn-drift" type="button" aria-label="Drift">
+          <span class="touch-action-icon touch-drift-icon" aria-hidden="true">↻</span>
+          <span class="touch-action-label">DRIFT</span>
+        </button>
+      </div>
     </div>
 
     <noscript>
       <div class="noscript-warning">Turbo Legends needs JavaScript enabled.</div>
     </noscript>
   </div>
-  <script type="module" src="./src/main.js?v=20260731-race-status"></script>
+  <script type="module" src="./src/main.js?v=20260731-mobile-controls"></script>
 </body>
 </html>

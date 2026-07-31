@@ -113,12 +113,16 @@ export class InputManager {
     this._touchEdge = false;
     this._touchSteer = 0;      // -1..1 from the steer zone drag
     this._touchDrift = false;
+    this._touchBrake = false;
     this._touchItem = false;
+    this._touchPauseEdge = false;
     this._steerTouchId = -1;   // active touch identifier in the steer zone
     this._steerStartX = 0;
     this._steerZoneEl = null;  // bound lazily — the HUD creates these later
     this._driftBtnEl = null;
+    this._brakeBtnEl = null;
     this._itemBtnEl = null;
+    this._pauseBtnEl = null;
 
     /** 'kb' | 'pad' | 'touch' — whichever source was active most recently. */
     this._lastKind = this._touchEnabled ? 'touch' : 'kb';
@@ -148,9 +152,15 @@ export class InputManager {
       this._keys.clear();
       this._touchSteer = 0;
       this._touchDrift = false;
+      this._touchBrake = false;
       this._touchItem = false;
+      this._touchPauseEdge = false;
       this._steerTouchId = -1;
       this._standingsHeld = false;
+      this._setTouchSteerVisual(0, false);
+      this._setTouchButtonPressed(this._driftBtnEl, false);
+      this._setTouchButtonPressed(this._brakeBtnEl, false);
+      this._setTouchButtonPressed(this._itemBtnEl, false);
     };
 
     this._onSteerStart = (e) => {
@@ -163,6 +173,7 @@ export class InputManager {
       this._touchSteer = 0;
       this._touchEdge = true;
       this._lastKind = 'touch';
+      this._setTouchSteerVisual(0, true);
     };
     this._onSteerMove = (e) => {
       e.preventDefault();
@@ -171,6 +182,7 @@ export class InputManager {
         const t = list[i];
         if (t.identifier === this._steerTouchId) {
           this._touchSteer = clamp((t.clientX - this._steerStartX) / TOUCH_STEER_RANGE_PX, -1, 1);
+          this._setTouchSteerVisual(this._touchSteer, true);
           return;
         }
       }
@@ -181,6 +193,7 @@ export class InputManager {
         if (list[i].identifier === this._steerTouchId) {
           this._steerTouchId = -1;
           this._touchSteer = 0;
+          this._setTouchSteerVisual(0, false);
           return;
         }
       }
@@ -191,15 +204,42 @@ export class InputManager {
       this._touchDrift = true;
       this._touchEdge = true;
       this._lastKind = 'touch';
+      this._setTouchButtonPressed(this._driftBtnEl, true);
     };
-    this._onDriftUp = () => { this._touchDrift = false; };
+    this._onDriftUp = () => {
+      this._touchDrift = false;
+      this._setTouchButtonPressed(this._driftBtnEl, false);
+    };
+    this._onBrakeDown = (e) => {
+      e.preventDefault();
+      this._touchBrake = true;
+      this._touchEdge = true;
+      this._lastKind = 'touch';
+      this._setTouchButtonPressed(this._brakeBtnEl, true);
+    };
+    this._onBrakeUp = () => {
+      this._touchBrake = false;
+      this._setTouchButtonPressed(this._brakeBtnEl, false);
+    };
     this._onItemDown = (e) => {
       e.preventDefault();
       this._touchItem = true;
       this._touchEdge = true;
       this._lastKind = 'touch';
+      this._setTouchButtonPressed(this._itemBtnEl, true);
     };
-    this._onItemUp = () => { this._touchItem = false; };
+    this._onItemUp = () => {
+      this._touchItem = false;
+      this._setTouchButtonPressed(this._itemBtnEl, false);
+    };
+    this._onPauseDown = (e) => {
+      e.preventDefault();
+      this._touchPauseEdge = true;
+      this._touchEdge = true;
+      this._lastKind = 'touch';
+      this._setTouchButtonPressed(this._pauseBtnEl, true);
+    };
+    this._onPauseUp = () => { this._setTouchButtonPressed(this._pauseBtnEl, false); };
 
     // --- Attach --------------------------------------------------------------
     targetEl.addEventListener('keydown', this._onKeyDown);
@@ -262,7 +302,7 @@ export class InputManager {
     m.right = right && !this._pRight;
     m.confirm = confirm && !this._pConfirm;
     m.back = back && !this._pBack;
-    m.pause = pause && !this._pPause;
+    m.pause = (pause && !this._pPause) || this._touchPauseEdge;
     this.muteToggle = mute && !this._pMute;
 
     this._pUp = up; this._pDown = down; this._pLeft = left; this._pRight = right;
@@ -272,6 +312,7 @@ export class InputManager {
       || (mask & ~this._padPrevMask) !== 0;
     this._kbEdge = false;
     this._touchEdge = false;
+    this._touchPauseEdge = false;
   }
 
   /**
@@ -290,11 +331,13 @@ export class InputManager {
     if (k.has('ArrowRight') || k.has('KeyD')) kbSteer += 1;
 
     // Standard mobile kart control: gas is automatic while touch is the
-    // active input source; the player only steers and presses drift/item.
-    const touchGas = (this._touchEnabled && this._lastKind === 'touch') ? 1 : 0;
+    // active input source; the player only steers and presses drift/item/brake.
+    // Braking releases mobile auto-gas so holding the button at low speed can
+    // engage reverse instead of fighting a simultaneous throttle level.
+    const touchGas = (this._touchEnabled && this._lastKind === 'touch' && !this._touchBrake) ? 1 : 0;
 
     out.throttle = Math.max(kbThrottle, this._padThrottle, touchGas);
-    out.brake = Math.max(kbBrake, this._padBrake);
+    out.brake = Math.max(kbBrake, this._padBrake, this._touchBrake ? 1 : 0);
     // Devices report screen-space steer (-1 = screen-left, +1 = screen-right).
     // The simulation's +yaw direction appears on screen-left through the
     // three.js chase camera, so convert screen-space input to sim-space here.
@@ -328,11 +371,23 @@ export class InputManager {
       this._driftBtnEl.removeEventListener('touchcancel', this._onDriftUp);
       this._driftBtnEl = null;
     }
+    if (this._brakeBtnEl) {
+      this._brakeBtnEl.removeEventListener('touchstart', this._onBrakeDown);
+      this._brakeBtnEl.removeEventListener('touchend', this._onBrakeUp);
+      this._brakeBtnEl.removeEventListener('touchcancel', this._onBrakeUp);
+      this._brakeBtnEl = null;
+    }
     if (this._itemBtnEl) {
       this._itemBtnEl.removeEventListener('touchstart', this._onItemDown);
       this._itemBtnEl.removeEventListener('touchend', this._onItemUp);
       this._itemBtnEl.removeEventListener('touchcancel', this._onItemUp);
       this._itemBtnEl = null;
+    }
+    if (this._pauseBtnEl) {
+      this._pauseBtnEl.removeEventListener('touchstart', this._onPauseDown);
+      this._pauseBtnEl.removeEventListener('touchend', this._onPauseUp);
+      this._pauseBtnEl.removeEventListener('touchcancel', this._onPauseUp);
+      this._pauseBtnEl = null;
     }
   }
 
@@ -366,6 +421,15 @@ export class InputManager {
         el.addEventListener('touchcancel', this._onDriftUp, PASSIVE_FALSE);
       }
     }
+    if (!this._brakeBtnEl) {
+      const el = document.querySelector('.btn-brake');
+      if (el) {
+        this._brakeBtnEl = el;
+        el.addEventListener('touchstart', this._onBrakeDown, PASSIVE_FALSE);
+        el.addEventListener('touchend', this._onBrakeUp, PASSIVE_FALSE);
+        el.addEventListener('touchcancel', this._onBrakeUp, PASSIVE_FALSE);
+      }
+    }
     if (!this._itemBtnEl) {
       const el = document.querySelector('.btn-item');
       if (el) {
@@ -375,6 +439,27 @@ export class InputManager {
         el.addEventListener('touchcancel', this._onItemUp, PASSIVE_FALSE);
       }
     }
+    if (!this._pauseBtnEl) {
+      const el = document.querySelector('.btn-pause');
+      if (el) {
+        this._pauseBtnEl = el;
+        el.addEventListener('touchstart', this._onPauseDown, PASSIVE_FALSE);
+        el.addEventListener('touchend', this._onPauseUp, PASSIVE_FALSE);
+        el.addEventListener('touchcancel', this._onPauseUp, PASSIVE_FALSE);
+      }
+    }
+  }
+
+  /** Keep the visible steering rail in sync without making it the hit target. */
+  _setTouchSteerVisual(value, active) {
+    const pad = this._steerZoneEl?.querySelector?.('.touch-steer-pad');
+    if (!pad) return;
+    pad.style?.setProperty('--touch-steer-offset', `${Math.round(value * 38)}px`);
+    pad.classList?.toggle('is-active', active);
+  }
+
+  _setTouchButtonPressed(el, pressed) {
+    el?.classList?.toggle('is-pressed', pressed);
   }
 
   /** Read the first connected gamepad into scalar frame state. */
