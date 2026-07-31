@@ -69,6 +69,7 @@ export const ERROR_CODES = Object.freeze({
   UNKNOWN_MESSAGE: 'unknown_message',
   NOT_IN_ROOM: 'not_in_room',
   ALREADY_IN_ROOM: 'already_in_room',
+  ROOM_CODE_INVALID: 'room_code_invalid',
   ROOM_NOT_FOUND: 'room_not_found',
   ROOM_FULL: 'room_full',
   ROOM_LOCKED: 'room_locked',

@@ -65,6 +65,15 @@ test('malformed URL encoding returns 400 without stopping the server', async () 
   });
 });
 
+test('root invite links serve the application entry page', async () => {
+  await withServer(async port => {
+    const response = await getBodyResponse(port, '/?room=ZGM94X');
+    assert.equal(response.statusCode, 200);
+    assert.match(response.headers['content-type'], /^text\/html/);
+    assert.match(response.body, /<html\b/i);
+  });
+});
+
 test('only browser assets are exposed by the static server', async () => {
   await withServer(async port => {
     assert.equal(await get(port, '/src/main.js'), 200);

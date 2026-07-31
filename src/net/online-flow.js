@@ -23,6 +23,7 @@ const ERROR_COPY = Object.freeze({
   [ERROR_CODES.PASSWORD_INVALID]: 'Incorrect room password.',
   [ERROR_CODES.NO_MATCHING_ROOM]: 'No available public rooms were found.',
   [ERROR_CODES.NAME_INVALID]: 'Nickname must contain 1 to 20 visible characters.',
+  [ERROR_CODES.ROOM_CODE_INVALID]: 'The invite link has an invalid room code. Room codes must be exactly 6 valid characters.',
   [ERROR_CODES.ROOM_NOT_FOUND]: 'That room is no longer available.',
   [ERROR_CODES.ROOM_FULL]: 'That room is full.',
   [ERROR_CODES.ROOM_LOCKED]: 'That room cannot be joined while a race is in progress.',
@@ -36,10 +37,16 @@ export function onlineRoomPhase(roomState) {
   return String(roomState?.phase || roomState?.state || ROOM_STATES.WAITING);
 }
 
-export function invitationRoomCode(search) {
+export function invitationRoomRequest(search) {
   const params = new URLSearchParams(String(search || '').replace(/^\?/, ''));
+  if (!params.has('room')) return { present: false, valid: false, code: '' };
   const code = normalizeRoomCode(params.get('room'));
-  return isValidRoomCode(code) ? code : '';
+  const valid = isValidRoomCode(code);
+  return { present: true, valid, code: valid ? code : '' };
+}
+
+export function invitationRoomCode(search) {
+  return invitationRoomRequest(search).code;
 }
 
 export function shouldResumeOnlineRoomSession({

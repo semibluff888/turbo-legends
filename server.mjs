@@ -43,6 +43,11 @@ function safeJoin(root, urlPath) {
   return full;
 }
 
+function staticEntryPath(urlPath = '/') {
+  const pathname = urlPath.split('?')[0].split('#')[0];
+  return pathname === '/' ? '/index.html' : pathname;
+}
+
 function isPublicPath(root, filePath) {
   if (!isInside(root, filePath)) return false;
 
@@ -81,7 +86,7 @@ export function createStaticServer(root = ROOT, {
 
     let filePath;
     try {
-      filePath = safeJoin(staticRoot, req.url === '/' ? '/index.html' : req.url);
+      filePath = safeJoin(staticRoot, staticEntryPath(req.url));
     } catch {
       res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' }).end('400 Bad Request');
       return;

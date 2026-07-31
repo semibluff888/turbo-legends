@@ -71,10 +71,13 @@ Rooms, reconnect tokens, and results are process-memory state. Restarting the
 server clears them; v2 does not include accounts, persistent results, chat, or
 cross-process room migration.
 
-Invite links may include `?room=ROOMCODE`. The lobby locates that room and asks
-for a password when required; passwords are never placed in URLs or browser
-storage. The browser stores only the nickname in `localStorage`; `participantId`
-and `resumeToken` remain in memory and legacy v1/v2 session records are purged.
+Invite links may include `?room=ROOMCODE`. Public rooms are joined automatically,
+while private rooms ask for a password. Missing, full, and racing rooms report an
+error and fall back to the lobby. Creating, joining, or resuming a room keeps its
+code in the address bar; leaving clears it. Passwords are never placed in URLs or
+browser storage. The browser stores only the nickname in `localStorage`;
+`participantId` and `resumeToken` remain in memory and legacy v1/v2 session
+records are purged.
 
 ## Controls
 

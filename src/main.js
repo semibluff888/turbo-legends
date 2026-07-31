@@ -9,8 +9,10 @@ import { CHARACTERS } from './game/characters.js';
 import { LocalRaceSession } from './session/local-race-session.js';
 import { OnlineClient } from './net/online-client.js';
 import { OnlineRaceSession } from './net/online-race-session.js';
+import { ERROR_CODES } from './net/protocol.js';
 import {
   invitationRoomCode,
+  invitationRoomRequest,
   hasReturnedToOnlineRoom,
   isOnlineConnectionError,
   onlineErrorMessage,
@@ -30,7 +32,7 @@ import { ChaseCamera } from './render/camera.js';
 import { Hud } from './ui/hud.js';
 import { NetworkStatus } from './ui/network-status.js';
 import { Screens } from './ui/screens.js';
-import { OnlineScreens } from './ui/online-screens.js';
+import { buildInviteUrl, buildLobbyUrl, OnlineScreens } from './ui/online-screens.js';
 import {
   loadOnlineDisplayName,
   saveOnlineDisplayName,
@@ -77,6 +79,8 @@ let onlineRoomState = null;
 let onlineResultsState = null;
 let pendingOnlineError = '';
 let onlineDisplayName = '';
+let handledInviteRoomCode = '';
+let pendingInviteJoinCode = '';
 
 const playerControls = makeControls();
 
@@ -163,6 +167,7 @@ const onlineScreens = new OnlineScreens({
   results: document.getElementById('screen-online-results'),
 }, {
   onBackToTitle() {
+    clearOnlineRoomUrl();
     goToTitle();
   },
   onNicknameChange({ displayName }) {
@@ -171,6 +176,7 @@ const onlineScreens = new OnlineScreens({
   onCreateRoom({ displayName, roomName, roomType, maxPlayers, password }) {
     const savedName = acceptOnlineDisplayName(displayName);
     if (!savedName) return;
+    clearOnlineRoomUrl();
     pendingOnlineError = '';
     onlineScreens.setBusy(true);
     onlineScreens.clearError();
@@ -185,6 +191,12 @@ const onlineScreens = new OnlineScreens({
   onJoinRoom({ displayName, roomCode, password }) {
     const savedName = acceptOnlineDisplayName(displayName);
     if (!savedName) return;
+    const inviteCode = invitationRoomCode(window.location.search);
+    if (inviteCode && inviteCode === String(roomCode || '').toUpperCase()) {
+      pendingInviteJoinCode = inviteCode;
+    } else {
+      clearOnlineRoomUrl();
+    }
     pendingOnlineError = '';
     onlineScreens.setBusy(true);
     onlineScreens.clearError();
@@ -197,6 +209,7 @@ const onlineScreens = new OnlineScreens({
   onQuickMatch({ displayName }) {
     const savedName = acceptOnlineDisplayName(displayName);
     if (!savedName) return;
+    clearOnlineRoomUrl();
     pendingOnlineError = '';
     onlineScreens.setBusy(true);
     onlineScreens.clearError();
@@ -246,8 +259,33 @@ function acceptOnlineDisplayName(value) {
   return saved;
 }
 
+function replaceOnlineRoomUrl(roomCode = '') {
+  const nextUrl = roomCode
+    ? buildInviteUrl(roomCode, window.location)
+    : buildLobbyUrl(window.location);
+  if (!nextUrl || nextUrl === window.location.href) return;
+  window.history.replaceState(window.history.state, '', nextUrl);
+}
+
+function clearOnlineRoomUrl() {
+  handledInviteRoomCode = '';
+  pendingInviteJoinCode = '';
+  replaceOnlineRoomUrl();
+  if (onlineScreens.activeScreen === 'lobby') {
+    onlineScreens.updateLobby(onlineLobbyState || { rooms: [] }, { inviteRoomCode: '' });
+  }
+}
+
 function openOnlineLobby({ tryResume = true } = {}) {
-  const inviteCode = invitationRoomCode(window.location.search);
+  const inviteRequest = invitationRoomRequest(window.location.search);
+  const invalidInviteError = inviteRequest.present && !inviteRequest.valid
+    ? onlineErrorMessage({ code: ERROR_CODES.ROOM_CODE_INVALID })
+    : '';
+  if (invalidInviteError) {
+    pendingOnlineError = invalidInviteError;
+    clearOnlineRoomUrl();
+  }
+  const inviteCode = inviteRequest.code;
   const displayName = ensureOnlineDisplayName();
   mode = 'online-lobby';
   networkStatus.showDetails();
@@ -258,6 +296,7 @@ function openOnlineLobby({ tryResume = true } = {}) {
   onlineScreens.showLobby(onlineLobbyState || { rooms: [] }, {
     displayName,
     inviteRoomCode: inviteCode,
+    ...(invalidInviteError ? { error: invalidInviteError } : {}),
   });
   if (tryResume && shouldResumeOnlineRoomSession({
     search: window.location.search,
@@ -284,19 +323,53 @@ function showOnlineLobby(message) {
   const renderLobby = onlineScreens.activeScreen === 'lobby'
     ? onlineScreens.updateLobby.bind(onlineScreens)
     : onlineScreens.showLobby.bind(onlineScreens);
-  renderLobby(onlineLobbyState, {
+  const lobbyView = renderLobby(onlineLobbyState, {
     displayName: ensureOnlineDisplayName(),
     inviteRoomCode: invitationRoomCode(window.location.search),
     ...(error ? { error } : { clearError: true }),
   });
+  attemptInviteJoin(lobbyView);
   audio.setGameplaySfxPaused(true);
   audio.playMenuMusic();
   if (!race) buildAttract();
 }
 
+function attemptInviteJoin(lobbyView) {
+  const inviteCode = invitationRoomCode(window.location.search);
+  if (!inviteCode || inviteCode === handledInviteRoomCode) return;
+  handledInviteRoomCode = inviteCode;
+
+  const invitedRoom = lobbyView?.invitedRoom;
+  if (!invitedRoom) {
+    rejectInviteJoin(ERROR_CODES.ROOM_NOT_FOUND);
+    return;
+  }
+  if (!invitedRoom.joinable) {
+    rejectInviteJoin(invitedRoom.status === 'full'
+      ? ERROR_CODES.ROOM_FULL
+      : ERROR_CODES.ROOM_LOCKED);
+    return;
+  }
+  if (!onlineScreens.joinInvitedRoom(inviteCode)) {
+    rejectInviteJoin(ERROR_CODES.ROOM_NOT_FOUND);
+  }
+}
+
+function rejectInviteJoin(code) {
+  clearOnlineRoomUrl();
+  onlineScreens.setBusy(false);
+  onlineScreens.showError(onlineErrorMessage({ code }), 'lobby');
+}
+
 function showOnlineRoom(message) {
   const roomState = message?.room || message || {};
   onlineRoomState = roomState;
+  const roomCode = roomState.roomCode || roomState.code || onlineClient.room?.code;
+  if (roomCode) {
+    pendingInviteJoinCode = '';
+    handledInviteRoomCode = String(roomCode).toUpperCase();
+    replaceOnlineRoomUrl(roomCode);
+  }
   const phase = onlineRoomPhase(roomState);
   const returnedFromResults = hasReturnedToOnlineRoom(roomState, onlineClient.selfId);
   if ((phase === 'waiting' || returnedFromResults) && race?.session.kind === 'online') {
@@ -329,6 +402,7 @@ function showOnlineRoom(message) {
 
 function leaveCurrentOnlineRoom() {
   onlineClient.leaveRoom();
+  clearOnlineRoomUrl();
   onlineRoomState = null;
   onlineResultsState = null;
   paused = false;
@@ -378,10 +452,12 @@ function wireOnlineClient() {
     if (isOnlineConnectionError(message)) {
       networkStatus.setConnectionState('error');
     }
+    if (pendingInviteJoinCode) clearOnlineRoomUrl();
     reportOnlineError(message);
   });
   onlineClient.on('reconnect_expired', (event) => {
     pendingOnlineError = '';
+    clearOnlineRoomUrl();
     if (race?.session.kind === 'online') endRace();
     onlineRoomState = null;
     buildAttract();
@@ -957,7 +1033,7 @@ ensureAudio();
       }
       for (const kart of race.session.karts) kart.clearEvents();
     }
-  } else if (!devScreen && q.get('room')) {
+  } else if (!devScreen && q.has('room')) {
     openOnlineLobby();
   }
 }

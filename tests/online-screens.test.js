@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   buildInviteUrl,
+  buildLobbyUrl,
   buildLobbyView,
   buildOnlineResultsView,
   buildRoomView,
@@ -11,6 +12,7 @@ import {
   normalizeDisplayName,
   normalizeRoomCode,
   normalizeRoomName,
+  OnlineScreens,
   roomCodeFromSearch,
 } from '../src/ui/online-screens.js';
 
@@ -29,13 +31,38 @@ test('online input helpers normalize display fields and room codes', () => {
 });
 
 test('invite links preserve only the same-page room query', () => {
-  const link = buildInviteUrl('abc234', {
+  const location = {
     href: 'https://racing.example/game/index.html?old=1#secret',
     origin: 'https://racing.example',
     pathname: '/game/index.html',
-  });
+  };
+  const link = buildInviteUrl('abc234', location);
   assert.equal(link, 'https://racing.example/game/index.html?room=ABC234');
   assert.equal(link.includes('token'), false);
+  assert.equal(buildLobbyUrl(location), 'https://racing.example/game/index.html');
+});
+
+test('invited public rooms join immediately while private rooms request a password', () => {
+  const calls = [];
+  const screen = {
+    _busy: false,
+    _lobbyRoomByCode: new Map([
+      ['ABC234', { roomCode: 'ABC234', joinable: true, requiresPassword: false }],
+      ['DEF345', { roomCode: 'DEF345', joinable: true, requiresPassword: true }],
+      ['GHJ456', { roomCode: 'GHJ456', joinable: false, requiresPassword: false }],
+    ]),
+    _submitJoinRoom(room) { calls.push(['join', room.roomCode]); },
+    _openJoinDialog(room, opener) { calls.push(['password', room.roomCode, opener]); },
+  };
+
+  assert.equal(OnlineScreens.prototype.joinInvitedRoom.call(screen, 'abc234'), true);
+  assert.equal(OnlineScreens.prototype.joinInvitedRoom.call(screen, 'def345'), true);
+  assert.equal(OnlineScreens.prototype.joinInvitedRoom.call(screen, 'ghj456'), false);
+  assert.equal(OnlineScreens.prototype.joinInvitedRoom.call(screen, 'missing'), false);
+  assert.deepEqual(calls, [
+    ['join', 'ABC234'],
+    ['password', 'DEF345', null],
+  ]);
 });
 
 test('lobby view normalizes room types, status and joinability', () => {

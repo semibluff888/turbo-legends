@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   hasReturnedToOnlineRoom,
   invitationRoomCode,
+  invitationRoomRequest,
   isOnlineConnectionError,
   onlineErrorMessage,
   shouldAcknowledgeRaceLoaded,
@@ -32,6 +33,21 @@ test('an invite link wins over unrelated in-memory reconnect credentials', () =>
     participantId: 'participant',
     resumeToken: 'token',
   }), true);
+});
+
+test('invalid invite parameters are distinguishable from a missing room parameter', () => {
+  assert.deepEqual(invitationRoomRequest(''), {
+    present: false, valid: false, code: '',
+  });
+  assert.deepEqual(invitationRoomRequest('?room=FAST22'), {
+    present: true, valid: true, code: 'FAST22',
+  });
+  for (const search of ['?room=', '?room=FAST2', '?room=FAST222', '?room=ABC01I']) {
+    assert.deepEqual(invitationRoomRequest(search), {
+      present: true, valid: false, code: '',
+    });
+    assert.equal(invitationRoomCode(search), '');
+  }
 });
 
 test('loading Room state cannot replace a race already mounted from prepare_race', () => {
@@ -96,6 +112,10 @@ test('business-rule errors preserve a healthy connection indicator', () => {
 });
 
 test('stable protocol codes drive Lobby and Room error copy', () => {
+  assert.equal(
+    onlineErrorMessage({ code: 'room_code_invalid' }),
+    'The invite link has an invalid room code. Room codes must be exactly 6 valid characters.',
+  );
   assert.equal(
     onlineErrorMessage({ code: 'password_invalid', message: 'server-specific prose' }),
     'Incorrect room password.',

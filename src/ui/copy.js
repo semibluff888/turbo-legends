@@ -194,6 +194,7 @@ export const UI_COPY = Object.freeze({
     errors: {
       nickname: 'Enter a nickname before going online.',
       roomCode: 'Enter a valid 6-character room code.',
+      ROOM_CODE_INVALID: 'The invite link has an invalid room code. Room codes must be exactly 6 valid characters.',
       ROOM_NAME_INVALID: 'Enter a room name between 1 and 32 characters.',
       ROOM_TYPE_INVALID: 'Choose a valid room type.',
       ROOM_CAPACITY_INVALID: 'Choose a player limit between 2 and 8.',

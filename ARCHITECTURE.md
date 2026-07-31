@@ -397,7 +397,9 @@ lobby/room/result views. Entering multiplayer keeps one WebSocket subscribed to
 same connection to lobby subscription, while an active room reconnect uses the
 in-memory participant credentials. `prepare_race` builds the Track and
 `OnlineRaceSession`, then the client sends `race_loaded`. A `?room=CODE` query
-locates the corresponding lobby row and requests a password when required.
+automatically joins an available public room or requests a private-room password;
+failed invitations fall back to the Lobby. Successful room entry synchronizes the
+query string, and leaving the room clears it.
 
 The first multiplayer visit selects a name from a bundled racing nickname list.
 Valid edited names are kept in `localStorage`; names may repeat and are never

@@ -156,14 +156,21 @@ export function roomCodeFromSearch(search) {
   return normalizeRoomCode(params.get('room'));
 }
 
-/** Create a same-page invite link without leaking participant or resume tokens. */
-export function buildInviteUrl(roomCode, locationLike = globalThis.location) {
-  const code = normalizeRoomCode(roomCode);
-  if (!code || !locationLike) return '';
+/** Create the canonical URL for the current page without online room state. */
+export function buildLobbyUrl(locationLike = globalThis.location) {
+  if (!locationLike) return '';
   const fallbackBase = `${locationLike.origin || 'http://localhost'}${locationLike.pathname || '/'}`;
   const url = new URL(locationLike.href || fallbackBase, fallbackBase);
   url.search = '';
   url.hash = '';
+  return url.toString();
+}
+
+/** Create a same-page invite link without leaking participant or resume tokens. */
+export function buildInviteUrl(roomCode, locationLike = globalThis.location) {
+  const code = normalizeRoomCode(roomCode);
+  if (!code || !locationLike) return '';
+  const url = new URL(buildLobbyUrl(locationLike));
   url.searchParams.set('room', code);
   return url.toString();
 }
@@ -389,6 +396,15 @@ export class OnlineScreens {
   }
 
   get activeScreen() { return this._screen; }
+
+  /** Join a public invite immediately, or prompt when its room needs a password. */
+  joinInvitedRoom(roomCode) {
+    const room = this._lobbyRoomByCode.get(normalizeRoomCode(roomCode));
+    if (!room?.joinable || this._busy) return false;
+    if (room.requiresPassword) this._openJoinDialog(room, null);
+    else this._submitJoinRoom(room);
+    return true;
+  }
 
   _listen(node, type, listener, options) {
     if (!node) return;

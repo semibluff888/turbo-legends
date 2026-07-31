@@ -38,7 +38,7 @@ test('main subscribes to the room, race, result and reconnect event stream', () 
 });
 
 test('title telemetry keeps the Lobby transport alive without navigating on background updates', () => {
-  assert.match(source, /onBackToTitle\(\) \{\s*goToTitle\(\);\s*\}/);
+  assert.match(source, /onBackToTitle\(\) \{\s*clearOnlineRoomUrl\(\);\s*goToTitle\(\);\s*\}/);
   assert.doesNotMatch(source, /onBackToTitle\(\)[\s\S]{0,120}onlineClient\.disconnect\(\)/);
   assert.match(
     source,
@@ -80,6 +80,23 @@ test('main persists v2 nicknames and routes Room exits back to the Lobby', () =>
   assert.match(source, /function acceptOnlineDisplayName\(value\)[\s\S]*saveOnlineDisplayName\(value\)[\s\S]*code: 'name_invalid'/);
   assert.match(source, /function leaveCurrentOnlineRoom\(\)[\s\S]*onlineClient\.leaveRoom\(\)[\s\S]*showOnlineLobby\(/);
   assert.match(source, /onQuit\(\)[\s\S]*race\?\.session\.kind === 'online'[\s\S]*leaveCurrentOnlineRoom\(\)/);
+});
+
+test('invite links auto-join available rooms and keep the address bar in sync', () => {
+  assert.match(source, /function attemptInviteJoin\(lobbyView\)[\s\S]*onlineScreens\.joinInvitedRoom\(inviteCode\)/);
+  assert.match(source, /ROOM_NOT_FOUND[\s\S]*ROOM_FULL[\s\S]*ROOM_LOCKED/);
+  assert.match(source, /function showOnlineRoom\(message\)[\s\S]*replaceOnlineRoomUrl\(roomCode\)/);
+  assert.match(source, /function leaveCurrentOnlineRoom\(\)[\s\S]*clearOnlineRoomUrl\(\)/);
+  assert.match(source, /pendingInviteJoinCode[\s\S]*onlineClient\.on\('error'[\s\S]*clearOnlineRoomUrl\(\)/);
+  assert.match(source, /function clearOnlineRoomUrl\(\)[\s\S]*updateLobby\([\s\S]*inviteRoomCode: ''/);
+  assert.match(onlineScreensSource, /joinInvitedRoom\(roomCode\)[\s\S]*requiresPassword[\s\S]*_openJoinDialog/);
+});
+
+test('invalid invite codes report an error and rewrite the URL before entering Lobby', () => {
+  assert.match(source, /invitationRoomRequest\(window\.location\.search\)/);
+  assert.match(source, /inviteRequest\.present && !inviteRequest\.valid[\s\S]*ROOM_CODE_INVALID/);
+  assert.match(source, /if \(invalidInviteError\) \{[\s\S]*clearOnlineRoomUrl\(\);/);
+  assert.match(source, /else if \(!devScreen && q\.has\('room'\)\)/);
 });
 
 test('results use a settled presentation loop and stop continuous engine audio', () => {
