@@ -37,6 +37,13 @@ test('main subscribes to the room, race, result and reconnect event stream', () 
   assert.match(source, /if \(isOnlineConnectionError\(message\)\) \{[\s\S]*networkStatus\.setConnectionState\('error'\);/);
 });
 
+test('retryable socket errors return before modal error presentation', () => {
+  assert.match(
+    source,
+    /const transientConnectionError = isTransientOnlineConnectionError\(message\);[\s\S]*if \(transientConnectionError\) \{[\s\S]*networkStatus\.setConnectionState\([\s\S]*return;[\s\S]*onlineScreens\.setBusy\(false\);/,
+  );
+});
+
 test('title telemetry keeps the Lobby transport alive without navigating on background updates', () => {
   assert.match(source, /onBackToTitle\(\) \{\s*clearOnlineRoomUrl\(\);\s*goToTitle\(\);\s*\}/);
   assert.doesNotMatch(source, /onBackToTitle\(\)[\s\S]{0,120}onlineClient\.disconnect\(\)/);

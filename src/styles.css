@@ -2127,6 +2127,136 @@ kbd {
   animation: flash 0.7s steps(2, jump-none) infinite;
 }
 
+/* Hold-Tab live standings ------------------------------------------------ */
+.hud-standings {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(760px, calc(100vw - 48px));
+  max-height: calc(100vh - 32px);
+  padding: 18px;
+  border: 3px solid rgba(255, 255, 255, 0.34);
+  border-radius: 22px;
+  background: rgba(12, 9, 30, 0.78);
+  box-shadow: 0 24px 70px rgba(4, 2, 14, 0.5), inset 0 0 32px rgba(255, 255, 255, 0.035);
+  transform: translate(-50%, -50%);
+  animation: standings-in 0.14s ease-out both;
+}
+.hud-standings-title {
+  margin-bottom: 12px;
+  color: var(--accent);
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-align: center;
+  text-shadow: var(--ink-shadow);
+}
+.hud-standings-head,
+.hud-standing-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 72px 136px;
+  align-items: center;
+  gap: 10px;
+}
+.hud-standings-head {
+  padding: 0 12px 7px;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+.hud-standings-body { overflow: hidden; }
+.hud-standing-row {
+  min-height: clamp(30px, 5.5vh, 43px);
+  padding: 7px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 14px;
+}
+.hud-standing-row.is-local {
+  border-radius: 10px;
+  color: #fff;
+  background: linear-gradient(90deg, rgba(255, 210, 63, 0.2), rgba(255, 95, 162, 0.12));
+  box-shadow: inset 3px 0 var(--accent);
+}
+.hud-standing-pos { color: var(--accent); font-size: 17px; text-align: center; }
+.hud-standing-racer { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.hud-standing-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hud-standing-you {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: #241b05;
+  background: var(--accent);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+.hud-standing-lap { color: rgba(255, 255, 255, 0.7); font-variant-numeric: tabular-nums; }
+.hud-standing-status { font-size: 10px; letter-spacing: 0.08em; }
+.hud-standing-status[data-state='offline'] { color: #ff8798; }
+.hud-standing-status[data-state='finished'] { color: #77f0be; }
+.hud-standing-status[data-state='takeover'] { color: #ffd56a; }
+.hud-standing-status[data-state='ai'] { color: #8fdcff; }
+.hud-standing-status[data-state='ready'] { color: rgba(255, 255, 255, 0.62); }
+.hud-standings-hint {
+  margin-top: 11px;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-align: center;
+}
+
+/* Local reconnect mask -------------------------------------------------- */
+.hud-reconnect {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 70, 100, 0.12), transparent 42%),
+    rgba(7, 5, 18, 0.78);
+}
+.hud-reconnect-card {
+  width: min(520px, calc(100vw - 40px));
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 9px;
+  padding: 28px 24px;
+  border: 3px solid rgba(255, 104, 128, 0.72);
+  border-radius: 24px;
+  background: rgba(24, 12, 38, 0.96);
+  box-shadow: 0 26px 80px rgba(4, 2, 14, 0.72), 0 0 38px rgba(255, 78, 110, 0.16);
+  text-align: center;
+}
+.hud-reconnect-signal {
+  width: 18px;
+  height: 18px;
+  margin-bottom: 3px;
+  border: 4px solid #ff6d83;
+  border-radius: 50%;
+  box-shadow: 0 0 0 7px rgba(255, 109, 131, 0.14);
+  animation: pulse 1.05s ease-in-out infinite;
+}
+.hud-reconnect-card strong {
+  color: #ff8798;
+  font-size: clamp(30px, 5vw, 50px);
+  letter-spacing: 0.06em;
+  text-shadow: 0 4px 0 rgba(20, 8, 40, 0.55);
+}
+.hud-reconnect-card > span:not(.hud-reconnect-signal) {
+  color: #fff;
+  font-size: 17px;
+  letter-spacing: 0.14em;
+}
+.hud-reconnect-card small {
+  margin-top: 6px;
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 10px;
+  letter-spacing: 0.11em;
+}
+
 /* ---------------------------------------------------------------------------
    Touch controls (shown only when body.touch is set by the input manager)
 --------------------------------------------------------------------------- */
@@ -2189,6 +2319,11 @@ body.touch #touch-steer-zone { display: block; }
   0%   { transform: scale(0.3); opacity: 0; }
   65%  { transform: scale(1.18); opacity: 1; }
   100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes standings-in {
+  from { transform: translate(-50%, -50%) scale(0.94); opacity: 0; }
+  to   { transform: translate(-50%, -50%) scale(1); opacity: 1; }
 }
 
 @keyframes pulse {
@@ -2287,6 +2422,9 @@ body.touch #touch-steer-zone { display: block; }
   .hud-time-row { font-size: 18px; }
   .hud-speed-val { font-size: 30px; }
   #minimap { width: 140px; height: 140px; bottom: calc(var(--hud-pad) + 60px); }
+  .hud-standings { width: min(680px, calc(100vw - 28px)); padding: 14px; }
+  .hud-standings-head,
+  .hud-standing-row { grid-template-columns: 54px minmax(0, 1fr) 60px 118px; gap: 7px; }
 
   .results-table { font-size: 13px; }
   .results-table td { padding: 5px 8px; }
@@ -2329,6 +2467,12 @@ body.touch #touch-steer-zone { display: block; }
   .help-items-grid,
   .help-gameplay-grid { grid-template-columns: 1fr; }
   .hud-speed { display: none; }
+  .hud-standings-title { font-size: 17px; }
+  .hud-standings-head,
+  .hud-standing-row { grid-template-columns: 42px minmax(0, 1fr) 46px 92px; gap: 5px; }
+  .hud-standing-row { min-height: clamp(29px, 5vh, 37px); padding: 5px 7px; font-size: 11px; }
+  .hud-standing-pos { font-size: 13px; }
+  .hud-standing-status { font-size: 8px; letter-spacing: 0.03em; }
 
   #network-status-overlay { font-size: 9px; }
   .network-summary { gap: 6px; padding: 5px 9px; }

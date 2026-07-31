@@ -164,6 +164,7 @@ export class OnlineRaceSession {
     this.tick = 0;
     this.lastAck = -1;
     this._hasSnapshot = false;
+    this._isResyncing = false;
 
     this._karts = [];
     this._byIndex = new Map();
@@ -231,7 +232,9 @@ export class OnlineRaceSession {
     if (client?.on) {
       this._unsubscribers.push(
         client.on('connection', ({ state } = {}) => {
-          if (state === 'disconnected') this.prepareForReconnect();
+          if (state === 'disconnected' || state === 'reconnecting') {
+            this.prepareForReconnect();
+          }
         }),
         client.on('snapshot', (message) => this.applySnapshot(message)),
         client.on('race_events', (message) => this.applyEvents(message)),
@@ -244,6 +247,7 @@ export class OnlineRaceSession {
   get player() { return this._player; }
   get items() { return this._items; }
   get hasSnapshot() { return this._hasSnapshot; }
+  get isResyncing() { return this._isResyncing; }
   get standings() {
     return this._karts.slice().sort((a, b) => (a.rank - b.rank) || (a.index - b.index));
   }
@@ -292,6 +296,7 @@ export class OnlineRaceSession {
 
   /** Freeze prediction until the server supplies a fresh catch-up snapshot. */
   prepareForReconnect() {
+    this._isResyncing = true;
     this._hasSnapshot = false;
     this._predictionReady = false;
     this._sendAccumulator = 0;
@@ -308,6 +313,7 @@ export class OnlineRaceSession {
 
   applySnapshot(snapshot) {
     if (!snapshot || snapshot.raceId !== this.raceId) return false;
+    this._isResyncing = false;
     this._hasSnapshot = true;
     this.tick = finite(snapshot.tick, this.tick);
     this.state = snapshot.state || snapshot.raceState || this.state;

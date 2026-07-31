@@ -394,6 +394,32 @@ test('disconnect immediately transfers host and takeover AI can be reclaimed wit
   assert.equal(harness.manager.getRoomState(host.roomCode).hostParticipantId, guest.participantId);
 });
 
+test('race snapshots expose disconnected and restored controller state to other players', async () => {
+  const harness = createHarness();
+  const { host, guest, race } = await startTwoPlayerRace(harness);
+  const hostIndex = race.roster.find((entry) => entry.participantId === host.participantId).kartIndex;
+
+  harness.manager.disconnect(host.participantId);
+  harness.advance(51);
+  await harness.manager.tick();
+  const offlineSnapshot = harness.messages.filter((event) => (
+    event.participantId === guest.participantId && event.message.type === 'snapshot'
+  )).at(-1)?.message;
+  const offlineKart = offlineSnapshot?.karts.find((kart) => kart.index === hostIndex);
+  assert.equal(offlineKart?.connected, false);
+  assert.equal(offlineKart?.controllerKind, 'takeover-ai');
+
+  harness.manager.resume(host.roomCode, host.participantId, host.resumeToken);
+  harness.advance(51);
+  await harness.manager.tick();
+  const restoredSnapshot = harness.messages.filter((event) => (
+    event.participantId === guest.participantId && event.message.type === 'snapshot'
+  )).at(-1)?.message;
+  const restoredKart = restoredSnapshot?.karts.find((kart) => kart.index === hostIndex);
+  assert.equal(restoredKart?.connected, true);
+  assert.equal(restoredKart?.controllerKind, 'human');
+});
+
 test('a sole player reclaiming an empty room becomes its host again', () => {
   const harness = createHarness();
   const host = harness.manager.createRoom({

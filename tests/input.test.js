@@ -17,12 +17,14 @@ class FakeTarget {
   }
 
   key(type, code) {
+    let prevented = false;
     this.listeners.get(type)?.({
       code,
       repeat: false,
       target: null,
-      preventDefault() {},
+      preventDefault() { prevented = true; },
     });
+    return prevented;
   }
 }
 
@@ -61,5 +63,30 @@ test('driving controls map screen direction through the chase-camera convention'
   input.readControls(controls);
   assert.equal(controls.steer, -0.75, 'touch drag right maps to screen-right steering');
 
+  input.dispose();
+});
+
+test('Tab standings are held only in gameplay context and clear on release or blur', () => {
+  const target = new FakeTarget();
+  const input = new InputManager(target);
+
+  input.setStandingsContext(false);
+  assert.equal(target.key('keydown', 'Tab'), false);
+  assert.equal(input.standingsHeld, false);
+  target.key('keyup', 'Tab');
+
+  input.setStandingsContext(true);
+  assert.equal(target.key('keydown', 'Tab'), true);
+  assert.equal(input.standingsHeld, true);
+  target.key('keyup', 'Tab');
+  assert.equal(input.standingsHeld, false);
+
+  target.key('keydown', 'Tab');
+  input._onBlur();
+  assert.equal(input.standingsHeld, false);
+
+  target.key('keydown', 'Tab');
+  input.setStandingsContext(false);
+  assert.equal(input.standingsHeld, false);
   input.dispose();
 });

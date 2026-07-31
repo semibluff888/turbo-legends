@@ -186,35 +186,78 @@ function roundedRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function makeNameBadge(name, accentHex) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 64;
-  const ctx = canvas.getContext('2d');
-  const w = canvas.width, h = canvas.height;
-  const css = `#${(accentHex >>> 0).toString(16).padStart(6, '0')}`;
+export function usesOfflineNameBadge(kart) {
+  return kart?.connected === false && kart?.controllerKind !== 'ai';
+}
+
+function drawNameBadge(ctx, name, accentHex, offline) {
+  const { width: w, height: h } = ctx.canvas;
+  const accent = `#${(accentHex >>> 0).toString(16).padStart(6, '0')}`;
   ctx.clearRect(0, 0, w, h);
   ctx.beginPath();
   roundedRectPath(ctx, 5, 5, w - 10, h - 10, (h - 10) * 0.45);
-  ctx.fillStyle = 'rgba(10, 14, 24, 0.72)';
+  ctx.fillStyle = offline ? 'rgba(40, 12, 22, 0.88)' : 'rgba(10, 14, 24, 0.72)';
   ctx.fill();
   ctx.lineWidth = 4;
-  ctx.strokeStyle = css;
+  ctx.strokeStyle = offline ? '#ff657d' : accent;
   ctx.stroke();
-  ctx.font = `700 ${Math.floor(h * 0.5)}px system-ui, sans-serif`;
-  ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+
+  if (offline) {
+    const chipW = 82;
+    const chipH = 28;
+    const chipX = w - chipW - 14;
+    const chipY = (h - chipH) / 2;
+    ctx.beginPath();
+    roundedRectPath(ctx, chipX, chipY, chipW, chipH, chipH / 2);
+    ctx.fillStyle = 'rgba(255, 83, 111, 0.2)';
+    ctx.fill();
+    ctx.font = '800 14px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff9aaa';
+    ctx.fillText('OFFLINE', chipX + chipW / 2, h / 2 + 1);
+
+    ctx.font = `700 ${Math.floor(h * 0.42)}px system-ui, sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.62)';
+    ctx.fillText(name, 18, h / 2 + 2, chipX - 28);
+    return;
+  }
+
+  ctx.font = `700 ${Math.floor(h * 0.48)}px system-ui, sans-serif`;
+  ctx.textAlign = 'center';
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(name, w / 2, h / 2 + 2);
+  ctx.fillText(name, w / 2, h / 2 + 2, w - 30);
+}
+
+function makeNameBadge(name, accentHex) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 320;
+  canvas.height = 72;
+  const ctx = canvas.getContext('2d');
+  drawNameBadge(ctx, name, accentHex, false);
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
   const sprite = new THREE.Sprite(mat);
   sprite.center.set(0.5, 0);
-  sprite.scale.set(2.4, 0.6, 1);
+  sprite.scale.set(2.8, 0.63, 1);
   sprite.castShadow = false;
+  sprite.userData.nameBadge = { ctx, texture: tex, name: String(name), accentHex, offline: false };
   return sprite;
+}
+
+function syncNameBadge(sprite, name, accentHex, offline) {
+  const badge = sprite?.userData?.nameBadge;
+  if (!badge) return;
+  const nextName = String(name || 'Racer');
+  if (badge.name === nextName && badge.accentHex === accentHex && badge.offline === offline) return;
+  badge.name = nextName;
+  badge.accentHex = accentHex;
+  badge.offline = offline;
+  drawNameBadge(badge.ctx, nextName, accentHex, offline);
+  badge.texture.needsUpdate = true;
 }
 
 // --- KartVisual ----------------------------------------------------------------
@@ -240,7 +283,7 @@ export class KartVisual {
     }));
     this._starActive = false;
 
-    // Floating name badge — AI karts only, faded by camera distance.
+    // Floating name badge — every non-local kart, faded by camera distance.
     this.badge = null;
     if (!kart.isPlayer) {
       this.badge = makeNameBadge(kart.name, kart.character.accentColor);
@@ -357,14 +400,17 @@ export class KartVisual {
     g.visible = !(kart.invulnTimer > 0 && kart.starTimer <= 0)
       || Math.sin(this._time * 24 * Math.PI) > -0.35;
 
-    // Name badge distance fade.
+    // Name badge distance fade + disconnected-human status treatment.
     if (this.badge && cameraPos) {
+      const offline = usesOfflineNameBadge(kart);
+      syncNameBadge(this.badge, kart.name, kart.character.accentColor, offline);
       const dx = cameraPos.x - kart.x;
       const dy = cameraPos.y - kart.y;
       const dz = cameraPos.z - kart.z;
       const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
       const op = 1 - smoothstep(BADGE_FADE_NEAR, BADGE_FADE_FAR, dist);
-      this.badge.material.opacity = op;
+      const pulse = offline ? 0.68 + 0.2 * (0.5 + 0.5 * Math.sin(this._time * 5.2)) : 1;
+      this.badge.material.opacity = op * pulse;
       this.badge.visible = op > 0.02;
     }
   }

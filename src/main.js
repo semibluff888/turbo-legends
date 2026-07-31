@@ -15,6 +15,7 @@ import {
   invitationRoomRequest,
   hasReturnedToOnlineRoom,
   isOnlineConnectionError,
+  isTransientOnlineConnectionError,
   onlineErrorMessage,
   onlineRoomPhase,
   shouldAcknowledgeRaceLoaded,
@@ -39,7 +40,7 @@ import {
 } from './ui/online-nickname.js';
 import { loadSettings, resetSettings, saveSettings } from './ui/settings-store.js';
 import { AudioManager } from './audio/audio.js';
-import { InputManager } from './input/input.js?v=20260726-steering-fix';
+import { InputManager } from './input/input.js?v=20260731-standings';
 
 // ---------------------------------------------------------------------------
 // App state
@@ -462,6 +463,13 @@ function wireOnlineClient() {
     }
   });
   onlineClient.on('error', (message) => {
+    const transientConnectionError = isTransientOnlineConnectionError(message);
+    if (transientConnectionError) {
+      networkStatus.setConnectionState(
+        onlineClient.state === 'reconnecting' ? 'reconnecting' : 'disconnected',
+      );
+      return;
+    }
     onlineScreens.setBusy(false);
     if (isOnlineConnectionError(message)) {
       networkStatus.setConnectionState('error');
@@ -808,7 +816,11 @@ function updateRaceFrame(dt) {
   effects.update(dt);
   chase.update(dt, player, playerControls.lookBack);
   world.animate(dt, session.elapsed);
-  hud.update(player, session, dt);
+  const reconnecting = online && session.isResyncing === true;
+  hud.update(player, session, dt, {
+    showStandings: input.standingsHeld && !reconnecting,
+    reconnecting,
+  });
 
   // Finish / results flow (the HUD shows its own FINISHED banner).
   if (player.finished && !race.finishedAnnounced) {
@@ -916,6 +928,7 @@ function frame(now) {
   const dt = Math.min((now - lastTime) / 1000, MAX_FRAME_TIME);
   lastTime = now;
 
+  input.setStandingsContext(mode === 'race' && !paused);
   input.update();
 
   // Fallback retry for gamepad/touch inputs that bypass the native listeners.

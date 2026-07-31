@@ -15,6 +15,10 @@ const CONNECTION_ERROR_CODES = new Set([
   ERROR_CODES.UNSUPPORTED_VERSION,
 ]);
 
+const TRANSIENT_CONNECTION_ERROR_CODES = new Set([
+  'socket_error',
+]);
+
 const ERROR_COPY = Object.freeze({
   [ERROR_CODES.ROOM_NAME_INVALID]: 'Room name must contain 1 to 32 visible characters.',
   [ERROR_CODES.ROOM_TYPE_INVALID]: 'Choose a valid room type.',
@@ -108,6 +112,11 @@ export function shouldUpdateOnlineRaceBehindPanel({ mode, paused, raceKind } = {
 /** Business-rule errors do not imply that the WebSocket connection is down. */
 export function isOnlineConnectionError(message) {
   return CONNECTION_ERROR_CODES.has(String(message?.code || ''));
+}
+
+/** Automatic transport retries should use persistent status UI, not alerts. */
+export function isTransientOnlineConnectionError(message) {
+  return TRANSIENT_CONNECTION_ERROR_CODES.has(String(message?.code || ''));
 }
 
 /** Prefer stable protocol codes over server-authored prose in the UI. */

@@ -231,6 +231,7 @@ export const HELP_CONTROLS = Object.freeze([
       ['Hop / Drift', 'Space or Shift'],
       ['Use Item', 'Ctrl, E or Enter'],
       ['Look Back', 'R'],
+      ['Live Standings', 'Hold Tab'],
       ['Pause / Back', 'Esc'],
       ['Mute', 'M'],
     ],

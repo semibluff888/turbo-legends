@@ -87,6 +87,9 @@ export class InputManager {
     this.anyKey = false;
     /** KeyM went down this update. */
     this.muteToggle = false;
+    /** True only while Tab is held inside an active, unpaused race. */
+    this._standingsHeld = false;
+    this._standingsContext = false;
 
     // Previous levels backing the edge detection above.
     this._pUp = false; this._pDown = false; this._pLeft = false; this._pRight = false;
@@ -124,6 +127,10 @@ export class InputManager {
     this._onKeyDown = (e) => {
       const code = e.code;
       if (!code) return;
+      if (code === 'Tab' && this._standingsContext && !isTypingTarget(e.target)) {
+        e.preventDefault();
+        this._standingsHeld = true;
+      }
       if (PREVENT_KEYS.has(code) && !isTypingTarget(e.target)) e.preventDefault();
       if (e.repeat) return;
       if (!this._keys.has(code)) {
@@ -133,6 +140,7 @@ export class InputManager {
       }
     };
     this._onKeyUp = (e) => {
+      if (e.code === 'Tab') this._standingsHeld = false;
       if (e.code) this._keys.delete(e.code);
     };
     this._onBlur = () => {
@@ -142,6 +150,7 @@ export class InputManager {
       this._touchDrift = false;
       this._touchItem = false;
       this._steerTouchId = -1;
+      this._standingsHeld = false;
     };
 
     this._onSteerStart = (e) => {
@@ -212,6 +221,13 @@ export class InputManager {
   get usingTouch() { return this._lastKind === 'touch'; }
   get lastInputKind() { return this._lastKind; }
   get gamepadConnected() { return this._padConnected; }
+  get standingsHeld() { return this._standingsHeld && this._standingsContext; }
+
+  /** Limit Tab capture to gameplay so normal menu focus traversal still works. */
+  setStandingsContext(active) {
+    this._standingsContext = Boolean(active);
+    if (!this._standingsContext) this._standingsHeld = false;
+  }
 
   /** Poll the gamepad and refresh all edge states. Call once per rendered frame. */
   update() {

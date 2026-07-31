@@ -19,6 +19,26 @@ const ORDINALS = ['0th', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th',
   '8th', '9th', '10th', '11th', '12th'];
 const ordinal = (n) => ORDINALS[n] || `${n}th`;
 
+const STANDINGS_STATUS = Object.freeze({
+  offline: Object.freeze({ key: 'offline', label: 'OFFLINE' }),
+  finished: Object.freeze({ key: 'finished', label: 'FINISHED' }),
+  takeover: Object.freeze({ key: 'takeover', label: 'AI TAKEOVER' }),
+  ai: Object.freeze({ key: 'ai', label: 'AI RACER' }),
+  ready: Object.freeze({ key: 'ready', label: 'READY' }),
+  racing: Object.freeze({ key: 'racing', label: 'RACING' }),
+});
+
+/** Pure status mapping shared by the HUD and its contract tests. */
+export function standingsStatus(kart, raceState) {
+  if (kart?.connected === false) return STANDINGS_STATUS.offline;
+  if (kart?.finished) return STANDINGS_STATUS.finished;
+  if (kart?.controllerKind === 'takeover-ai') return STANDINGS_STATUS.takeover;
+  if (kart?.controllerKind === 'ai') return STANDINGS_STATUS.ai;
+  return raceState === RACE_STATE.COUNTDOWN
+    ? STANDINGS_STATUS.ready
+    : STANDINGS_STATUS.racing;
+}
+
 const cssColor = (n) => '#' + (n >>> 0).toString(16).padStart(6, '0');
 
 function fmtClock(t) {
@@ -70,6 +90,22 @@ export class Hud {
         <div class="hud-countdown" hidden></div>
         <div class="hud-wrongway" hidden>WRONG WAY ⚠</div>
       </div>
+      <section class="hud-standings" aria-hidden="true" hidden>
+        <div class="hud-standings-title">LIVE STANDINGS</div>
+        <div class="hud-standings-head" aria-hidden="true">
+          <span>POS</span><span>RACER</span><span>LAP</span><span>STATUS</span>
+        </div>
+        <div class="hud-standings-body"></div>
+        <div class="hud-standings-hint">HOLD TAB</div>
+      </section>
+      <div class="hud-reconnect" role="status" aria-live="assertive" aria-hidden="true" hidden>
+        <div class="hud-reconnect-card">
+          <span class="hud-reconnect-signal" aria-hidden="true"></span>
+          <strong>CONNECTION LOST</strong>
+          <span>RECONNECTING…</span>
+          <small>AI WILL DRIVE UNTIL YOU RETURN</small>
+        </div>
+      </div>
     `);
 
     const q = (sel) => hudRoot.querySelector(sel);
@@ -89,6 +125,12 @@ export class Hud {
     this._bannerSecondary = q('.hud-banner-secondary');
     this._cd = q('.hud-countdown');
     this._wrong = q('.hud-wrongway');
+    this._standings = q('.hud-standings');
+    this._standingsBody = q('.hud-standings-body');
+    this._reconnect = q('.hud-reconnect');
+    this._standingRows = [];
+    this._standingsVisible = false;
+    this._reconnecting = false;
 
     // --- Minimap: HiDPI backing store; CSS controls the display size. ------
     const size = minimapCanvas.width || 220;
@@ -127,6 +169,8 @@ export class Hud {
     this._cd.hidden = true;
     this._banner.hidden = true;
     this._wrong.hidden = true;
+    this._setStandingsVisible(false);
+    this._setReconnectVisible(false);
   }
 
   showRace() {
@@ -143,8 +187,9 @@ export class Hud {
    * @param {import('../game/kart.js').Kart} kart the player kart
    * @param {object} race RaceDirector (read-only)
    * @param {number} dt frame delta seconds (drives the minimap pulse)
+   * @param {{showStandings?:boolean,reconnecting?:boolean}} [presentation]
    */
-  update(kart, race, dt) {
+  update(kart, race, dt, { showStandings = false, reconnecting = false } = {}) {
     if (!kart || !race) return;
     this._time += dt || 0;
 
@@ -154,6 +199,10 @@ export class Hud {
       this._resetState();
     }
     this._lastElapsed = race.elapsed || 0;
+
+    this._setReconnectVisible(reconnecting);
+    this._setStandingsVisible(showStandings && !reconnecting);
+    if (this._standingsVisible) this._updateStandings(race);
 
     const c = this._c;
     const track = race.track;
@@ -230,6 +279,82 @@ export class Hud {
     }
 
     this._drawMinimap(kart, race, track);
+  }
+
+  _setStandingsVisible(visible) {
+    const next = Boolean(visible);
+    if (next === this._standingsVisible) return;
+    this._standingsVisible = next;
+    this._standings.hidden = !next;
+    this._standings.setAttribute('aria-hidden', String(!next));
+  }
+
+  _setReconnectVisible(visible) {
+    const next = Boolean(visible);
+    if (next === this._reconnecting) return;
+    this._reconnecting = next;
+    this._reconnect.hidden = !next;
+    this._reconnect.setAttribute('aria-hidden', String(!next));
+    if (next) this._setStandingsVisible(false);
+  }
+
+  _ensureStandingRows(count) {
+    while (this._standingRows.length < count) {
+      const row = document.createElement('div');
+      row.className = 'hud-standing-row';
+      row.innerHTML = `
+        <span class="hud-standing-pos"></span>
+        <span class="hud-standing-racer"><span class="hud-standing-name"></span><span class="hud-standing-you" hidden>YOU</span></span>
+        <span class="hud-standing-lap"></span>
+        <span class="hud-standing-status"></span>
+      `;
+      this._standingsBody.appendChild(row);
+      this._standingRows.push({
+        root: row,
+        pos: row.querySelector('.hud-standing-pos'),
+        name: row.querySelector('.hud-standing-name'),
+        you: row.querySelector('.hud-standing-you'),
+        lap: row.querySelector('.hud-standing-lap'),
+        status: row.querySelector('.hud-standing-status'),
+        cache: { pos: '', name: '', lap: '', status: '', local: null },
+      });
+    }
+  }
+
+  _updateStandings(race) {
+    const currentStandings = race.standings;
+    const standings = Array.isArray(currentStandings) ? currentStandings : [];
+    this._ensureStandingRows(standings.length);
+    const lapTotal = Math.max(1, Number(race.laps || race.track?.laps) || 3);
+
+    for (let index = 0; index < this._standingRows.length; index++) {
+      const row = this._standingRows[index];
+      const racer = standings[index];
+      row.root.hidden = !racer;
+      if (!racer) continue;
+
+      const place = Math.max(1, Number(racer.rank) || index + 1);
+      const pos = String(place).padStart(2, '0');
+      const name = String(racer.name || racer.displayName || `Racer ${place}`);
+      const lap = `${Math.max(1, Math.min(Number(racer.lap) || 1, lapTotal))}/${lapTotal}`;
+      const state = standingsStatus(racer, race.state);
+      const local = Boolean(racer.isPlayer);
+      const cache = row.cache;
+
+      if (pos !== cache.pos) { cache.pos = pos; row.pos.textContent = pos; }
+      if (name !== cache.name) { cache.name = name; row.name.textContent = name; }
+      if (lap !== cache.lap) { cache.lap = lap; row.lap.textContent = lap; }
+      if (state.key !== cache.status) {
+        cache.status = state.key;
+        row.status.textContent = state.label;
+        row.status.dataset.state = state.key;
+      }
+      if (local !== cache.local) {
+        cache.local = local;
+        row.root.classList.toggle('is-local', local);
+        row.you.hidden = !local;
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------

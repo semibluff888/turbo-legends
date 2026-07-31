@@ -6,6 +6,7 @@ import {
   invitationRoomCode,
   invitationRoomRequest,
   isOnlineConnectionError,
+  isTransientOnlineConnectionError,
   onlineErrorMessage,
   shouldAcknowledgeRaceLoaded,
   shouldPresentOnlineRoom,
@@ -109,6 +110,13 @@ test('business-rule errors preserve a healthy connection indicator', () => {
   assert.equal(isOnlineConnectionError({ code: 'not_ready' }), false);
   assert.equal(isOnlineConnectionError({ code: 'socket_error' }), true);
   assert.equal(isOnlineConnectionError({ code: 'protocol_mismatch' }), true);
+});
+
+test('only retryable socket failures use persistent status instead of alerts', () => {
+  assert.equal(isTransientOnlineConnectionError({ code: 'socket_error' }), true);
+  assert.equal(isTransientOnlineConnectionError({ code: 'protocol_mismatch' }), false);
+  assert.equal(isTransientOnlineConnectionError({ code: 'websocket_unavailable' }), false);
+  assert.equal(isTransientOnlineConnectionError({ code: 'character_taken' }), false);
 });
 
 test('stable protocol codes drive Lobby and Room error copy', () => {

@@ -89,12 +89,15 @@ records are purged.
 | Hop / drift | Space / Shift | X or RB |
 | Use item | Ctrl / E | Y or LB |
 | Look back | R | — |
+| Live standings | Hold Tab | — |
 | Pause | Esc | Start |
 | Mute | M | — |
 
 Touch devices get on-screen controls automatically (auto-gas, steer zone on
-the left, drift/item buttons on the right). In online races, pause is a local
-overlay: the server race continues while the client sends neutral controls.
+the left, drift/item buttons on the right). Holding Tab shows live position,
+lap, and racer status without pausing. In online races, pause is a local overlay:
+the server race continues while the client sends neutral controls. A connection
+loss shows a reconnect mask while takeover AI temporarily drives that kart.
 
 ## The game
 

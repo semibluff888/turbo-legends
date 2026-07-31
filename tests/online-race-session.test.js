@@ -143,6 +143,7 @@ test('input is sampled at 60Hz and item presses use a monotonic action counter',
     state: RACE_STATE.RACING,
     karts: [snapshotKart(0), snapshotKart(1)],
   });
+  assert.equal(session.isResyncing, false);
 
   const controls = {
     throttle: 1, brake: 0, steer: 0.25,
@@ -224,6 +225,9 @@ test('disconnect freezes prediction, preserves cursors, and drops offline item e
 
   client.emit('connection', { state: 'disconnected' });
   assert.equal(session.hasSnapshot, false);
+  assert.equal(session.isResyncing, true);
+  client.emit('connection', { state: 'connected' });
+  assert.equal(session.isResyncing, true, 'socket open alone must not dismiss the reconnect mask');
   session.update(FIXED_DT, { ...neutral, useItem: true });
   session.update(FIXED_DT, { ...neutral, useItem: false });
   assert.equal(client.inputs.length, 1);
@@ -237,6 +241,7 @@ test('disconnect freezes prediction, preserves cursors, and drops offline item e
     state: RACE_STATE.RACING,
     karts: [snapshotKart(0, { x: 12 }), snapshotKart(1)],
   });
+  assert.equal(session.isResyncing, false);
   session.update(FIXED_DT, neutral);
   session.update(FIXED_DT, neutral);
   assert.equal(client.inputs.at(-1).seq, 2);
