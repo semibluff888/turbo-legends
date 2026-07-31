@@ -8,6 +8,7 @@ import {
   onlineErrorMessage,
   shouldAcknowledgeRaceLoaded,
   shouldPresentOnlineRoom,
+  shouldReuseOnlineRaceSession,
   shouldResumeOnlineRoomSession,
   shouldUpdateOnlineRaceBehindPanel,
 } from '../src/net/online-flow.js';
@@ -62,6 +63,22 @@ test('resumed catch-up only acknowledges loading races', () => {
   assert.equal(shouldAcknowledgeRaceLoaded(resumed, { state: 'racing' }), false);
   assert.equal(shouldAcknowledgeRaceLoaded(resumed, { state: 'results' }), false);
   assert.equal(shouldAcknowledgeRaceLoaded({ raceId: 'race-id-1234' }, { state: 'waiting' }), true);
+});
+
+test('a resumed prepare reuses only the already-mounted matching online race', () => {
+  const session = { kind: 'online', raceId: 'race-id-1234' };
+  assert.equal(shouldReuseOnlineRaceSession({
+    raceId: 'race-id-1234', resumed: true,
+  }, session), true);
+  assert.equal(shouldReuseOnlineRaceSession({
+    raceId: 'other-race-123', resumed: true,
+  }, session), false);
+  assert.equal(shouldReuseOnlineRaceSession({
+    raceId: 'race-id-1234', resumed: false,
+  }, session), false);
+  assert.equal(shouldReuseOnlineRaceSession({
+    raceId: 'race-id-1234', resumed: true,
+  }, { kind: 'local', raceId: 'race-id-1234' }), false);
 });
 
 test('online races keep updating behind paused settings and help panels', () => {

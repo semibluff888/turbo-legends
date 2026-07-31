@@ -283,6 +283,37 @@ test('new useItemSeq survives a stale movement seq and fires for exactly one phy
   ))?.message;
   assert.equal(snapshot.ack, 2);
   assert.equal(snapshot.inputAck, 2);
+  assert.equal(snapshot.receivedInputSeq, 2);
+  assert.equal(snapshot.receivedUseItemSeq, 1);
+});
+
+test('resumed catch-up snapshots expose the server input cursors', async () => {
+  const harness = createHarness();
+  const { host, race } = await startTwoPlayerRace(harness);
+  harness.manager.handleInput(host.participantId, {
+    raceId: race.raceId,
+    seq: 120,
+    useItemSeq: 7,
+    throttle: 1,
+    brake: 0,
+    steer: 0,
+    drift: false,
+    lookBack: false,
+  });
+  harness.advance(20);
+  await harness.manager.tick();
+  harness.manager.disconnect(host.participantId);
+  harness.advance(1_000);
+
+  const resumed = harness.manager.resume(
+    host.roomCode,
+    host.participantId,
+    host.resumeToken,
+  );
+  const snapshot = resumed.messages.find((message) => message.type === 'snapshot');
+  assert.equal(snapshot.receivedInputSeq, 120);
+  assert.equal(snapshot.receivedUseItemSeq, 7);
+  assert.equal(snapshot.ack, 120);
 });
 
 test('disconnect immediately transfers host and takeover AI can be reclaimed within 30 seconds', async () => {

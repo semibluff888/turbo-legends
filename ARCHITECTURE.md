@@ -348,7 +348,9 @@ The authoritative driving message is:
 Movement `seq` and item `useItemSeq` are monotonic and handled independently.
 Stale movement can be discarded without losing a newer item edge. Each
 participant's snapshot contains `ack`/`inputAck` for the last applied movement
-sequence.
+sequence plus `receivedInputSeq` and `receivedUseItemSeq` cursors. Catch-up
+clients use those received cursors to continue above the server's high-water
+marks instead of restarting either counter at zero.
 
 Snapshots contain the race clock/state, standings order, all Kart fields needed
 by presentation, projectiles, hazards, and item-box activity. They are complete
@@ -359,6 +361,13 @@ globally increasing event IDs and is not intentionally skipped.
 room action. The browser keeps them only in memory and automatically retries
 with delays of 250, 500, 1,000, 2,000, and 4,000 ms within the 30-second resume
 window. Refreshing or opening another tab does not transfer those credentials.
+For a mounted race, a resumed `prepare_race` reuses the existing race session so
+its input cursors and event-deduplication state remain continuous. Browser
+offline/online events detach the stale socket and resume directly; independently,
+the race session freezes prediction after 15 unacknowledged 60 Hz inputs and
+waits for a fresh authoritative snapshot. Realtime input also observes a small
+WebSocket `bufferedAmount` high-water mark, preventing a stalled LAN connection
+from flushing enough queued controls to trigger the message-rate limit.
 
 ## WebSocket safety and health
 

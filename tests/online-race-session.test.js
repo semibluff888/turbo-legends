@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { FIXED_DT, RACE_STATE } from '../src/core/constants.js';
-import { OnlineRaceSession } from '../src/net/online-race-session.js';
+import {
+  MAX_UNACKED_INPUTS,
+  OnlineRaceSession,
+} from '../src/net/online-race-session.js';
 import { Track } from '../src/track/track.js';
 import { getTrackDef } from '../src/track/tracks.js';
 
@@ -10,12 +13,18 @@ class FakeClient {
   constructor() {
     this.listeners = new Map();
     this.inputs = [];
+    this.acceptInputs = true;
   }
   on(type, listener) {
     this.listeners.set(type, listener);
     return () => this.listeners.delete(type);
   }
-  sendInput(input) { this.inputs.push(input); }
+  emit(type, value) { this.listeners.get(type)?.(value); }
+  sendInput(input) {
+    if (!this.acceptInputs) return false;
+    this.inputs.push(input);
+    return true;
+  }
 }
 
 function roster() {
@@ -152,6 +161,200 @@ test('input is sampled at 60Hz and item presses use a monotonic action counter',
   session.update(FIXED_DT, controls);
   session.update(FIXED_DT, controls);
   assert.equal(client.inputs.at(-1).useItemSeq, 2);
+});
+
+test('a catch-up snapshot rebases rebuilt input and item cursors', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  const session = new OnlineRaceSession({
+    client,
+    track,
+    raceId: 'race-resume-cursors',
+    roster: roster(),
+    localParticipantId: 'local',
+  });
+  session.applySnapshot({
+    raceId: 'race-resume-cursors',
+    tick: 20,
+    ack: 120,
+    receivedInputSeq: 123,
+    receivedUseItemSeq: 7,
+    state: RACE_STATE.RACING,
+    karts: [snapshotKart(0), snapshotKart(1)],
+  });
+
+  const controls = {
+    throttle: 1, brake: 0, steer: 0,
+    drift: false, useItem: true, lookBack: false,
+  };
+  session.update(FIXED_DT, controls);
+  session.update(FIXED_DT, controls);
+
+  assert.equal(client.inputs.length, 1);
+  assert.equal(client.inputs[0].seq, 124);
+  assert.equal(client.inputs[0].useItemSeq, 8);
+});
+
+test('disconnect freezes prediction, preserves cursors, and drops offline item edges', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  const session = new OnlineRaceSession({
+    client,
+    track,
+    raceId: 'race-live-resume',
+    roster: roster(),
+    localParticipantId: 'local',
+  });
+  session.applySnapshot({
+    raceId: 'race-live-resume',
+    tick: 1,
+    ack: 0,
+    receivedInputSeq: 0,
+    receivedUseItemSeq: 0,
+    state: RACE_STATE.RACING,
+    karts: [snapshotKart(0), snapshotKart(1)],
+  });
+  const neutral = {
+    throttle: 1, brake: 0, steer: 0,
+    drift: false, useItem: false, lookBack: false,
+  };
+  session.update(FIXED_DT, neutral);
+  session.update(FIXED_DT, neutral);
+  assert.equal(client.inputs.at(-1).seq, 1);
+
+  client.emit('connection', { state: 'disconnected' });
+  assert.equal(session.hasSnapshot, false);
+  session.update(FIXED_DT, { ...neutral, useItem: true });
+  session.update(FIXED_DT, { ...neutral, useItem: false });
+  assert.equal(client.inputs.length, 1);
+
+  session.applySnapshot({
+    raceId: 'race-live-resume',
+    tick: 2,
+    ack: 1,
+    receivedInputSeq: 1,
+    receivedUseItemSeq: 0,
+    state: RACE_STATE.RACING,
+    karts: [snapshotKart(0, { x: 12 }), snapshotKart(1)],
+  });
+  session.update(FIXED_DT, neutral);
+  session.update(FIXED_DT, neutral);
+  assert.equal(client.inputs.at(-1).seq, 2);
+  assert.equal(client.inputs.at(-1).useItemSeq, 0);
+});
+
+test('unacknowledged input is bounded and resumes after a fresh snapshot', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  const session = new OnlineRaceSession({
+    client,
+    track,
+    raceId: 'race-backpressure',
+    roster: roster(),
+    localParticipantId: 'local',
+  });
+  const baseSnapshot = {
+    raceId: 'race-backpressure',
+    tick: 1,
+    ack: 0,
+    receivedInputSeq: 0,
+    receivedUseItemSeq: 0,
+    state: RACE_STATE.RACING,
+    karts: [snapshotKart(0), snapshotKart(1)],
+  };
+  session.applySnapshot(baseSnapshot);
+  const controls = {
+    throttle: 1, brake: 0, steer: 0,
+    drift: false, useItem: false, lookBack: false,
+  };
+  for (let i = 0; i < (MAX_UNACKED_INPUTS + 10) * 2; i++) {
+    session.update(FIXED_DT, controls);
+  }
+
+  assert.equal(client.inputs.length, MAX_UNACKED_INPUTS);
+  assert.equal(session.hasSnapshot, false);
+
+  session.applySnapshot({
+    ...baseSnapshot,
+    tick: 2,
+    ack: MAX_UNACKED_INPUTS,
+    receivedInputSeq: MAX_UNACKED_INPUTS,
+  });
+  session.update(FIXED_DT, controls);
+  session.update(FIXED_DT, controls);
+  assert.equal(client.inputs.at(-1).seq, MAX_UNACKED_INPUTS + 1);
+});
+
+test('reconnect keeps sending when locally queued inputs never reached the server', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  const session = new OnlineRaceSession({
+    client,
+    track,
+    raceId: 'race-lost-outbound-queue',
+    roster: roster(),
+    localParticipantId: 'local',
+  });
+  const snapshot = {
+    raceId: 'race-lost-outbound-queue',
+    tick: 1,
+    ack: 0,
+    receivedInputSeq: 0,
+    receivedUseItemSeq: 0,
+    state: RACE_STATE.RACING,
+    karts: [snapshotKart(0), snapshotKart(1)],
+  };
+  session.applySnapshot(snapshot);
+  const controls = {
+    throttle: 1, brake: 0, steer: 0,
+    drift: false, useItem: false, lookBack: false,
+  };
+  for (let i = 0; i < (MAX_UNACKED_INPUTS + 1) * 2; i++) {
+    session.update(FIXED_DT, controls);
+  }
+  assert.equal(client.inputs.length, MAX_UNACKED_INPUTS);
+  assert.equal(client.inputs.at(-1).seq, MAX_UNACKED_INPUTS);
+  assert.equal(session.hasSnapshot, false);
+
+  session.applySnapshot({ ...snapshot, tick: 2 });
+  session.update(FIXED_DT, controls);
+  session.update(FIXED_DT, controls);
+  assert.equal(client.inputs.length, MAX_UNACKED_INPUTS + 1);
+  assert.equal(client.inputs.at(-1).seq, MAX_UNACKED_INPUTS + 1);
+  assert.equal(session.hasSnapshot, true);
+});
+
+test('a rejected transport send is not replayed by local prediction', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  const session = new OnlineRaceSession({
+    client,
+    track,
+    raceId: 'race-send-rejected',
+    roster: roster(),
+    localParticipantId: 'local',
+  });
+  const authoritative = {
+    raceId: 'race-send-rejected',
+    tick: 1,
+    ack: 0,
+    receivedInputSeq: 0,
+    receivedUseItemSeq: 0,
+    state: RACE_STATE.RACING,
+    karts: [snapshotKart(0), snapshotKart(1)],
+  };
+  session.applySnapshot(authoritative);
+  client.acceptInputs = false;
+  session.update(FIXED_DT, { throttle: 1 });
+  session.update(FIXED_DT, { throttle: 1 });
+  assert.equal(client.inputs.length, 0);
+  assert.equal(session.hasSnapshot, false);
+
+  client.acceptInputs = true;
+  session.applySnapshot({ ...authoritative, tick: 2 });
+  session.update(FIXED_DT, { throttle: 1 });
+  session.update(FIXED_DT, { throttle: 1 });
+  assert.equal(client.inputs[0].seq, 1);
 });
 
 test('loading sessions send no input before a snapshot and can neutralize immediately', () => {

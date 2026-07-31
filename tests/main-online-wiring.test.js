@@ -66,6 +66,10 @@ test('main protects prepare/loading ordering and resumed load acknowledgements',
     source,
     /if \(shouldAcknowledgeRaceLoaded\(message, onlineRoomState\)\) \{\s*onlineClient\.markRaceLoaded\(message\.raceId\);/,
   );
+  assert.match(
+    source,
+    /shouldReuseOnlineRaceSession\(message, race\?\.session\)[\s\S]*race\.session\.prepareForReconnect\?\.\(\)/,
+  );
 });
 
 test('main persists v2 nicknames and routes Room exits back to the Lobby', () => {

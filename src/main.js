@@ -17,6 +17,7 @@ import {
   onlineRoomPhase,
   shouldAcknowledgeRaceLoaded,
   shouldPresentOnlineRoom,
+  shouldReuseOnlineRaceSession,
   shouldResumeOnlineRoomSession,
   shouldUpdateOnlineRaceBehindPanel,
 } from './net/online-flow.js';
@@ -500,6 +501,14 @@ function startRace() {
 }
 
 function startOnlineRace(message) {
+  if (shouldReuseOnlineRaceSession(message, race?.session)) {
+    race.session.prepareForReconnect?.();
+    if (shouldAcknowledgeRaceLoaded(message, onlineRoomState)) {
+      onlineClient.markRaceLoaded(message.raceId);
+    }
+    return;
+  }
+
   destroyAttract();
   if (race) endRace();
 

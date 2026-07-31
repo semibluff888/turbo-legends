@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   LEGACY_ONLINE_SESSION_STORAGE_KEY,
+  MAX_INPUT_BUFFERED_BYTES,
   OnlineClient,
   ONLINE_SESSION_STORAGE_KEY,
   TELEMETRY_PING_INTERVAL_MS,
@@ -24,6 +25,7 @@ class FakeWebSocket {
   constructor(url) {
     this.url = url;
     this.readyState = 0;
+    this.bufferedAmount = 0;
     this.sent = [];
     this.listeners = new Map();
     FakeWebSocket.instances.push(this);
@@ -56,6 +58,32 @@ class FakeWebSocket {
   close(code = 1000, reason = '') {
     this.readyState = 3;
     this.emit('close', { code, reason });
+  }
+}
+
+class FakeNetworkTarget {
+  constructor() {
+    this.navigator = { onLine: true };
+    this.listeners = new Map();
+  }
+
+  addEventListener(type, listener) {
+    let listeners = this.listeners.get(type);
+    if (!listeners) {
+      listeners = new Set();
+      this.listeners.set(type, listeners);
+    }
+    listeners.add(listener);
+  }
+
+  removeEventListener(type, listener) {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  emit(type) {
+    if (type === 'offline') this.navigator.onLine = false;
+    if (type === 'online') this.navigator.onLine = true;
+    for (const listener of this.listeners.get(type) || []) listener();
   }
 }
 
@@ -363,6 +391,89 @@ test('unexpected Room close schedules a resume attempt', () => {
     participantId: 'p2',
     resumeToken: 'resume_token_1234567890',
   });
+});
+
+test('realtime input refuses a backed-up WebSocket instead of extending its queue', () => {
+  FakeWebSocket.instances.length = 0;
+  const client = makeClient();
+  client.enterLobby();
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  boundWelcome(socket);
+  client.raceId = 'race_identifier_123';
+  const before = socket.sent.length;
+  socket.bufferedAmount = MAX_INPUT_BUFFERED_BYTES;
+
+  assert.equal(client.sendInput({
+    seq: 1,
+    useItemSeq: 0,
+    throttle: 1,
+    brake: 0,
+    steer: 0,
+    drift: false,
+    lookBack: false,
+  }), false);
+  assert.equal(socket.sent.length, before);
+});
+
+test('race input stays blocked until a resume is bound to the participant', () => {
+  FakeWebSocket.instances.length = 0;
+  const client = makeClient();
+  seedInMemoryRoomSession(client);
+  client.raceId = 'race_identifier_123';
+  client.resumeRoomSession();
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  socket.receive({ v: PROTOCOL_VERSION, type: 'welcome', session: null });
+
+  const input = {
+    seq: 1,
+    useItemSeq: 0,
+    throttle: 1,
+    brake: 0,
+    steer: 0,
+    drift: false,
+    lookBack: false,
+  };
+  assert.equal(client.sendInput(input), false);
+  boundWelcome(socket);
+  assert.equal(client.sendInput(input), true);
+  assert.equal(socket.sent.at(-1).type, 'input');
+});
+
+test('browser Wi-Fi offline detaches the old socket and online resumes the Room directly', () => {
+  FakeWebSocket.instances.length = 0;
+  const networkTarget = new FakeNetworkTarget();
+  const client = makeClient({ networkTarget });
+  const connectionStates = [];
+  client.on('connection', ({ state }) => connectionStates.push(state));
+  client.enterLobby();
+  const oldSocket = FakeWebSocket.instances[0];
+  oldSocket.open();
+  boundWelcome(oldSocket);
+  client.raceId = 'race_identifier_123';
+  const oldMessageCount = oldSocket.sent.length;
+
+  networkTarget.emit('offline');
+  assert.equal(client.socket, null);
+  assert.equal(client.state, 'disconnected');
+  assert.equal(client.selfId, 'p2');
+  for (let seq = 1; seq <= 120; seq++) {
+    assert.equal(client.sendInput({ seq }), false);
+  }
+  assert.equal(oldSocket.sent.length, oldMessageCount);
+
+  networkTarget.emit('online');
+  const resumedSocket = FakeWebSocket.instances[1];
+  resumedSocket.open();
+  assert.deepEqual(resumedSocket.sent[0], {
+    v: PROTOCOL_VERSION,
+    type: 'resume',
+    roomCode: 'ROOM22',
+    participantId: 'p2',
+    resumeToken: 'resume_token_1234567890',
+  });
+  assert.equal(connectionStates.includes('disconnected'), true);
 });
 
 test('unexpected Lobby close reconnects with enter_lobby instead of resume', () => {

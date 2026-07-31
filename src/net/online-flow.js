@@ -62,6 +62,15 @@ export function shouldAcknowledgeRaceLoaded(prepareMessage, roomState) {
   return onlineRoomPhase(roomState) === 'loading';
 }
 
+/** A catch-up prepare for the mounted race must not reset its input cursors. */
+export function shouldReuseOnlineRaceSession(prepareMessage, session) {
+  return prepareMessage?.resumed === true
+    && typeof prepareMessage.raceId === 'string'
+    && prepareMessage.raceId !== ''
+    && session?.kind === 'online'
+    && session.raceId === prepareMessage.raceId;
+}
+
 export function hasReturnedToOnlineRoom(roomState, participantId) {
   if (onlineRoomPhase(roomState) !== ROOM_STATES.RESULTS || !participantId) return false;
   const members = roomState?.members || roomState?.participants || roomState?.players || [];
