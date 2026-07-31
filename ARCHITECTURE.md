@@ -293,7 +293,8 @@ waiting → loading → countdown → racing → results → waiting
   return globally after the last connected player returns or after 30 seconds.
   Disconnected or abandoned members are removed then.
 - A room with no connected members is hidden from the lobby and expires after
-  60 seconds. An inactive waiting room expires after 15 minutes.
+  60 seconds. Connected waiting rooms remain available without an inactivity
+  timeout.
 - The server publishes full lobby directory snapshots after room visibility,
   occupancy, host, or status changes. Quick match atomically chooses an available
   public waiting room and never creates a room implicitly.

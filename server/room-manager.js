@@ -176,7 +176,6 @@ export class RoomManager extends EventEmitter {
     loadTimeoutMs = 10_000,
     resumeTimeoutMs = 30_000,
     emptyRoomTtlMs = 60_000,
-    idleLobbyTtlMs = 15 * 60_000,
     resultsTimeoutMs = 30_000,
     inputTimeoutMs = 1_500,
     networkHz = 60,
@@ -201,7 +200,6 @@ export class RoomManager extends EventEmitter {
     this.loadTimeoutMs = loadTimeoutMs;
     this.resumeTimeoutMs = resumeTimeoutMs;
     this.emptyRoomTtlMs = emptyRoomTtlMs;
-    this.idleLobbyTtlMs = idleLobbyTtlMs;
     this.resultsTimeoutMs = resultsTimeoutMs;
     this.inputTimeoutMs = inputTimeoutMs;
     this.networkStepMs = 1000 / networkHz;
@@ -295,7 +293,6 @@ export class RoomManager extends EventEmitter {
       race: null,
       lastRaceId: null,
       createdAt: now,
-      lastActivityAt: now,
       emptySince: null,
     };
     if (passwordVerifier) this._passwordVerifiers.set(room, passwordVerifier);
@@ -323,7 +320,6 @@ export class RoomManager extends EventEmitter {
     this._verifyPassword(room, password);
     const session = this._addParticipant(room, { displayName, characterId }, this.now());
     if (!room.hostParticipantId) this._migrateHost(room);
-    this._touch(room);
     this._broadcastRoomState(room);
     return { ...session, roomCode: room.code, roomState: this.getRoomState(room.code) };
   }
@@ -373,7 +369,6 @@ export class RoomManager extends EventEmitter {
       member.lastInputAt = now;
     }
     if (!room.hostParticipantId) this._migrateHost(room);
-    this._touch(room, now);
     this._broadcastRoomState(room);
     return {
       roomCode: room.code,
@@ -398,7 +393,6 @@ export class RoomManager extends EventEmitter {
     }
     if (room.hostParticipantId === participantId) this._migrateHost(room);
     if (![...room.members.values()].some((candidate) => candidate.connected)) room.emptySince = now;
-    this._touch(room, now);
     this._broadcastRoomState(room);
     return true;
   }
@@ -418,7 +412,6 @@ export class RoomManager extends EventEmitter {
       if (room.hostParticipantId === participantId) this._migrateHost(room);
     }
     if (![...room.members.values()].some((candidate) => candidate.connected)) room.emptySince = this.now();
-    this._touch(room);
     if (this._maybeReturnRoom(room)) return;
     this._broadcastRoomState(room);
   }
@@ -437,7 +430,6 @@ export class RoomManager extends EventEmitter {
     if (member.characterId !== characterId) {
       member.characterId = characterId;
       member.ready = false;
-      this._touch(room);
       this._broadcastRoomState(room);
     }
     return this.getRoomState(room.code);
@@ -468,7 +460,6 @@ export class RoomManager extends EventEmitter {
     }
     if (changed) {
       for (const member of room.members.values()) member.ready = false;
-      this._touch(room);
       this._broadcastRoomState(room);
     }
     return this.getRoomState(room.code);
@@ -478,7 +469,6 @@ export class RoomManager extends EventEmitter {
     const { room, member } = this._findParticipant(participantId);
     this._requireMemberRoom(room, member);
     member.ready = Boolean(ready);
-    this._touch(room);
     this._broadcastRoomState(room);
     return this.getRoomState(room.code);
   }
@@ -531,7 +521,6 @@ export class RoomManager extends EventEmitter {
       resultsAt: null,
       results: null,
     };
-    this._touch(room, now);
     this._emitToRoom(room, serverMessage(SERVER_MESSAGE_TYPES.PREPARE_RACE, {
       raceId,
       seed,
@@ -551,7 +540,6 @@ export class RoomManager extends EventEmitter {
       throw new GameError(ERROR_CODES.RACE_MISMATCH, 'That race is not loading.');
     }
     member.raceLoaded = true;
-    this._touch(room);
     this._broadcastRoomState(room);
     const active = [...room.members.values()].filter((candidate) => candidate.connected && !candidate.abandoned);
     if (active.length >= 2 && active.every((candidate) => candidate.raceLoaded)) {
@@ -609,7 +597,6 @@ export class RoomManager extends EventEmitter {
       member.postRaceState = POST_RACE_STATES.ROOM;
       member.ready = false;
     }
-    this._touch(room);
     if (!this._maybeReturnRoom(room)) this._broadcastRoomState(room);
     return this.getRoomState(room.code);
   }
@@ -687,9 +674,6 @@ export class RoomManager extends EventEmitter {
       }
       if (room.state === ROOM_STATES.WAITING) {
         this._expireWaitingMembers(room, now);
-        if (room.members.size === 0 || now - room.lastActivityAt >= this.idleLobbyTtlMs) {
-          this._destroyRoom(room);
-        }
         continue;
       }
       this._expireRaceSessions(room, now);
@@ -838,7 +822,6 @@ export class RoomManager extends EventEmitter {
           : CONTROLLER_KINDS.TAKEOVER_AI;
         this._setController(room, member, kind, true);
       }
-      this._touch(room, now);
       this._broadcastRoomState(room);
     })().catch((error) => {
       if (room.state === ROOM_STATES.LOADING && room.race === race) {
@@ -974,7 +957,6 @@ export class RoomManager extends EventEmitter {
     room.race = null;
     room.state = ROOM_STATES.WAITING;
     this._migrateHost(room);
-    this._touch(room);
     this._broadcastRoomState(room);
   }
 
@@ -1104,10 +1086,6 @@ export class RoomManager extends EventEmitter {
     if (room.hostParticipantId !== participantId) {
       throw new GameError(ERROR_CODES.FORBIDDEN, 'Only the room host can do that.');
     }
-  }
-
-  _touch(room, now = this.now()) {
-    room.lastActivityAt = now;
   }
 
   _allocateRoomCode() {

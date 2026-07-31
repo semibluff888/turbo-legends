@@ -234,6 +234,67 @@ test('room list counts reserved reconnect seats and hides rooms with no online m
   assert.deepEqual(harness.manager.listRooms(), []);
 });
 
+test('connected waiting rooms remain available without an inactivity timeout', async () => {
+  const harness = createHarness({ emptyRoomTtlMs: 60_000 });
+  const host = harness.manager.createRoom({
+    displayName: 'Host', characterId: 'pip', roomName: 'Long Wait',
+    roomType: ROOM_TYPES.PUBLIC, maxPlayers: 8,
+  });
+
+  harness.advance(24 * 60 * 60_000);
+  await harness.manager.tick();
+
+  assert.equal(harness.manager.roomCount, 1);
+  assert.equal(harness.manager.getRoomState(host.roomCode).members.length, 1);
+  assert.equal(harness.manager.listRooms()[0].roomCode, host.roomCode);
+});
+
+test('a disconnected waiting room honors the full empty-room TTL', async () => {
+  const harness = createHarness({ resumeTimeoutMs: 30_000, emptyRoomTtlMs: 60_000 });
+  const destroyed = [];
+  harness.manager.on('roomDestroyed', (event) => destroyed.push(event));
+  const host = harness.manager.createRoom({
+    displayName: 'Host', characterId: 'pip', roomName: 'Reconnect Window',
+    roomType: ROOM_TYPES.PUBLIC, maxPlayers: 8,
+  });
+  harness.manager.disconnect(host.participantId);
+
+  harness.advance(30_001);
+  await harness.manager.tick();
+  assert.equal(harness.manager.roomCount, 1);
+  assert.equal(harness.manager.rooms.get(host.roomCode).members.size, 0);
+  assert.deepEqual(harness.manager.listRooms(), []);
+
+  harness.advance(29_998);
+  await harness.manager.tick();
+  assert.equal(harness.manager.roomCount, 1);
+
+  harness.advance(1);
+  await harness.manager.tick();
+  assert.equal(harness.manager.roomCount, 0);
+  assert.deepEqual(destroyed, [{ roomCode: host.roomCode }]);
+});
+
+test('an explicitly emptied waiting room also honors the full empty-room TTL', async () => {
+  const harness = createHarness({ emptyRoomTtlMs: 60_000 });
+  const host = harness.manager.createRoom({
+    displayName: 'Host', characterId: 'pip', roomName: 'Empty Room',
+    roomType: ROOM_TYPES.PUBLIC, maxPlayers: 8,
+  });
+  harness.manager.leave(host.participantId);
+
+  assert.equal(harness.manager.roomCount, 1);
+  assert.deepEqual(harness.manager.listRooms(), []);
+
+  harness.advance(59_999);
+  await harness.manager.tick();
+  assert.equal(harness.manager.roomCount, 1);
+
+  harness.advance(1);
+  await harness.manager.tick();
+  assert.equal(harness.manager.roomCount, 0);
+});
+
 test('start prepares one deterministic eight-kart roster and launches after all clients load', async () => {
   const harness = createHarness();
   const { host, race } = await startTwoPlayerRace(harness);

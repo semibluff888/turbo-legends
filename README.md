@@ -62,8 +62,8 @@ counts.
   connected player becomes host when needed.
 - Every player can return from results independently and prepare for the next
   race while remaining players are shown as `IN GAME`. The room becomes fully
-  startable after everyone returns, or automatically after 30 seconds. Empty
-  rooms expire after 60 seconds and idle waiting rooms after 15 minutes.
+  startable after everyone returns, or automatically after 30 seconds. Rooms
+  with no connected players are hidden and expire after 60 seconds.
 - Leaving a room or an online race returns to the multiplayer lobby. The online
   results screen only offers `RETURN TO ROOM`.
 
