@@ -85,7 +85,7 @@ test('main persists v2 nicknames and routes Room exits back to the Lobby', () =>
 test('invite links auto-join available rooms and keep the address bar in sync', () => {
   assert.match(source, /function attemptInviteJoin\(lobbyView\)[\s\S]*onlineScreens\.joinInvitedRoom\(inviteCode\)/);
   assert.match(source, /ROOM_NOT_FOUND[\s\S]*ROOM_FULL[\s\S]*ROOM_LOCKED/);
-  assert.match(source, /function showOnlineRoom\(message\)[\s\S]*replaceOnlineRoomUrl\(roomCode\)/);
+  assert.match(source, /function showOnlineRoom\(message, \{ preservePanel = false \} = \{\}\)[\s\S]*replaceOnlineRoomUrl\(roomCode\)/);
   assert.match(source, /function leaveCurrentOnlineRoom\(\)[\s\S]*clearOnlineRoomUrl\(\)/);
   assert.match(source, /pendingInviteJoinCode[\s\S]*onlineClient\.on\('error'[\s\S]*clearOnlineRoomUrl\(\)/);
   assert.match(source, /function clearOnlineRoomUrl\(\)[\s\S]*updateLobby\([\s\S]*inviteRoomCode: ''/);
@@ -111,5 +111,24 @@ test('main keeps paused online panels alive and neutralizes hidden-page controls
   assert.match(
     source,
     /visibilitychange[\s\S]*race\?\.session\.kind === 'online'[\s\S]*race\.session\.sendNeutralInput\?\.\(\)/,
+  );
+});
+
+test('settings and help return to online screens while their live state keeps updating', () => {
+  assert.match(
+    source,
+    /panelReturn = mode === 'online-lobby' \|\| mode === 'online-room'[\s\S]*\? mode/,
+  );
+  assert.match(
+    source,
+    /panelReturn === 'online-lobby' \|\| panelReturn === 'online-room'[\s\S]*onlineScreens\.focusMenuTrigger/,
+  );
+  assert.match(
+    source,
+    /panelReturn === 'online-lobby'[\s\S]*onlineScreens\.updateLobby/,
+  );
+  assert.match(
+    source,
+    /preservePanel: \(mode === 'settings' \|\| mode === 'help'\) && panelReturn === 'online-room'/,
   );
 });

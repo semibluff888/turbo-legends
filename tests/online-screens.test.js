@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   buildInviteUrl,
@@ -15,6 +16,8 @@ import {
   OnlineScreens,
   roomCodeFromSearch,
 } from '../src/ui/online-screens.js';
+
+const onlineScreensSource = readFileSync(new URL('../src/ui/online-screens.js', import.meta.url), 'utf8');
 
 test('online input helpers normalize display fields and room codes', () => {
   assert.equal(normalizeDisplayName('  Turbo\n  Racer  '), 'Turbo Racer');
@@ -209,4 +212,70 @@ test('authoritative results use participant ids and do not invent times', () => 
   assert.equal(view.standings[2].finished, false);
   assert.equal(formatOnlineTime(view.standings[0].finishTime), '1:10.00');
   assert.equal(formatOnlineTime(view.standings[2].bestLap), '—');
+});
+
+test('Lobby and Room replace footer errors with field feedback, menus, and persistent room state', () => {
+  const lobbyStart = onlineScreensSource.indexOf('  _buildLobby() {');
+  const roomStart = onlineScreensSource.indexOf('  _buildRoom() {');
+  const resultsStart = onlineScreensSource.indexOf('  _buildResults() {');
+  const lobbySource = onlineScreensSource.slice(lobbyStart, roomStart);
+  const roomSource = onlineScreensSource.slice(roomStart, resultsStart);
+
+  assert.doesNotMatch(lobbySource, /data-online-(?:status|error)/);
+  assert.doesNotMatch(roomSource, /data-online-(?:status|error)/);
+  assert.match(lobbySource, /data-field-error="nickname"/);
+  assert.match(lobbySource, /data-field-error="create-room-name"/);
+  assert.match(lobbySource, /data-field-error="join-password"/);
+  assert.match(lobbySource, /data-room-count/);
+  assert.match(roomSource, /data-room-status/);
+  assert.match(lobbySource, /_wirePageMenu\(root, 'lobby'\)/);
+  assert.match(roomSource, /_wirePageMenu\(root, 'room'\)/);
+});
+
+test('password failures stay inline while quick-match failures use the shared alert', () => {
+  const passwordScreen = Object.assign(Object.create(OnlineScreens.prototype), {
+    _pendingAction: { kind: 'join' },
+    _activeDialog: { name: 'join' },
+    doc: { activeElement: null },
+    _errorText: () => 'Incorrect room password.',
+    showFieldError(field, message, options) {
+      this.fieldCall = { field, message, options };
+      return true;
+    },
+    showAlert() { this.alerted = true; },
+  });
+  const passwordResult = passwordScreen.presentError({ code: 'password_invalid' });
+  assert.equal(passwordResult, 'field');
+  assert.deepEqual(passwordScreen.fieldCall, {
+    field: 'join-password',
+    message: 'Incorrect room password.',
+    options: { focus: true },
+  });
+  assert.equal(passwordScreen.alerted, undefined);
+  assert.equal(passwordScreen._activeDialog.name, 'join');
+
+  const quickScreen = Object.assign(Object.create(OnlineScreens.prototype), {
+    _pendingAction: { kind: 'quick' },
+    _activeDialog: null,
+    doc: { activeElement: null },
+    _errorText: () => 'No available public rooms were found.',
+    showAlert(message, options) { this.alertCall = { message, options }; },
+  });
+  const quickResult = quickScreen.presentError({ code: 'no_matching_room' });
+  assert.equal(quickResult, 'alert');
+  assert.equal(quickScreen.alertCall.message, 'No available public rooms were found.');
+  assert.equal(quickScreen.alertCall.options.title, 'QUICK START UNAVAILABLE');
+});
+
+test('create and private-join submissions remain open until the server responds', () => {
+  const createStart = onlineScreensSource.indexOf('  _submitCreateRoom() {');
+  const quickStart = onlineScreensSource.indexOf('  _submitQuickMatch() {');
+  const joinStart = onlineScreensSource.indexOf('  _submitJoinRoom(room, password) {');
+  const openDialogStart = onlineScreensSource.indexOf('  _openDialog(name, opener, room = null) {');
+  const createSource = onlineScreensSource.slice(createStart, quickStart);
+  const joinSource = onlineScreensSource.slice(joinStart, openDialogStart);
+  assert.doesNotMatch(createSource, /_closeDialog/);
+  assert.doesNotMatch(joinSource, /_closeDialog/);
+  assert.match(createSource, /_pendingAction = \{ kind: 'create' \}/);
+  assert.match(joinSource, /_pendingAction = \{ kind: 'join'/);
 });

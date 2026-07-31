@@ -76,6 +76,20 @@ export const UI_COPY = Object.freeze({
     hint: 'Left / Right changes tab · Up / Down scrolls · Esc goes back',
   },
   online: {
+    menu: {
+      label: 'MENU',
+      settings: 'SETTINGS',
+      help: 'HELP',
+    },
+    alerts: {
+      genericTitle: 'ONLINE REQUEST FAILED',
+      joinTitle: 'UNABLE TO JOIN ROOM',
+      createTitle: 'UNABLE TO CREATE ROOM',
+      quickTitle: 'QUICK START UNAVAILABLE',
+      roomTitle: 'ROOM ACTION FAILED',
+      connectionTitle: 'CONNECTION PROBLEM',
+      dismiss: 'OK',
+    },
     connection: {
       connecting: 'CONNECTING',
       connected: 'ONLINE',
@@ -144,7 +158,8 @@ export const UI_COPY = Object.freeze({
       unnamedRoom: 'ONLINE ROOM',
       copyInvite: 'Copy invite link',
       copied: 'INVITE LINK COPIED',
-      copyFallback: 'INVITE LINK READY TO COPY',
+      copyFallback: 'INVITE LINK COPIED',
+      copyFailed: 'The invite link could not be copied. Please try again.',
       publicRoom: 'PUBLIC',
       privateRoom: 'FRIENDS',
       playerCount: '{count}/{max} RACERS',
