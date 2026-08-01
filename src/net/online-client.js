@@ -83,6 +83,7 @@ export class OnlineClient {
 
     this._listeners = new Map();
     this._connectionPurpose = null;
+    this._connectionFailureReported = false;
     this._pendingMessages = [];
     this._reconnectTimer = null;
     this._reconnectAttempt = 0;
@@ -268,6 +269,7 @@ export class OnlineClient {
     this._stopTelemetryLoop({ clearMetrics: true });
     this._pendingMessages.length = 0;
     this._connectionPurpose = null;
+    this._connectionFailureReported = false;
     this.scope = 'none';
     if (clearSession) this._clearRoomSession();
     this._closeCurrentSocket('left online');
@@ -292,7 +294,10 @@ export class OnlineClient {
 
   _open(initialMessage, reconnecting = false) {
     if (!this.WebSocketImpl) {
-      this._emit('error', { code: 'websocket_unavailable', message: 'WebSocket is unavailable.' });
+      this._reportConnectionFailure({
+        code: 'websocket_unavailable',
+        message: 'WebSocket is unavailable.',
+      });
       return;
     }
     this._cancelReconnect({ resetAttempts: false });
@@ -321,7 +326,10 @@ export class OnlineClient {
     });
     socket.addEventListener('error', () => {
       if (socket !== this.socket) return;
-      this._emit('error', { code: 'socket_error', message: 'Network connection failed.' });
+      this._reportConnectionFailure({
+        code: 'socket_error',
+        message: 'Network connection failed.',
+      });
     });
     socket.addEventListener('close', (event) => {
       if (socket !== this.socket) return;
@@ -335,13 +343,24 @@ export class OnlineClient {
     try {
       message = JSON.parse(typeof raw === 'string' ? raw : String(raw));
     } catch {
-      this._emit('error', { code: 'invalid_server_message', message: 'Received invalid server data.' });
+      this._reportConnectionFailure({
+        code: 'invalid_server_message',
+        message: 'Received invalid server data.',
+      });
       return;
     }
     if (!message || message.v !== PROTOCOL_VERSION || typeof message.type !== 'string') {
-      this._emit('error', { code: 'protocol_mismatch', message: 'Server protocol mismatch.' });
+      this._reportConnectionFailure({
+        code: 'protocol_mismatch',
+        message: 'Server protocol mismatch.',
+      });
       return;
     }
+
+    // Any valid server message proves that the current outage is over. A later
+    // transport failure may notify the UI again, while retries belonging to the
+    // same outage remain silent after the first connection-error alert.
+    this._connectionFailureReported = false;
 
     let resumeRejected = null;
     if (message.type === SERVER_MESSAGE_TYPES.WELCOME) {
@@ -417,6 +436,13 @@ export class OnlineClient {
         ? { ...this.room, code: normalizeCode(code) }
         : { code: normalizeCode(code) };
     }
+  }
+
+  _reportConnectionFailure(error) {
+    if (this._connectionFailureReported) return false;
+    this._connectionFailureReported = true;
+    this._emit('error', error);
+    return true;
   }
 
   _handleClose(event) {

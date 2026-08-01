@@ -408,6 +408,74 @@ test('unexpected Lobby close reconnects with enter_lobby instead of resume', () 
   });
 });
 
+test('Lobby reconnect retries report one connection failure per outage', () => {
+  FakeWebSocket.instances.length = 0;
+  const timers = [];
+  const errors = [];
+  const client = makeClient({
+    setTimeoutImpl(fn, ms) { timers.push({ fn, ms }); return timers.length; },
+    clearTimeoutImpl() {},
+  });
+  client.on('error', (error) => errors.push(error));
+  client.enterLobby();
+
+  const initial = FakeWebSocket.instances[0];
+  initial.open();
+  initial.receive({ v: PROTOCOL_VERSION, type: 'lobby_state', rooms: [] });
+  initial.emit('error');
+  initial.close(1006, 'network');
+
+  timers[0].fn();
+  const firstRetry = FakeWebSocket.instances[1];
+  firstRetry.emit('error');
+  firstRetry.close(1006, 'network');
+
+  assert.deepEqual(errors, [{
+    code: 'socket_error',
+    message: 'Network connection failed.',
+  }]);
+
+  timers[1].fn();
+  const recovered = FakeWebSocket.instances[2];
+  recovered.open();
+  recovered.receive({ v: PROTOCOL_VERSION, type: 'lobby_state', rooms: [] });
+  recovered.emit('error');
+
+  assert.equal(errors.length, 2);
+});
+
+test('Room resume retries share the same connection-failure alert guard', () => {
+  FakeWebSocket.instances.length = 0;
+  const timers = [];
+  const errors = [];
+  const client = makeClient({
+    setTimeoutImpl(fn, ms) { timers.push({ fn, ms }); return timers.length; },
+    clearTimeoutImpl() {},
+    now: () => 1_000,
+  });
+  client.on('error', (error) => errors.push(error));
+  seedInMemoryRoomSession(client);
+  client.resumeRoomSession();
+
+  const initial = FakeWebSocket.instances[0];
+  initial.emit('error');
+  initial.close(1006, 'network');
+  timers[0].fn();
+
+  const retry = FakeWebSocket.instances[1];
+  retry.emit('error');
+
+  assert.deepEqual(errors, [{
+    code: 'socket_error',
+    message: 'Network connection failed.',
+  }]);
+
+  retry.open();
+  boundWelcome(retry);
+  retry.emit('error');
+  assert.equal(errors.length, 2);
+});
+
 test('an anonymous welcome does not hide a later rejected resume', () => {
   FakeWebSocket.instances.length = 0;
   const storage = new MemoryStorage();
