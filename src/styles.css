@@ -2193,6 +2193,7 @@ kbd {
 .hud-standing-lap { color: rgba(255, 255, 255, 0.7); font-variant-numeric: tabular-nums; }
 .hud-standing-status { font-size: 10px; letter-spacing: 0.08em; }
 .hud-standing-status[data-state='finished'] { color: #77f0be; }
+.hud-standing-status[data-state='takeover'] { color: #ffb84d; }
 .hud-standing-status[data-state='ai'] { color: #8fdcff; }
 .hud-standing-status[data-state='ready'] { color: rgba(255, 255, 255, 0.62); }
 .hud-standings-hint {

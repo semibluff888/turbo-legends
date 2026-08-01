@@ -10,6 +10,10 @@ test('live standings status follows finish, AI and race-state priority', () => {
     { key: 'finished', label: 'FINISHED' },
   );
   assert.deepEqual(
+    standingsStatus({ controllerKind: 'takeover-ai' }, RACE_STATE.RACING),
+    { key: 'takeover', label: 'AI TAKE OVER' },
+  );
+  assert.deepEqual(
     standingsStatus({ controllerKind: 'ai' }, RACE_STATE.RACING),
     { key: 'ai', label: 'AI RACER' },
   );

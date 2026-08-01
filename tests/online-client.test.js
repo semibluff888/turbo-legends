@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   LEGACY_ONLINE_SESSION_STORAGE_KEY,
+  MAX_RACE_INPUT_BUFFERED_BYTES,
   OnlineClient,
   ONLINE_SESSION_STORAGE_KEY,
   TELEMETRY_PING_INTERVAL_MS,
@@ -24,6 +25,7 @@ class FakeWebSocket {
   constructor(url) {
     this.url = url;
     this.readyState = 0;
+    this.bufferedAmount = 0;
     this.sent = [];
     this.listeners = new Map();
     FakeWebSocket.instances.push(this);
@@ -335,6 +337,27 @@ test('returnRoom keeps the Room session and clears race id after the local retur
   });
   assert.equal(client.raceId, null);
   assert.equal(client.room.code, 'ROOM22');
+});
+
+test('race input is suppressed while the browser WebSocket send buffer is congested', () => {
+  FakeWebSocket.instances.length = 0;
+  const client = makeClient();
+  client.enterLobby();
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  boundWelcome(socket);
+  socket.receive({ v: PROTOCOL_VERSION, type: 'prepare_race', raceId: 'race_identifier_123' });
+  const before = socket.sent.length;
+
+  socket.bufferedAmount = MAX_RACE_INPUT_BUFFERED_BYTES + 1;
+  assert.equal(client.sendInput({ seq: 1, useItemSeq: 0, throttle: 1, brake: 0, steer: 0, drift: false, lookBack: false }), false);
+  assert.equal(socket.sent.length, before);
+
+  socket.bufferedAmount = 0;
+  assert.equal(client.sendInput({ seq: 1, useItemSeq: 0, throttle: 0.5, brake: 0, steer: 0.25, drift: false, lookBack: false }), true);
+  assert.equal(socket.sent.at(-1).type, 'input');
+  assert.equal(socket.sent.at(-1).seq, 1);
+  assert.equal(socket.sent.at(-1).throttle, 0.5);
 });
 
 test('unexpected Room close schedules a resume attempt', () => {

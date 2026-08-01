@@ -21,6 +21,7 @@ const ordinal = (n) => ORDINALS[n] || `${n}th`;
 
 const STANDINGS_STATUS = Object.freeze({
   finished: Object.freeze({ key: 'finished', label: 'FINISHED' }),
+  takeover: Object.freeze({ key: 'takeover', label: 'AI TAKE OVER' }),
   ai: Object.freeze({ key: 'ai', label: 'AI RACER' }),
   ready: Object.freeze({ key: 'ready', label: 'READY' }),
   racing: Object.freeze({ key: 'racing', label: 'RACING' }),
@@ -29,6 +30,7 @@ const STANDINGS_STATUS = Object.freeze({
 /** Pure status mapping shared by the HUD and its contract tests. */
 export function standingsStatus(kart, raceState) {
   if (kart?.finished) return STANDINGS_STATUS.finished;
+  if (kart?.controllerKind === 'takeover-ai') return STANDINGS_STATUS.takeover;
   if (kart?.controllerKind === 'ai') return STANDINGS_STATUS.ai;
   return raceState === RACE_STATE.COUNTDOWN
     ? STANDINGS_STATUS.ready

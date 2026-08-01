@@ -66,6 +66,10 @@ test('main protects prepare/loading ordering and resumed load acknowledgements',
     source,
     /if \(shouldAcknowledgeRaceLoaded\(message, onlineRoomState\)\) \{\s*onlineClient\.markRaceLoaded\(message\.raceId\);/,
   );
+  assert.match(
+    source,
+    /mountedSession\?\.kind === 'online'[\s\S]*mountedSession\.raceId === message\?\.raceId[\s\S]*resumeFromPrepare/,
+  );
 });
 
 test('main persists v2 nicknames and routes Room exits back to the Lobby', () => {

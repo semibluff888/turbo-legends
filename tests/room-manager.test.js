@@ -344,6 +344,7 @@ test('new useItemSeq survives a stale movement seq and fires for exactly one phy
   ))?.message;
   assert.equal(snapshot.ack, 2);
   assert.equal(snapshot.inputAck, 2);
+  assert.equal(snapshot.useItemAck, 1);
 });
 
 test('disconnect immediately transfers host and takeover AI can be reclaimed within 30 seconds', async () => {
@@ -359,8 +360,47 @@ test('disconnect immediately transfers host and takeover AI can be reclaimed wit
   harness.advance(29_000);
   const resumed = harness.manager.resume(host.roomCode, host.participantId, host.resumeToken);
   assert.equal(resumed.resumed, true);
+  assert.equal(simulation.controllers[hostIndex], 'takeover-ai');
+  harness.manager.handleInput(host.participantId, {
+    raceId: race.raceId,
+    seq: 1,
+    useItemSeq: 0,
+    throttle: 0.6,
+    brake: 0,
+    steer: 0,
+    drift: false,
+    lookBack: false,
+  });
   assert.equal(simulation.controllers[hostIndex], 'human');
   assert.equal(harness.manager.getRoomState(host.roomCode).hostParticipantId, guest.participantId);
+});
+
+test('item-only traffic cannot reclaim takeover AI or queue a delayed item use', async () => {
+  const harness = createHarness();
+  const { host, race } = await startTwoPlayerRace(harness);
+  const simulation = harness.simulations[0];
+  const hostIndex = race.roster.find((entry) => entry.participantId === host.participantId).kartIndex;
+  const input = {
+    raceId: race.raceId,
+    seq: 10,
+    useItemSeq: 0,
+    throttle: 0.5,
+    brake: 0,
+    steer: 0,
+    drift: false,
+    lookBack: false,
+  };
+  harness.manager.handleInput(host.participantId, input);
+  harness.manager.disconnect(host.participantId);
+  harness.manager.resume(host.roomCode, host.participantId, host.resumeToken);
+
+  harness.manager.handleInput(host.participantId, { ...input, useItemSeq: 1 });
+  assert.equal(simulation.controllers[hostIndex], 'takeover-ai');
+  harness.manager.handleInput(host.participantId, { ...input, seq: 11, useItemSeq: 1 });
+  harness.advance(17);
+  await harness.manager.tick();
+  assert.equal(simulation.controllers[hostIndex], 'human');
+  assert.equal(simulation.updates.some((inputs) => inputs[hostIndex]?.useItem), false);
 });
 
 test('a sole player reclaiming an empty room becomes its host again', () => {

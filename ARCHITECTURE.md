@@ -283,8 +283,9 @@ waiting → loading → countdown → racing → results → waiting
   is 10 seconds; unready clients use takeover AI. Fewer than two connected,
   loaded humans cancels the launch and resets the room to `waiting`.
 - A disconnect immediately enables takeover AI and opens a 30-second resume
-  window. A successful resume restores human control. An explicit leave during
-  a race abandons the session and cannot be resumed; its AI finishes the race.
+  window. A successful resume keeps takeover AI active until the first newer
+  movement input arrives. An explicit leave during a race abandons the session
+  and cannot be resumed; its AI finishes the race.
 - A connected participant that sends no accepted input for 1.5 seconds is also
   temporarily switched to takeover AI. A newer valid input restores control.
 - Every player can return from results independently. Returned players may change
@@ -365,14 +366,17 @@ window. Refreshing or opening another tab does not transfer those credentials.
 
 - Upgrade requests must target `/ws` and include an allowed browser Origin.
   Same-origin HTTP/HTTPS is accepted; `ALLOWED_ORIGINS` adds explicit origins.
-- Client messages are limited to 16 KiB and 90 messages per second per
-  connection.
+- Client messages are limited to 16 KiB and use a per-connection token bucket
+  that refills at 120 messages per second with a burst capacity of 180.
 - Create/join/quick-match/resume attempts are limited to 20 per IP per minute
   by default. Wrong private-room passwords consume the same budget.
 - Binary client messages are rejected. Per-message compression is disabled.
 - Ping/pong heartbeat runs every 15 seconds and terminates dead sockets.
 - A snapshot is skipped when buffered output exceeds 256 KiB. Connections are
   closed as too slow when buffered output exceeds 1 MiB.
+- Browsers stop writing race inputs when their WebSocket send buffer exceeds
+  4 KiB. Remote karts render from a 100 ms tick buffer with at most 100 ms of
+  extrapolation; larger gaps recover through a smooth transition.
 - `GET /healthz` returns process uptime plus aggregate room, race, and connection
   counts. It never includes room codes, nicknames, participant IDs, or tokens.
 

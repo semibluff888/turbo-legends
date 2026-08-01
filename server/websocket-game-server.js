@@ -5,6 +5,7 @@ import { WebSocketServer } from 'ws';
 import {
   CLIENT_MESSAGE_TYPES,
   ERROR_CODES,
+  MAX_CLIENT_MESSAGE_BURST,
   MAX_CLIENT_MESSAGE_BYTES,
   MAX_CLIENT_MESSAGES_PER_SECOND,
   PROTOCOL_VERSION,
@@ -85,6 +86,8 @@ export function attachGameWebSocket(httpServer, {
   heartbeatIntervalMs = 15_000,
   authAttemptLimit = 20,
   authAttemptWindowMs = 60_000,
+  messageRatePerSecond = MAX_CLIENT_MESSAGES_PER_SECOND,
+  messageBurst = MAX_CLIENT_MESSAGE_BURST,
   snapshotBackpressureBytes = 256 * 1024,
   slowClientBytes = 1024 * 1024,
 } = {}) {
@@ -183,12 +186,15 @@ export function attachGameWebSocket(httpServer, {
 
   function consumeMessageBudget(session) {
     const now = Date.now();
-    if (now - session.messageWindowStartedAt >= 1000) {
-      session.messageWindowStartedAt = now;
-      session.messageCount = 0;
-    }
-    session.messageCount++;
-    return session.messageCount <= MAX_CLIENT_MESSAGES_PER_SECOND;
+    const elapsed = Math.max(0, now - session.messageBudgetUpdatedAt);
+    session.messageBudgetUpdatedAt = now;
+    session.messageTokens = Math.min(
+      messageBurst,
+      session.messageTokens + elapsed * messageRatePerSecond / 1000,
+    );
+    if (session.messageTokens < 1) return false;
+    session.messageTokens -= 1;
+    return true;
   }
 
   function consumeAuthBudget(ip) {
@@ -367,8 +373,8 @@ export function attachGameWebSocket(httpServer, {
       roomCode: null,
       inLobby: false,
       alive: true,
-      messageWindowStartedAt: Date.now(),
-      messageCount: 0,
+      messageBudgetUpdatedAt: Date.now(),
+      messageTokens: messageBurst,
     };
     sessions.add(session);
     socket.on('pong', () => { session.alive = true; });

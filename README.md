@@ -58,8 +58,12 @@ counts.
 - The Node server owns physics, items, laps, ranks, and results. Browsers send
   inputs and locally smooth/predict presentation.
 - A disconnected kart is immediately driven by takeover AI. The same live page
-  can reclaim it with its in-memory session token for 30 seconds; the earliest joined
-  connected player becomes host when needed.
+  can reclaim it with its in-memory session token for 30 seconds; takeover AI
+  remains active until the resumed page sends a fresh movement input. The earliest
+  joined connected player becomes host when needed.
+- Online input uses client-side send-buffer backpressure, while remote racers use
+  buffered snapshot interpolation so temporary Wi-Fi stalls do not replay stale
+  controls or force ordinary movement corrections to teleport.
 - Every player can return from results independently and prepare for the next
   race while remaining players are shown as `IN GAME`. The room becomes fully
   startable after everyone returns, or automatically after 30 seconds. Rooms

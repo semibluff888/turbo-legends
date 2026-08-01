@@ -599,6 +599,15 @@ function startRace() {
 }
 
 function startOnlineRace(message) {
+  const mountedSession = race?.session;
+  if (mountedSession?.kind === 'online' && mountedSession.raceId === message?.raceId) {
+    mountedSession.resumeFromPrepare?.(message);
+    if (shouldAcknowledgeRaceLoaded(message, onlineRoomState)) {
+      onlineClient.markRaceLoaded(message.raceId);
+    }
+    return;
+  }
+
   destroyAttract();
   if (race) endRace();
 

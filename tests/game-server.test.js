@@ -307,6 +307,44 @@ test('quick match stays subscribed after no-match and can join a later public ro
   }
 });
 
+test('WebSocket message limiting allows its burst budget and closes sustained excess traffic', {
+  skip: wsModule ? false : 'ws dependency is not installed in this workspace',
+}, async () => {
+  const { WebSocket } = wsModule;
+  const logger = { info() {}, warn() {}, error() {} };
+  const server = await createGameServer({
+    root: PROJECT_ROOT,
+    logger,
+    webSocketOptions: { messageRatePerSecond: 0, messageBurst: 5 },
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const port = server.address().port;
+  const origin = `http://127.0.0.1:${port}`;
+  const url = `ws://127.0.0.1:${port}/ws`;
+  let client;
+  try {
+    client = await connectClient(WebSocket, url, origin);
+    for (let index = 0; index < 5; index++) client.send({ type: 'ping', clientTime: index });
+    const fifthPong = await client.next(message => message.type === 'pong' && message.clientTime === 4);
+    assert.equal(fifthPong.clientTime, 4);
+
+    const closed = new Promise(resolve => client.socket.once('close', (code, reason) => resolve({
+      code,
+      reason: reason.toString(),
+    })));
+    client.send({ type: 'ping', clientTime: 5 });
+    const error = await client.next(message => message.type === 'error' && message.code === 'rate_limited');
+    assert.equal(error.message, 'Message rate limit exceeded.');
+    assert.deepEqual(await closed, { code: 1008, reason: 'Rate limit exceeded' });
+  } finally {
+    await client?.close();
+    await server.shutdown();
+  }
+});
+
 test('two WebSocket clients can ready, race, receive results, and return to their room', {
   skip: wsModule ? false : 'ws dependency is not installed in this workspace',
 }, async () => {

@@ -19,6 +19,7 @@ const RECONNECT_DELAYS_MS = [250, 500, 1000, 2000, 4000];
 const RECONNECT_WINDOW_MS = 30_000;
 export const TELEMETRY_PING_INTERVAL_MS = 5_000;
 export const TELEMETRY_STALE_MS = 15_000;
+export const MAX_RACE_INPUT_BUFFERED_BYTES = 4 * 1024;
 
 function storageForCleanup(candidate) {
   return candidate && typeof candidate.removeItem === 'function' ? candidate : null;
@@ -214,6 +215,11 @@ export class OnlineClient {
 
   sendInput(input) {
     if (!this.raceId) return false;
+    const socket = this.socket;
+    if (!socket || socket.readyState !== 1
+      || Number(socket.bufferedAmount || 0) > MAX_RACE_INPUT_BUFFERED_BYTES) {
+      return false;
+    }
     return this.send({ type: CLIENT_MESSAGE_TYPES.INPUT, raceId: this.raceId, ...input });
   }
 

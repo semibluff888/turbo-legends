@@ -6,16 +6,24 @@ import { OnlineRaceSession } from '../src/net/online-race-session.js';
 import { Track } from '../src/track/track.js';
 import { getTrackDef } from '../src/track/tracks.js';
 
+const INPUT_STEP = FIXED_DT * 2;
+
 class FakeClient {
   constructor() {
     this.listeners = new Map();
     this.inputs = [];
+    this.sendAllowed = true;
   }
   on(type, listener) {
     this.listeners.set(type, listener);
     return () => this.listeners.delete(type);
   }
-  sendInput(input) { this.inputs.push(input); }
+  emit(type, value) { this.listeners.get(type)?.(value); }
+  sendInput(input) {
+    if (!this.sendAllowed) return false;
+    this.inputs.push(input);
+    return true;
+  }
 }
 
 function roster() {
@@ -250,9 +258,113 @@ test('a finished local kart switches to snapshot interpolation and stops sending
     karts: [snapshotKart(0, { x: 1, speed: 8, finished: true }), snapshotKart(1)],
   });
   assert.equal(session.player.x, 0);
-  session.update(0.05, { throttle: 1 });
+  session.update(0.25, { throttle: 1 });
   assert.ok(session.player.x > 0 && session.player.x < 1);
-  session.update(0.05, { throttle: 1 });
+  session.update(0.25, { throttle: 1 });
   assert.equal(session.player.x, 1);
   assert.equal(client.inputs.length, sentBeforeFinish);
+});
+
+test('congested sends do not advance input sequence and stale item presses expire', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  const session = new OnlineRaceSession({
+    client, track, raceId: 'race-congested', roster: roster(), localParticipantId: 'local',
+  });
+  session.applySnapshot({
+    raceId: 'race-congested', tick: 30, ack: 40, useItemAck: 7,
+    state: RACE_STATE.RACING,
+    karts: [snapshotKart(0), snapshotKart(1)],
+  });
+
+  client.sendAllowed = false;
+  session.update(INPUT_STEP, { throttle: 1, useItem: true });
+  session.update(0.3, { throttle: 0, useItem: false });
+  assert.equal(client.inputs.length, 0);
+
+  client.sendAllowed = true;
+  session.update(INPUT_STEP, { throttle: 0.25, useItem: false });
+  assert.deepEqual(client.inputs.at(-1), {
+    seq: 41,
+    useItemSeq: 7,
+    throttle: 0.25,
+    brake: 0,
+    steer: 0,
+    drift: false,
+    lookBack: false,
+  });
+});
+
+test('stale snapshots are ignored and large network gaps recover without an instant teleport', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const session = new OnlineRaceSession({
+    client: new FakeClient(), track, raceId: 'race-jitter', roster: roster(), localParticipantId: 'local',
+  });
+  session.applySnapshot({
+    raceId: 'race-jitter', tick: 10, state: RACE_STATE.RACING,
+    karts: [snapshotKart(0), snapshotKart(1, { x: 0, vx: 0 })],
+  });
+  assert.equal(session.karts[1].x, 0);
+  assert.equal(session.applySnapshot({
+    raceId: 'race-jitter', tick: 9, state: RACE_STATE.RACING,
+    karts: [snapshotKart(0, { x: 999 }), snapshotKart(1, { x: 999 })],
+  }), false);
+  assert.equal(session.karts[1].x, 0);
+
+  session.applySnapshot({
+    raceId: 'race-jitter', tick: 40, state: RACE_STATE.RACING,
+    karts: [snapshotKart(0), snapshotKart(1, { x: 30, vx: 0 })],
+  });
+  assert.equal(session.karts[1].x, 0);
+  session.update(0.25, {});
+  assert.ok(session.karts[1].x > 0 && session.karts[1].x < 30);
+  session.update(0.25, {});
+  assert.equal(session.karts[1].x, 30);
+});
+
+test('large local authority corrections are smoothed while respawns still snap', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const session = new OnlineRaceSession({
+    client: new FakeClient(), track, raceId: 'race-correction', roster: roster(), localParticipantId: 'local',
+  });
+  session.applySnapshot({
+    raceId: 'race-correction', tick: 10, ack: 0, state: RACE_STATE.RACING,
+    karts: [snapshotKart(0, { x: 0 }), snapshotKart(1)],
+  });
+  session.applySnapshot({
+    raceId: 'race-correction', tick: 13, ack: 0, state: RACE_STATE.RACING,
+    karts: [snapshotKart(0, { x: 10 }), snapshotKart(1)],
+  });
+  assert.equal(session.player.x, 0);
+  session.update(0.25, {});
+  assert.ok(session.player.x > 0 && session.player.x < 10);
+
+  session.applySnapshot({
+    raceId: 'race-correction', tick: 16, ack: 0, state: RACE_STATE.RACING,
+    karts: [snapshotKart(0, { x: 50, state: 'respawning' }), snapshotKart(1)],
+  });
+  assert.equal(session.player.x, 50);
+});
+
+test('disconnect pauses prediction and the next sent sequence continues from snapshot acknowledgement', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  const session = new OnlineRaceSession({
+    client, track, raceId: 'race-resume', roster: roster(), localParticipantId: 'local',
+  });
+  session.applySnapshot({
+    raceId: 'race-resume', tick: 60, ack: 500, state: RACE_STATE.RACING,
+    karts: [snapshotKart(0), snapshotKart(1)],
+  });
+  client.emit('connection', { state: 'disconnected' });
+  session.update(INPUT_STEP * 4, { throttle: 1 });
+  assert.equal(client.inputs.length, 0);
+
+  client.emit('connection', { state: 'connected' });
+  session.applySnapshot({
+    raceId: 'race-resume', tick: 63, ack: 500, state: RACE_STATE.RACING,
+    karts: [snapshotKart(0, { controllerKind: 'takeover-ai' }), snapshotKart(1)],
+  });
+  session.update(INPUT_STEP, { throttle: 0.75 });
+  assert.equal(client.inputs.at(-1).seq, 501);
 });

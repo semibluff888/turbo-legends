@@ -12,9 +12,13 @@ import { Kart, makeControls } from '../game/kart.js';
 import { stepKartPhysics } from '../game/physics.js';
 
 const INPUT_DT = 1 / 60;
-const REMOTE_BLEND_TIME = 0.1;
-const CORRECTION_TIME = 0.1;
-const SNAP_DISTANCE = 4;
+const NETWORK_TICK_HZ = 60;
+const INTERPOLATION_DELAY_TICKS = 6;
+const MAX_EXTRAPOLATION_TICKS = 6;
+const MAX_SNAPSHOT_BUFFER = 12;
+const MAX_CONTIGUOUS_SNAPSHOT_GAP_TICKS = 12;
+const RECOVERY_BLEND_TIME = 0.5;
+const ITEM_ACTION_FRESHNESS = 0.25;
 const MAX_INPUT_HISTORY = 240;
 
 const KART_FIELDS = [
@@ -107,6 +111,20 @@ function applyMotion(kart, from, to, t) {
   kart.visualScale = lerp(from.visualScale, to.visualScale, t);
 }
 
+function extrapolateMotion(source, seconds) {
+  return {
+    ...source,
+    x: source.x + source.vx * seconds,
+    y: source.y + source.vy * seconds,
+    z: source.z + source.vz * seconds,
+  };
+}
+
+function smoothstep(t) {
+  const value = clamp(t, 0, 1);
+  return value * value * (3 - 2 * value);
+}
+
 function syncEntities(target, snapshots) {
   const existing = new Map(target.map((entity) => [entity.id, entity]));
   const next = [];
@@ -160,6 +178,10 @@ export class OnlineRaceSession {
     this.tick = 0;
     this.lastAck = -1;
     this._hasSnapshot = false;
+    this._latestSnapshotTick = null;
+    this._estimatedServerTick = null;
+    this._hasLocalSnapshot = false;
+    this._transportConnected = client?.state === undefined || client.state === 'connected';
 
     this._karts = [];
     this._byIndex = new Map();
@@ -171,9 +193,12 @@ export class OnlineRaceSession {
     this._inputSeq = 0;
     this._useItemSeq = 0;
     this._prevUseItem = false;
+    this._pendingUseItem = false;
+    this._pendingUseItemAge = 0;
     this._sendAccumulator = 0;
     this._inputHistory = [];
     this._correction = { x: 0, y: 0, z: 0, yaw: 0 };
+    this._correctionTime = 0.15;
     this._unsubscribers = [];
 
     for (const entry of [...roster].sort((a, b) => a.kartIndex - b.kartIndex)) {
@@ -227,6 +252,7 @@ export class OnlineRaceSession {
         client.on('snapshot', (message) => this.applySnapshot(message)),
         client.on('race_events', (message) => this.applyEvents(message)),
         client.on('race_results', (message) => this.applyResults(message)),
+        client.on('connection', (event) => this._handleConnection(event)),
       );
     }
   }
@@ -240,22 +266,43 @@ export class OnlineRaceSession {
   }
   get isRaceOver() { return this.state === RACE_STATE.RESULTS; }
 
+  resumeFromPrepare(message) {
+    if (!message || message.raceId !== this.raceId) return false;
+    this._sendAccumulator = 0;
+    return true;
+  }
+
   update(dt, controls) {
     copyControls(this._player.controls, controls);
-    if (controls?.useItem && !this._prevUseItem) this._useItemSeq++;
+    if (controls?.useItem && !this._prevUseItem) {
+      this._pendingUseItem = true;
+      this._pendingUseItemAge = 0;
+    } else if (this._pendingUseItem) {
+      this._pendingUseItemAge += Math.max(0, dt);
+      if (this._pendingUseItemAge > ITEM_ACTION_FRESHNESS) this._pendingUseItem = false;
+    }
     this._prevUseItem = !!controls?.useItem;
 
     if (this._hasSnapshot
+      && this._transportConnected
       && !this._player.finished
       && (this.state === RACE_STATE.COUNTDOWN || this.state === RACE_STATE.RACING)) {
       this._sendAccumulator += dt;
       while (this._sendAccumulator >= INPUT_DT) {
         this._sendAccumulator -= INPUT_DT;
-        this._sendInput(controls);
+        if (!this._sendInput(controls)) {
+          // Do not turn a stalled render/network frame into a later input burst.
+          this._sendAccumulator = 0;
+          break;
+        }
       }
     }
 
-    if (this.state === RACE_STATE.RACING && this._predictionReady && !this._player.finished) {
+    if (this.state === RACE_STATE.RACING
+      && this._transportConnected
+      && this._player.controllerKind === 'human'
+      && this._predictionReady
+      && !this._player.finished) {
       copyControls(this._predictedKart.controls, controls);
       stepKartPhysics(this._predictedKart, this.track, dt);
       this._predictedKart.clearEvents();
@@ -269,7 +316,10 @@ export class OnlineRaceSession {
     const controls = makeControls();
     copyControls(this._player.controls, controls);
     this._prevUseItem = false;
+    this._pendingUseItem = false;
+    this._pendingUseItemAge = 0;
     if (!this._hasSnapshot
+      || !this._transportConnected
       || (this.state !== RACE_STATE.COUNTDOWN && this.state !== RACE_STATE.RACING)) {
       return false;
     }
@@ -280,24 +330,39 @@ export class OnlineRaceSession {
 
   applySnapshot(snapshot) {
     if (!snapshot || snapshot.raceId !== this.raceId) return false;
+    const suppliedTick = Number(snapshot.tick);
+    const hasSuppliedTick = Number.isFinite(suppliedTick);
+    if (hasSuppliedTick && this._latestSnapshotTick !== null
+      && suppliedTick <= this._latestSnapshotTick) return false;
+    const snapshotTick = hasSuppliedTick
+      ? suppliedTick
+      : (this._latestSnapshotTick ?? this.tick) + 1;
     this._hasSnapshot = true;
-    this.tick = finite(snapshot.tick, this.tick);
+    this._latestSnapshotTick = snapshotTick;
+    this._estimatedServerTick = this._estimatedServerTick === null
+      ? snapshotTick
+      : Math.max(this._estimatedServerTick, snapshotTick);
+    this.tick = snapshotTick;
     this.state = snapshot.state || snapshot.raceState || this.state;
     this.countdown = Math.max(0, finite(snapshot.countdown, this.countdown));
     this.elapsed = Math.max(0, finite(snapshot.elapsed, this.elapsed));
     this.laps = Math.max(1, snapshot.laps | 0 || this.laps);
 
     const ack = Number.isInteger(snapshot.ack) ? snapshot.ack : this.lastAck;
+    if (ack >= 0) this._inputSeq = Math.max(this._inputSeq, ack);
     if (ack > this.lastAck) {
       this.lastAck = ack;
       this._inputHistory = this._inputHistory.filter((command) => command.seq > ack);
+    }
+    if (Number.isInteger(snapshot.useItemAck) && snapshot.useItemAck >= 0) {
+      this._useItemSeq = Math.max(this._useItemSeq, snapshot.useItemAck);
     }
 
     for (const kartSnapshot of snapshot.karts || []) {
       const kart = this._byIndex.get(kartSnapshot.index);
       if (!kart) continue;
-      if (kart === this._player) this._applyLocalSnapshot(kartSnapshot);
-      else this._applyRemoteSnapshot(kart, kartSnapshot);
+      if (kart === this._player) this._applyLocalSnapshot(kartSnapshot, snapshotTick);
+      else this._applyRemoteSnapshot(kart, kartSnapshot, { snapshotTick });
     }
 
     this._items.applySnapshot(snapshot);
@@ -351,23 +416,33 @@ export class OnlineRaceSession {
   }
 
   _sendInput(controls) {
+    const pendingUseItem = this._pendingUseItem
+      && this._pendingUseItemAge <= ITEM_ACTION_FRESHNESS;
     const command = {
-      seq: ++this._inputSeq,
-      useItemSeq: this._useItemSeq,
+      seq: this._inputSeq + 1,
+      useItemSeq: this._useItemSeq + (pendingUseItem ? 1 : 0),
       throttle: clamp(finite(controls?.throttle, 0), 0, 1),
       brake: clamp(finite(controls?.brake, 0), 0, 1),
       steer: clamp(finite(controls?.steer, 0), -1, 1),
       drift: !!controls?.drift,
       lookBack: !!controls?.lookBack,
     };
-    this.client?.sendInput?.(command);
+    const sent = this.client?.sendInput?.(command) !== false;
+    if (!sent) return false;
+    this._inputSeq = command.seq;
+    if (pendingUseItem) {
+      this._useItemSeq = command.useItemSeq;
+      this._pendingUseItem = false;
+      this._pendingUseItemAge = 0;
+    }
     if (this.state === RACE_STATE.RACING && !this._player.finished) {
       this._inputHistory.push({ ...command, controls: cloneControls(controls) });
       if (this._inputHistory.length > MAX_INPUT_HISTORY) this._inputHistory.shift();
     }
+    return true;
   }
 
-  _applyLocalSnapshot(snapshot) {
+  _applyLocalSnapshot(snapshot, snapshotTick) {
     const display = this._player;
     if (snapshot.finished) {
       const justFinished = !display.finished;
@@ -381,17 +456,37 @@ export class OnlineRaceSession {
         this._correction.yaw = 0;
         this._predictionReady = false;
       }
-      this._applyRemoteSnapshot(display, snapshot, { blendFirstSnapshot: true });
+      this._applyRemoteSnapshot(display, snapshot, { blendFirstSnapshot: true, snapshotTick });
       copyKartFields(this._predictedKart, snapshot);
       return;
     }
+    const controllerKind = snapshot.controllerKind ?? display.controllerKind;
+    if (!this._transportConnected || controllerKind !== 'human') {
+      this._inputHistory.length = 0;
+      this._sendAccumulator = 0;
+      this._correction.x = 0;
+      this._correction.y = 0;
+      this._correction.z = 0;
+      this._correction.yaw = 0;
+      this._predictionReady = false;
+      this._applyRemoteSnapshot(display, snapshot, { blendFirstSnapshot: true, snapshotTick });
+      copyKartFields(this._predictedKart, snapshot);
+      this._hasLocalSnapshot = true;
+      return;
+    }
+
     const wasPredictionReady = this._predictionReady;
+    const firstLocalSnapshot = !this._hasLocalSnapshot;
     const before = { x: display.x, y: display.y, z: display.z, yaw: display.yaw, state: display.state };
     copyKartFields(display, snapshot);
     copyKartFields(this._predictedKart, snapshot);
+    this._remoteMotion.delete(display.index);
     this._predictionReady = true;
+    this._hasLocalSnapshot = true;
+    const authoritativeTeleport = snapshot.state === KART_STATE.RESPAWNING;
+    if (authoritativeTeleport) this._inputHistory.length = 0;
 
-    if (this.state === RACE_STATE.RACING && !snapshot.finished) {
+    if (this.state === RACE_STATE.RACING && !snapshot.finished && !authoritativeTeleport) {
       for (const command of this._inputHistory) {
         copyControls(this._predictedKart.controls, command.controls);
         stepKartPhysics(this._predictedKart, this.track, FIXED_DT);
@@ -404,21 +499,25 @@ export class OnlineRaceSession {
     const dy = before.y - this._predictedKart.y;
     const dz = before.z - this._predictedKart.z;
     const distance = Math.hypot(dx, dy, dz);
-    const stateChanged = before.state !== snapshot.state;
-    const mustSnap = distance > SNAP_DISTANCE
-      || stateChanged
-      || snapshot.state === KART_STATE.RESPAWNING
-      || !wasPredictionReady
+    const mustSnap = authoritativeTeleport
+      || firstLocalSnapshot
       || !Number.isFinite(before.x);
 
     this._correction.x = mustSnap ? 0 : dx;
     this._correction.y = mustSnap ? 0 : dy;
     this._correction.z = mustSnap ? 0 : dz;
     this._correction.yaw = mustSnap ? 0 : angleDelta(this._predictedKart.yaw, before.yaw);
+    this._correctionTime = distance <= 2 ? 0.15 : distance <= 8 ? 0.3 : 0.5;
+    if (!wasPredictionReady && !firstLocalSnapshot && !mustSnap) {
+      this._correctionTime = Math.max(this._correctionTime, 0.3);
+    }
     this._updateLocalDisplay(0);
   }
 
-  _applyRemoteSnapshot(kart, snapshot, { blendFirstSnapshot = false } = {}) {
+  _applyRemoteSnapshot(kart, snapshot, {
+    blendFirstSnapshot = false,
+    snapshotTick = this.tick,
+  } = {}) {
     const current = motionState(kart);
     copyKartFields(kart, snapshot, { motion: false });
     const target = {
@@ -436,19 +535,39 @@ export class OnlineRaceSession {
       visualPitch: finite(snapshot.visualPitch, current.visualPitch),
       visualScale: finite(snapshot.visualScale, current.visualScale),
     };
-    const distance = Math.hypot(target.x - current.x, target.y - current.y, target.z - current.z);
-    if ((!blendFirstSnapshot && !this._remoteMotion.has(kart.index))
-      || distance > SNAP_DISTANCE
-      || snapshot.state === KART_STATE.RESPAWNING) {
+    let channel = this._remoteMotion.get(kart.index);
+    if (!channel) {
+      channel = { samples: [], recovery: null };
+      this._remoteMotion.set(kart.index, channel);
+    }
+    const previous = channel.samples.at(-1);
+    const gap = previous ? snapshotTick - previous.tick : null;
+    const teleport = snapshot.state === KART_STATE.RESPAWNING;
+    if (teleport) {
       applyMotion(kart, target, target, 1);
-      this._remoteMotion.set(kart.index, { from: target, to: target, elapsed: REMOTE_BLEND_TIME });
+      channel.samples = [{ tick: snapshotTick, motion: target }];
+      channel.recovery = null;
       return;
     }
-    this._remoteMotion.set(kart.index, { from: current, to: target, elapsed: 0 });
+    if (!previous) {
+      channel.samples.push({ tick: snapshotTick, motion: target });
+      if (blendFirstSnapshot) {
+        channel.recovery = { from: current, elapsed: 0, duration: RECOVERY_BLEND_TIME };
+      } else {
+        applyMotion(kart, target, target, 1);
+      }
+      return;
+    }
+    if (gap > MAX_CONTIGUOUS_SNAPSHOT_GAP_TICKS) {
+      channel.samples.length = 0;
+      channel.recovery = { from: current, elapsed: 0, duration: RECOVERY_BLEND_TIME };
+    }
+    channel.samples.push({ tick: snapshotTick, motion: target });
+    if (channel.samples.length > MAX_SNAPSHOT_BUFFER) channel.samples.shift();
   }
 
   _updateLocalDisplay(dt) {
-    const decay = dt > 0 ? Math.exp(-dt / CORRECTION_TIME) : 1;
+    const decay = dt > 0 ? Math.exp(-dt / this._correctionTime) : 1;
     this._correction.x *= decay;
     this._correction.y *= decay;
     this._correction.z *= decay;
@@ -461,12 +580,71 @@ export class OnlineRaceSession {
   }
 
   _updateRemoteKarts(dt) {
-    for (const [index, blend] of this._remoteMotion) {
+    if (this._latestSnapshotTick === null || this._estimatedServerTick === null) return;
+    const maxEstimatedTick = this._latestSnapshotTick
+      + INTERPOLATION_DELAY_TICKS + MAX_EXTRAPOLATION_TICKS;
+    this._estimatedServerTick = Math.min(
+      maxEstimatedTick,
+      this._estimatedServerTick + Math.max(0, dt) * NETWORK_TICK_HZ,
+    );
+    const renderTick = this._estimatedServerTick - INTERPOLATION_DELAY_TICKS;
+    for (const [index, channel] of this._remoteMotion) {
       const kart = this._byIndex.get(index);
-      if (!kart) continue;
-      blend.elapsed = Math.min(REMOTE_BLEND_TIME, blend.elapsed + dt);
-      applyMotion(kart, blend.from, blend.to, blend.elapsed / REMOTE_BLEND_TIME);
+      if (!kart || channel.samples.length === 0) continue;
+      const target = this._motionAtTick(channel.samples, renderTick);
+      if (channel.recovery) {
+        channel.recovery.elapsed = Math.min(
+          channel.recovery.duration,
+          channel.recovery.elapsed + Math.max(0, dt),
+        );
+        const t = smoothstep(channel.recovery.elapsed / channel.recovery.duration);
+        applyMotion(kart, channel.recovery.from, target, t);
+        if (channel.recovery.elapsed >= channel.recovery.duration) channel.recovery = null;
+      } else {
+        applyMotion(kart, target, target, 1);
+      }
+      while (channel.samples.length > 2 && channel.samples[1].tick < renderTick) {
+        channel.samples.shift();
+      }
     }
+  }
+
+  _motionAtTick(samples, renderTick) {
+    const first = samples[0];
+    if (renderTick <= first.tick) return first.motion;
+    for (let index = 1; index < samples.length; index++) {
+      const next = samples[index];
+      if (renderTick > next.tick) continue;
+      const previous = samples[index - 1];
+      const span = Math.max(1, next.tick - previous.tick);
+      const target = { ...previous.motion };
+      applyMotion(target, previous.motion, next.motion, (renderTick - previous.tick) / span);
+      return target;
+    }
+    const latest = samples.at(-1);
+    const ticks = Math.min(MAX_EXTRAPOLATION_TICKS, Math.max(0, renderTick - latest.tick));
+    return extrapolateMotion(latest.motion, ticks / NETWORK_TICK_HZ);
+  }
+
+  _handleConnection(event) {
+    const connected = event?.state === 'connected';
+    if (connected) {
+      this._transportConnected = true;
+      this._sendAccumulator = 0;
+      return;
+    }
+    if (event?.state === 'idle') return;
+    this._transportConnected = false;
+    this._inputHistory.length = 0;
+    this._sendAccumulator = 0;
+    this._pendingUseItem = false;
+    this._pendingUseItemAge = 0;
+    this._prevUseItem = false;
+    this._predictionReady = false;
+    this._correction.x = 0;
+    this._correction.y = 0;
+    this._correction.z = 0;
+    this._correction.yaw = 0;
   }
 
   _applyItemBoxes(snapshots) {

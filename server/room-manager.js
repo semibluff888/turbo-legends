@@ -365,8 +365,9 @@ export class RoomManager extends EventEmitter {
     member.resumeExpiresAt = null;
     room.emptySince = null;
     if (room.race?.simulation && member.kartIndex !== null) {
-      this._setController(room, member, CONTROLLER_KINDS.HUMAN);
-      member.lastInputAt = now;
+      // A resumed transport is not proof that the driver has fresh control.
+      // Keep takeover AI active until a newer movement sequence arrives.
+      this._setController(room, member, CONTROLLER_KINDS.TAKEOVER_AI, true);
     }
     if (!room.hostParticipantId) this._migrateHost(room);
     this._broadcastRoomState(room);
@@ -563,13 +564,8 @@ export class RoomManager extends EventEmitter {
     }
 
     let accepted = false;
-    if (input.useItemSeq > member.lastUseItemSeq) {
-      const delta = input.useItemSeq - member.lastUseItemSeq;
-      member.pendingUseItems = Math.min(8, member.pendingUseItems + Math.min(delta, 8));
-      member.lastUseItemSeq = input.useItemSeq;
-      accepted = true;
-    }
-    if (input.seq > member.lastInputSeq) {
+    const movementAccepted = input.seq > member.lastInputSeq;
+    if (movementAccepted) {
       member.lastInputSeq = input.seq;
       member.lastInput = {
         throttle: input.throttle,
@@ -580,7 +576,17 @@ export class RoomManager extends EventEmitter {
       };
       accepted = true;
     }
-    if (accepted) {
+    if (input.useItemSeq > member.lastUseItemSeq) {
+      const delta = input.useItemSeq - member.lastUseItemSeq;
+      member.lastUseItemSeq = input.useItemSeq;
+      // An item-only packet cannot reclaim a takeover seat or leave an action
+      // queued to fire later. A fresh movement sequence in the same packet can.
+      if (member.controllerKind !== CONTROLLER_KINDS.TAKEOVER_AI || movementAccepted) {
+        member.pendingUseItems = Math.min(8, member.pendingUseItems + Math.min(delta, 8));
+      }
+      accepted = true;
+    }
+    if (movementAccepted) {
       member.lastInputAt = this.now();
       this._setController(room, member, CONTROLLER_KINDS.HUMAN);
     }
@@ -928,6 +934,7 @@ export class RoomManager extends EventEmitter {
       serverTime: this.now(),
       ack: member.lastAppliedSeq,
       inputAck: member.lastAppliedSeq,
+      useItemAck: member.lastUseItemSeq,
     });
   }
 
@@ -993,6 +1000,11 @@ export class RoomManager extends EventEmitter {
   _setController(room, member, kind, force = false) {
     const rosterEntry = room.race?.roster.find((entry) => entry.participantId === member.participantId);
     if (!force && member.controllerKind === kind && rosterEntry?.controllerKind === kind) return;
+    if (kind === CONTROLLER_KINDS.TAKEOVER_AI
+      && (force || member.controllerKind !== CONTROLLER_KINDS.TAKEOVER_AI)) {
+      member.pendingUseItems = 0;
+      member.lastInput = { ...DEFAULT_ZERO_INPUT };
+    }
     member.controllerKind = kind;
     if (rosterEntry) rosterEntry.controllerKind = kind;
     room.race?.simulation?.setController?.(member.kartIndex, kind);
