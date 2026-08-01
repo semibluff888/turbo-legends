@@ -928,8 +928,6 @@ export class RoomManager extends EventEmitter {
       serverTime: this.now(),
       ack: member.lastAppliedSeq,
       inputAck: member.lastAppliedSeq,
-      receivedInputSeq: member.lastInputSeq,
-      receivedUseItemSeq: member.lastUseItemSeq,
     });
   }
 

@@ -16,10 +16,6 @@ const REMOTE_BLEND_TIME = 0.1;
 const CORRECTION_TIME = 0.1;
 const SNAP_DISTANCE = 4;
 const MAX_INPUT_HISTORY = 240;
-// At 60 Hz this is 250 ms without an authoritative acknowledgement. Keeping
-// the window this small prevents a stalled LAN socket from later flushing a
-// burst large enough to trip the server's 90-message-per-second limit.
-export const MAX_UNACKED_INPUTS = 15;
 
 const KART_FIELDS = [
   'x', 'y', 'z', 'yaw', 'vx', 'vy', 'vz', 'speed', 'airborne',
@@ -164,7 +160,6 @@ export class OnlineRaceSession {
     this.tick = 0;
     this.lastAck = -1;
     this._hasSnapshot = false;
-    this._isResyncing = false;
 
     this._karts = [];
     this._byIndex = new Map();
@@ -175,11 +170,9 @@ export class OnlineRaceSession {
     this._eventIdOrder = [];
     this._inputSeq = 0;
     this._useItemSeq = 0;
-    this._receivedUseItemSeq = 0;
     this._prevUseItem = false;
     this._sendAccumulator = 0;
     this._inputHistory = [];
-    this._unacknowledgedInputSeqs = [];
     this._correction = { x: 0, y: 0, z: 0, yaw: 0 };
     this._unsubscribers = [];
 
@@ -231,11 +224,6 @@ export class OnlineRaceSession {
 
     if (client?.on) {
       this._unsubscribers.push(
-        client.on('connection', ({ state } = {}) => {
-          if (state === 'disconnected' || state === 'reconnecting') {
-            this.prepareForReconnect();
-          }
-        }),
         client.on('snapshot', (message) => this.applySnapshot(message)),
         client.on('race_events', (message) => this.applyEvents(message)),
         client.on('race_results', (message) => this.applyResults(message)),
@@ -247,7 +235,6 @@ export class OnlineRaceSession {
   get player() { return this._player; }
   get items() { return this._items; }
   get hasSnapshot() { return this._hasSnapshot; }
-  get isResyncing() { return this._isResyncing; }
   get standings() {
     return this._karts.slice().sort((a, b) => (a.rank - b.rank) || (a.index - b.index));
   }
@@ -255,13 +242,12 @@ export class OnlineRaceSession {
 
   update(dt, controls) {
     copyControls(this._player.controls, controls);
-    const acceptsInput = this._hasSnapshot
-      && !this._player.finished
-      && (this.state === RACE_STATE.COUNTDOWN || this.state === RACE_STATE.RACING);
-    if (acceptsInput && controls?.useItem && !this._prevUseItem) this._useItemSeq++;
+    if (controls?.useItem && !this._prevUseItem) this._useItemSeq++;
     this._prevUseItem = !!controls?.useItem;
 
-    if (acceptsInput) {
+    if (this._hasSnapshot
+      && !this._player.finished
+      && (this.state === RACE_STATE.COUNTDOWN || this.state === RACE_STATE.RACING)) {
       this._sendAccumulator += dt;
       while (this._sendAccumulator >= INPUT_DT) {
         this._sendAccumulator -= INPUT_DT;
@@ -269,10 +255,7 @@ export class OnlineRaceSession {
       }
     }
 
-    if (this._hasSnapshot
-      && this.state === RACE_STATE.RACING
-      && this._predictionReady
-      && !this._player.finished) {
+    if (this.state === RACE_STATE.RACING && this._predictionReady && !this._player.finished) {
       copyControls(this._predictedKart.controls, controls);
       stepKartPhysics(this._predictedKart, this.track, dt);
       this._predictedKart.clearEvents();
@@ -291,29 +274,12 @@ export class OnlineRaceSession {
       return false;
     }
     this._sendAccumulator = 0;
-    return this._sendInput(controls);
-  }
-
-  /** Freeze prediction until the server supplies a fresh catch-up snapshot. */
-  prepareForReconnect() {
-    this._isResyncing = true;
-    this._hasSnapshot = false;
-    this._predictionReady = false;
-    this._sendAccumulator = 0;
-    this._inputHistory.length = 0;
-    this._unacknowledgedInputSeqs.length = 0;
-    this._useItemSeq = this._receivedUseItemSeq;
-    this._remoteMotion.clear();
-    this._correction.x = 0;
-    this._correction.y = 0;
-    this._correction.z = 0;
-    this._correction.yaw = 0;
+    this._sendInput(controls);
     return true;
   }
 
   applySnapshot(snapshot) {
     if (!snapshot || snapshot.raceId !== this.raceId) return false;
-    this._isResyncing = false;
     this._hasSnapshot = true;
     this.tick = finite(snapshot.tick, this.tick);
     this.state = snapshot.state || snapshot.raceState || this.state;
@@ -321,27 +287,11 @@ export class OnlineRaceSession {
     this.elapsed = Math.max(0, finite(snapshot.elapsed, this.elapsed));
     this.laps = Math.max(1, snapshot.laps | 0 || this.laps);
 
-    const ack = Number.isInteger(snapshot.ack)
-      ? snapshot.ack
-      : Number.isInteger(snapshot.inputAck) ? snapshot.inputAck : this.lastAck;
-    if (Number.isInteger(ack)) this.lastAck = Math.max(this.lastAck, ack);
-
-    const receivedInputSeq = Number.isInteger(snapshot.receivedInputSeq)
-      ? snapshot.receivedInputSeq
-      : this.lastAck;
-    if (Number.isInteger(receivedInputSeq)) {
-      this._inputSeq = Math.max(this._inputSeq, receivedInputSeq);
-      this._unacknowledgedInputSeqs = this._unacknowledgedInputSeqs
-        .filter((seq) => seq > receivedInputSeq);
+    const ack = Number.isInteger(snapshot.ack) ? snapshot.ack : this.lastAck;
+    if (ack > this.lastAck) {
+      this.lastAck = ack;
+      this._inputHistory = this._inputHistory.filter((command) => command.seq > ack);
     }
-    if (Number.isInteger(snapshot.receivedUseItemSeq)) {
-      this._receivedUseItemSeq = Math.max(
-        this._receivedUseItemSeq,
-        snapshot.receivedUseItemSeq,
-      );
-      this._useItemSeq = Math.max(this._useItemSeq, this._receivedUseItemSeq);
-    }
-    this._inputHistory = this._inputHistory.filter((command) => command.seq > this.lastAck);
 
     for (const kartSnapshot of snapshot.karts || []) {
       const kart = this._byIndex.get(kartSnapshot.index);
@@ -401,13 +351,8 @@ export class OnlineRaceSession {
   }
 
   _sendInput(controls) {
-    if (this._unacknowledgedInputSeqs.length >= MAX_UNACKED_INPUTS) {
-      this.prepareForReconnect();
-      return false;
-    }
-
     const command = {
-      seq: this._inputSeq + 1,
+      seq: ++this._inputSeq,
       useItemSeq: this._useItemSeq,
       throttle: clamp(finite(controls?.throttle, 0), 0, 1),
       brake: clamp(finite(controls?.brake, 0), 0, 1),
@@ -415,18 +360,11 @@ export class OnlineRaceSession {
       drift: !!controls?.drift,
       lookBack: !!controls?.lookBack,
     };
-    const sent = this.client?.sendInput?.(command);
-    if (sent === false) {
-      this.prepareForReconnect();
-      return false;
-    }
-    this._inputSeq = command.seq;
-    this._unacknowledgedInputSeqs.push(command.seq);
+    this.client?.sendInput?.(command);
     if (this.state === RACE_STATE.RACING && !this._player.finished) {
       this._inputHistory.push({ ...command, controls: cloneControls(controls) });
       if (this._inputHistory.length > MAX_INPUT_HISTORY) this._inputHistory.shift();
     }
-    return true;
   }
 
   _applyLocalSnapshot(snapshot) {

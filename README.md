@@ -96,8 +96,7 @@ records are purged.
 Touch devices get on-screen controls automatically (auto-gas, steer zone on
 the left, drift/item buttons on the right). Holding Tab shows live position,
 lap, and racer status without pausing. In online races, pause is a local overlay:
-the server race continues while the client sends neutral controls. A connection
-loss shows a reconnect mask while takeover AI temporarily drives that kart.
+the server race continues while the client sends neutral controls.
 
 ## The game
 

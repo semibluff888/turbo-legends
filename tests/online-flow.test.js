@@ -6,11 +6,9 @@ import {
   invitationRoomCode,
   invitationRoomRequest,
   isOnlineConnectionError,
-  isTransientOnlineConnectionError,
   onlineErrorMessage,
   shouldAcknowledgeRaceLoaded,
   shouldPresentOnlineRoom,
-  shouldReuseOnlineRaceSession,
   shouldResumeOnlineRoomSession,
   shouldUpdateOnlineRaceBehindPanel,
 } from '../src/net/online-flow.js';
@@ -82,22 +80,6 @@ test('resumed catch-up only acknowledges loading races', () => {
   assert.equal(shouldAcknowledgeRaceLoaded({ raceId: 'race-id-1234' }, { state: 'waiting' }), true);
 });
 
-test('a resumed prepare reuses only the already-mounted matching online race', () => {
-  const session = { kind: 'online', raceId: 'race-id-1234' };
-  assert.equal(shouldReuseOnlineRaceSession({
-    raceId: 'race-id-1234', resumed: true,
-  }, session), true);
-  assert.equal(shouldReuseOnlineRaceSession({
-    raceId: 'other-race-123', resumed: true,
-  }, session), false);
-  assert.equal(shouldReuseOnlineRaceSession({
-    raceId: 'race-id-1234', resumed: false,
-  }, session), false);
-  assert.equal(shouldReuseOnlineRaceSession({
-    raceId: 'race-id-1234', resumed: true,
-  }, { kind: 'local', raceId: 'race-id-1234' }), false);
-});
-
 test('online races keep updating behind paused settings and help panels', () => {
   assert.equal(shouldUpdateOnlineRaceBehindPanel({ mode: 'settings', paused: true, raceKind: 'online' }), true);
   assert.equal(shouldUpdateOnlineRaceBehindPanel({ mode: 'help', paused: true, raceKind: 'online' }), true);
@@ -110,13 +92,6 @@ test('business-rule errors preserve a healthy connection indicator', () => {
   assert.equal(isOnlineConnectionError({ code: 'not_ready' }), false);
   assert.equal(isOnlineConnectionError({ code: 'socket_error' }), true);
   assert.equal(isOnlineConnectionError({ code: 'protocol_mismatch' }), true);
-});
-
-test('only retryable socket failures use persistent status instead of alerts', () => {
-  assert.equal(isTransientOnlineConnectionError({ code: 'socket_error' }), true);
-  assert.equal(isTransientOnlineConnectionError({ code: 'protocol_mismatch' }), false);
-  assert.equal(isTransientOnlineConnectionError({ code: 'websocket_unavailable' }), false);
-  assert.equal(isTransientOnlineConnectionError({ code: 'character_taken' }), false);
 });
 
 test('stable protocol codes drive Lobby and Room error copy', () => {

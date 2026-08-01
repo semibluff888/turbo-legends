@@ -15,12 +15,10 @@ import {
   invitationRoomRequest,
   hasReturnedToOnlineRoom,
   isOnlineConnectionError,
-  isTransientOnlineConnectionError,
   onlineErrorMessage,
   onlineRoomPhase,
   shouldAcknowledgeRaceLoaded,
   shouldPresentOnlineRoom,
-  shouldReuseOnlineRaceSession,
   shouldResumeOnlineRoomSession,
   shouldUpdateOnlineRaceBehindPanel,
 } from './net/online-flow.js';
@@ -463,13 +461,6 @@ function wireOnlineClient() {
     }
   });
   onlineClient.on('error', (message) => {
-    const transientConnectionError = isTransientOnlineConnectionError(message);
-    if (transientConnectionError) {
-      networkStatus.setConnectionState(
-        onlineClient.state === 'reconnecting' ? 'reconnecting' : 'disconnected',
-      );
-      return;
-    }
     onlineScreens.setBusy(false);
     if (isOnlineConnectionError(message)) {
       networkStatus.setConnectionState('error');
@@ -608,14 +599,6 @@ function startRace() {
 }
 
 function startOnlineRace(message) {
-  if (shouldReuseOnlineRaceSession(message, race?.session)) {
-    race.session.prepareForReconnect?.();
-    if (shouldAcknowledgeRaceLoaded(message, onlineRoomState)) {
-      onlineClient.markRaceLoaded(message.raceId);
-    }
-    return;
-  }
-
   destroyAttract();
   if (race) endRace();
 
@@ -816,10 +799,8 @@ function updateRaceFrame(dt) {
   effects.update(dt);
   chase.update(dt, player, playerControls.lookBack);
   world.animate(dt, session.elapsed);
-  const reconnecting = online && session.isResyncing === true;
   hud.update(player, session, dt, {
-    showStandings: input.standingsHeld && !reconnecting,
-    reconnecting,
+    showStandings: input.standingsHeld,
   });
 
   // Finish / results flow (the HUD shows its own FINISHED banner).

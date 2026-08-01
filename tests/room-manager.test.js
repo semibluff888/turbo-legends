@@ -344,37 +344,6 @@ test('new useItemSeq survives a stale movement seq and fires for exactly one phy
   ))?.message;
   assert.equal(snapshot.ack, 2);
   assert.equal(snapshot.inputAck, 2);
-  assert.equal(snapshot.receivedInputSeq, 2);
-  assert.equal(snapshot.receivedUseItemSeq, 1);
-});
-
-test('resumed catch-up snapshots expose the server input cursors', async () => {
-  const harness = createHarness();
-  const { host, race } = await startTwoPlayerRace(harness);
-  harness.manager.handleInput(host.participantId, {
-    raceId: race.raceId,
-    seq: 120,
-    useItemSeq: 7,
-    throttle: 1,
-    brake: 0,
-    steer: 0,
-    drift: false,
-    lookBack: false,
-  });
-  harness.advance(20);
-  await harness.manager.tick();
-  harness.manager.disconnect(host.participantId);
-  harness.advance(1_000);
-
-  const resumed = harness.manager.resume(
-    host.roomCode,
-    host.participantId,
-    host.resumeToken,
-  );
-  const snapshot = resumed.messages.find((message) => message.type === 'snapshot');
-  assert.equal(snapshot.receivedInputSeq, 120);
-  assert.equal(snapshot.receivedUseItemSeq, 7);
-  assert.equal(snapshot.ack, 120);
 });
 
 test('disconnect immediately transfers host and takeover AI can be reclaimed within 30 seconds', async () => {
@@ -392,32 +361,6 @@ test('disconnect immediately transfers host and takeover AI can be reclaimed wit
   assert.equal(resumed.resumed, true);
   assert.equal(simulation.controllers[hostIndex], 'human');
   assert.equal(harness.manager.getRoomState(host.roomCode).hostParticipantId, guest.participantId);
-});
-
-test('race snapshots expose disconnected and restored controller state to other players', async () => {
-  const harness = createHarness();
-  const { host, guest, race } = await startTwoPlayerRace(harness);
-  const hostIndex = race.roster.find((entry) => entry.participantId === host.participantId).kartIndex;
-
-  harness.manager.disconnect(host.participantId);
-  harness.advance(51);
-  await harness.manager.tick();
-  const offlineSnapshot = harness.messages.filter((event) => (
-    event.participantId === guest.participantId && event.message.type === 'snapshot'
-  )).at(-1)?.message;
-  const offlineKart = offlineSnapshot?.karts.find((kart) => kart.index === hostIndex);
-  assert.equal(offlineKart?.connected, false);
-  assert.equal(offlineKart?.controllerKind, 'takeover-ai');
-
-  harness.manager.resume(host.roomCode, host.participantId, host.resumeToken);
-  harness.advance(51);
-  await harness.manager.tick();
-  const restoredSnapshot = harness.messages.filter((event) => (
-    event.participantId === guest.participantId && event.message.type === 'snapshot'
-  )).at(-1)?.message;
-  const restoredKart = restoredSnapshot?.karts.find((kart) => kart.index === hostIndex);
-  assert.equal(restoredKart?.connected, true);
-  assert.equal(restoredKart?.controllerKind, 'human');
 });
 
 test('a sole player reclaiming an empty room becomes its host again', () => {

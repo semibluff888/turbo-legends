@@ -19,7 +19,6 @@ const RECONNECT_DELAYS_MS = [250, 500, 1000, 2000, 4000];
 const RECONNECT_WINDOW_MS = 30_000;
 export const TELEMETRY_PING_INTERVAL_MS = 5_000;
 export const TELEMETRY_STALE_MS = 15_000;
-export const MAX_INPUT_BUFFERED_BYTES = 2 * 1024;
 
 function storageForCleanup(candidate) {
   return candidate && typeof candidate.removeItem === 'function' ? candidate : null;
@@ -60,7 +59,6 @@ export class OnlineClient {
     setTimeoutImpl = globalThis.setTimeout,
     clearTimeoutImpl = globalThis.clearTimeout,
     now = () => globalThis.performance?.now?.() ?? Date.now(),
-    networkTarget = globalThis,
   } = {}) {
     this.WebSocketImpl = WebSocketImpl;
     this.url = webSocketUrl(location);
@@ -72,10 +70,6 @@ export class OnlineClient {
     this._setTimeout = setTimeoutImpl.bind(globalThis);
     this._clearTimeout = clearTimeoutImpl.bind(globalThis);
     this._now = now;
-    this._networkTarget = networkTarget;
-    this._networkOffline = networkTarget?.navigator?.onLine === false;
-    this._onNetworkOffline = () => this._handleBrowserOffline();
-    this._onNetworkOnline = () => this._handleBrowserOnline();
 
     this.socket = null;
     this.state = 'idle';
@@ -101,8 +95,6 @@ export class OnlineClient {
     // Participant IDs and resume tokens are deliberately memory-only. Remove
     // credentials left by older builds without ever replaying or migrating them.
     this._purgePersistedSessions();
-    this._networkTarget?.addEventListener?.('offline', this._onNetworkOffline);
-    this._networkTarget?.addEventListener?.('online', this._onNetworkOnline);
   }
 
   on(type, listener) {
@@ -222,15 +214,6 @@ export class OnlineClient {
 
   sendInput(input) {
     if (!this.raceId) return false;
-    const socket = this.socket;
-    if (this._networkOffline
-      || this._connectionPurpose === CLIENT_MESSAGE_TYPES.RESUME
-      || !socket
-      || socket.readyState !== 1) return false;
-    const bufferedAmount = Number(socket.bufferedAmount);
-    if (Number.isFinite(bufferedAmount) && bufferedAmount >= MAX_INPUT_BUFFERED_BYTES) {
-      return false;
-    }
     return this.send({ type: CLIENT_MESSAGE_TYPES.INPUT, raceId: this.raceId, ...input });
   }
 
@@ -253,7 +236,7 @@ export class OnlineClient {
 
   send(message) {
     const socket = this.socket;
-    if (this._networkOffline || !socket || socket.readyState !== 1) return false;
+    if (!socket || socket.readyState !== 1) return false;
     socket.send(JSON.stringify({ v: PROTOCOL_VERSION, ...message }));
     return true;
   }
@@ -287,8 +270,6 @@ export class OnlineClient {
   }
 
   dispose() {
-    this._networkTarget?.removeEventListener?.('offline', this._onNetworkOffline);
-    this._networkTarget?.removeEventListener?.('online', this._onNetworkOnline);
     this.stopTelemetry();
     this.disconnect({ clearSession: false });
     this._listeners.clear();
@@ -306,13 +287,6 @@ export class OnlineClient {
   _open(initialMessage, reconnecting = false) {
     if (!this.WebSocketImpl) {
       this._emit('error', { code: 'websocket_unavailable', message: 'WebSocket is unavailable.' });
-      return;
-    }
-    if (this._networkOffline) {
-      if (this.state !== 'disconnected') {
-        this.state = 'disconnected';
-        this._emit('connection', { state: this.state, reason: 'network offline' });
-      }
       return;
     }
     this._cancelReconnect({ resetAttempts: false });
@@ -448,13 +422,6 @@ export class OnlineClient {
       reason: event?.reason || '',
     });
 
-    if (this._networkOffline) {
-      if (this.scope === 'room' && !this._reconnectDeadline) {
-        this._reconnectDeadline = this._now() + RECONNECT_WINDOW_MS;
-      }
-      return;
-    }
-
     // A replaced Room session must not resume and evict the other window back.
     // It may still reconnect anonymously to the Lobby.
     if (event?.code === 4001) {
@@ -496,48 +463,10 @@ export class OnlineClient {
     const delay = this._nextReconnectDelay();
     this._reconnectTimer = this._setTimeout(() => {
       this._reconnectTimer = null;
-      if (this.scope === 'lobby'
-        && !this._networkOffline
-        && (!this.socket || this.socket.readyState >= 2)) {
+      if (this.scope === 'lobby') {
         this._open({ type: CLIENT_MESSAGE_TYPES.ENTER_LOBBY }, true);
       }
     }, delay);
-  }
-
-  _handleBrowserOffline() {
-    if (this._networkOffline) return;
-    this._networkOffline = true;
-    this._cancelReconnect({ resetAttempts: false });
-    this._stopTelemetryLoop({ clearMetrics: true });
-    if (this.scope === 'room' && !this._reconnectDeadline) {
-      this._reconnectDeadline = this._now() + RECONNECT_WINDOW_MS;
-    }
-    this._closeCurrentSocket('network offline');
-    this.state = 'disconnected';
-    this._emit('connection', { state: this.state, reason: 'network offline' });
-  }
-
-  _handleBrowserOnline() {
-    if (!this._networkOffline) return;
-    this._networkOffline = false;
-
-    if (this.scope === 'room' && this.room?.code && this.selfId && this.resumeToken) {
-      if (this._reconnectDeadline && this._now() >= this._reconnectDeadline) {
-        const expired = { roomCode: this.room.code, code: ERROR_CODES.SESSION_EXPIRED };
-        this._clearRoomSession();
-        this.scope = 'lobby';
-        this._emit('reconnect_expired', expired);
-        if (!this.socket || this.socket.readyState >= 2) {
-          this._open({ type: CLIENT_MESSAGE_TYPES.ENTER_LOBBY }, true);
-        }
-        return;
-      }
-      this._open(this._resumeMessage(), true);
-      return;
-    }
-    if (this.scope === 'lobby') {
-      this._open({ type: CLIENT_MESSAGE_TYPES.ENTER_LOBBY }, true);
-    }
   }
 
   _nextReconnectDelay() {

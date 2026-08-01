@@ -20,9 +20,7 @@ const ORDINALS = ['0th', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th',
 const ordinal = (n) => ORDINALS[n] || `${n}th`;
 
 const STANDINGS_STATUS = Object.freeze({
-  offline: Object.freeze({ key: 'offline', label: 'OFFLINE' }),
   finished: Object.freeze({ key: 'finished', label: 'FINISHED' }),
-  takeover: Object.freeze({ key: 'takeover', label: 'AI TAKEOVER' }),
   ai: Object.freeze({ key: 'ai', label: 'AI RACER' }),
   ready: Object.freeze({ key: 'ready', label: 'READY' }),
   racing: Object.freeze({ key: 'racing', label: 'RACING' }),
@@ -30,9 +28,7 @@ const STANDINGS_STATUS = Object.freeze({
 
 /** Pure status mapping shared by the HUD and its contract tests. */
 export function standingsStatus(kart, raceState) {
-  if (kart?.connected === false) return STANDINGS_STATUS.offline;
   if (kart?.finished) return STANDINGS_STATUS.finished;
-  if (kart?.controllerKind === 'takeover-ai') return STANDINGS_STATUS.takeover;
   if (kart?.controllerKind === 'ai') return STANDINGS_STATUS.ai;
   return raceState === RACE_STATE.COUNTDOWN
     ? STANDINGS_STATUS.ready
@@ -98,14 +94,6 @@ export class Hud {
         <div class="hud-standings-body"></div>
         <div class="hud-standings-hint">HOLD TAB</div>
       </section>
-      <div class="hud-reconnect" role="status" aria-live="assertive" aria-hidden="true" hidden>
-        <div class="hud-reconnect-card">
-          <span class="hud-reconnect-signal" aria-hidden="true"></span>
-          <strong>CONNECTION LOST</strong>
-          <span>RECONNECTING…</span>
-          <small>AI WILL DRIVE UNTIL YOU RETURN</small>
-        </div>
-      </div>
     `);
 
     const q = (sel) => hudRoot.querySelector(sel);
@@ -127,10 +115,8 @@ export class Hud {
     this._wrong = q('.hud-wrongway');
     this._standings = q('.hud-standings');
     this._standingsBody = q('.hud-standings-body');
-    this._reconnect = q('.hud-reconnect');
     this._standingRows = [];
     this._standingsVisible = false;
-    this._reconnecting = false;
 
     // --- Minimap: HiDPI backing store; CSS controls the display size. ------
     const size = minimapCanvas.width || 220;
@@ -170,7 +156,6 @@ export class Hud {
     this._banner.hidden = true;
     this._wrong.hidden = true;
     this._setStandingsVisible(false);
-    this._setReconnectVisible(false);
   }
 
   showRace() {
@@ -187,9 +172,9 @@ export class Hud {
    * @param {import('../game/kart.js').Kart} kart the player kart
    * @param {object} race RaceDirector (read-only)
    * @param {number} dt frame delta seconds (drives the minimap pulse)
-   * @param {{showStandings?:boolean,reconnecting?:boolean}} [presentation]
+   * @param {{showStandings?:boolean}} [presentation]
    */
-  update(kart, race, dt, { showStandings = false, reconnecting = false } = {}) {
+  update(kart, race, dt, { showStandings = false } = {}) {
     if (!kart || !race) return;
     this._time += dt || 0;
 
@@ -200,8 +185,7 @@ export class Hud {
     }
     this._lastElapsed = race.elapsed || 0;
 
-    this._setReconnectVisible(reconnecting);
-    this._setStandingsVisible(showStandings && !reconnecting);
+    this._setStandingsVisible(showStandings);
     if (this._standingsVisible) this._updateStandings(race);
 
     const c = this._c;
@@ -287,15 +271,6 @@ export class Hud {
     this._standingsVisible = next;
     this._standings.hidden = !next;
     this._standings.setAttribute('aria-hidden', String(!next));
-  }
-
-  _setReconnectVisible(visible) {
-    const next = Boolean(visible);
-    if (next === this._reconnecting) return;
-    this._reconnecting = next;
-    this._reconnect.hidden = !next;
-    this._reconnect.setAttribute('aria-hidden', String(!next));
-    if (next) this._setStandingsVisible(false);
   }
 
   _ensureStandingRows(count) {
