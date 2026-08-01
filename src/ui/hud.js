@@ -20,6 +20,9 @@ const ORDINALS = ['0th', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th',
 const ordinal = (n) => ORDINALS[n] || `${n}th`;
 
 const STANDINGS_STATUS = Object.freeze({
+  left: Object.freeze({ key: 'left', label: 'LEFT ROOM' }),
+  disconnected: Object.freeze({ key: 'disconnected', label: 'DISCONNECTED' }),
+  reconnecting: Object.freeze({ key: 'reconnecting', label: 'RECONNECTING' }),
   finished: Object.freeze({ key: 'finished', label: 'FINISHED' }),
   takeover: Object.freeze({ key: 'takeover', label: 'AI TAKE OVER' }),
   ai: Object.freeze({ key: 'ai', label: 'AI RACER' }),
@@ -29,6 +32,11 @@ const STANDINGS_STATUS = Object.freeze({
 
 /** Pure status mapping shared by the HUD and its contract tests. */
 export function standingsStatus(kart, raceState) {
+  const presenceState = kart?.presenceState
+    || (kart?.connected === false ? 'reconnecting' : 'connected');
+  if (presenceState === 'left') return STANDINGS_STATUS.left;
+  if (presenceState === 'disconnected') return STANDINGS_STATUS.disconnected;
+  if (presenceState === 'reconnecting') return STANDINGS_STATUS.reconnecting;
   if (kart?.finished) return STANDINGS_STATUS.finished;
   if (kart?.controllerKind === 'takeover-ai') return STANDINGS_STATUS.takeover;
   if (kart?.controllerKind === 'ai') return STANDINGS_STATUS.ai;

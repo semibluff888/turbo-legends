@@ -375,6 +375,61 @@ test('disconnect immediately transfers host and takeover AI can be reclaimed wit
   assert.equal(harness.manager.getRoomState(host.roomCode).hostParticipantId, guest.participantId);
 });
 
+test('room state distinguishes reconnecting, disconnected and explicit leave presence', async () => {
+  const harness = createHarness();
+  const { host, guest, race } = await startTwoPlayerRace(harness);
+
+  let state = harness.manager.getRoomState(host.roomCode);
+  assert.equal(
+    state.members.find((member) => member.participantId === guest.participantId).presenceState,
+    'connected',
+  );
+
+  harness.manager.disconnect(guest.participantId);
+  state = harness.manager.getRoomState(host.roomCode);
+  let guestState = state.members.find((member) => member.participantId === guest.participantId);
+  assert.equal(guestState.presenceState, 'reconnecting');
+  assert.equal(guestState.controllerKind, 'takeover-ai');
+
+  harness.manager.resume(host.roomCode, guest.participantId, guest.resumeToken);
+  state = harness.manager.getRoomState(host.roomCode);
+  guestState = state.members.find((member) => member.participantId === guest.participantId);
+  assert.equal(guestState.presenceState, 'connected');
+  assert.equal(guestState.controllerKind, 'takeover-ai');
+
+  harness.manager.handleInput(guest.participantId, {
+    raceId: race.raceId,
+    seq: 1,
+    useItemSeq: 0,
+    throttle: 0.5,
+    brake: 0,
+    steer: 0,
+    drift: false,
+    lookBack: false,
+  });
+  state = harness.manager.getRoomState(host.roomCode);
+  assert.equal(
+    state.members.find((member) => member.participantId === guest.participantId).controllerKind,
+    'human',
+  );
+
+  harness.manager.disconnect(guest.participantId);
+  harness.advance(30_001);
+  await harness.manager.tick();
+  state = harness.manager.getRoomState(host.roomCode);
+  assert.equal(
+    state.members.find((member) => member.participantId === guest.participantId).presenceState,
+    'disconnected',
+  );
+
+  harness.manager.leave(host.participantId);
+  state = harness.manager.getRoomState(host.roomCode);
+  assert.equal(
+    state.members.find((member) => member.participantId === host.participantId).presenceState,
+    'left',
+  );
+});
+
 test('item-only traffic cannot reclaim takeover AI or queue a delayed item use', async () => {
   const harness = createHarness();
   const { host, race } = await startTwoPlayerRace(harness);

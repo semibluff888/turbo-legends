@@ -693,6 +693,7 @@ function startOnlineRace(message) {
     raceId: message.raceId,
     roster,
     localParticipantId: onlineClient.selfId,
+    roomState: onlineRoomState,
   });
   onlineResultsState = null;
   mountRace(track, session, def);

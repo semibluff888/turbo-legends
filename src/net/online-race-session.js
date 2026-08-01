@@ -164,7 +164,7 @@ class OnlineItemView {
 }
 
 export class OnlineRaceSession {
-  constructor({ client, track, raceId, roster, localParticipantId }) {
+  constructor({ client, track, raceId, roster, localParticipantId, roomState = null }) {
     this.kind = 'online';
     this.client = client;
     this.track = track;
@@ -185,6 +185,7 @@ export class OnlineRaceSession {
 
     this._karts = [];
     this._byIndex = new Map();
+    this._byParticipantId = new Map();
     this._remoteMotion = new Map();
     this._items = new OnlineItemView();
     this._lastEventId = -1;
@@ -209,12 +210,18 @@ export class OnlineRaceSession {
       kart.participantId = entry.participantId ?? null;
       kart.controllerKind = entry.controllerKind || (entry.isAi ? 'ai' : 'human');
       kart.connected = entry.connected !== false;
+      kart.presenceState = kart.controllerKind === 'ai'
+        ? null
+        : (entry.presenceState || (kart.connected ? 'connected' : 'reconnecting'));
       kart.name = entry.displayName || character.name;
       this._karts.push(kart);
       this._byIndex.set(index, kart);
+      if (kart.participantId) this._byParticipantId.set(String(kart.participantId), kart);
       if (isLocal) this._player = kart;
     }
     if (!this._player) throw new Error('Online roster does not contain the local participant');
+
+    if (roomState) this.applyRoomState(roomState);
 
     // The authoritative simulation is created only after every connected
     // client reports that its scene is ready. Place the mirrored karts on the
@@ -250,6 +257,7 @@ export class OnlineRaceSession {
     if (client?.on) {
       this._unsubscribers.push(
         client.on('snapshot', (message) => this.applySnapshot(message)),
+        client.on('room_state', (message) => this.applyRoomState(message)),
         client.on('race_events', (message) => this.applyEvents(message)),
         client.on('race_results', (message) => this.applyResults(message)),
         client.on('connection', (event) => this._handleConnection(event)),
@@ -368,6 +376,27 @@ export class OnlineRaceSession {
     this._items.applySnapshot(snapshot);
     this._applyItemBoxes(snapshot.itemBoxes);
     return true;
+  }
+
+  applyRoomState(message) {
+    const roomState = message?.room || message;
+    if (!roomState || typeof roomState !== 'object') return false;
+    if (Object.hasOwn(roomState, 'raceId') && roomState.raceId !== this.raceId) return false;
+    const members = roomState.members || roomState.participants || roomState.players;
+    if (!Array.isArray(members)) return false;
+
+    let changed = false;
+    for (const member of members) {
+      const participantId = member?.participantId ?? member?.id;
+      const kart = this._byParticipantId.get(String(participantId || ''));
+      if (!kart) continue;
+      if (member.connected !== undefined) kart.connected = member.connected !== false;
+      if (member.controllerKind !== undefined) kart.controllerKind = member.controllerKind;
+      kart.presenceState = member.presenceState
+        || (kart.connected ? 'connected' : 'reconnecting');
+      changed = true;
+    }
+    return changed;
   }
 
   applyEvents(message) {

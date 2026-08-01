@@ -124,6 +124,11 @@ test('a silent Room connection is broadcast as reconnecting before it resumes', 
       ))
     ), disconnectMark);
     assert.equal(disconnectedRoom.members.length, 2);
+    assert.equal(
+      disconnectedRoom.members.find(member => member.participantId === guestWelcome.participantId)
+        .presenceState,
+      'reconnecting',
+    );
 
     const resumeMark = host.mark();
     resumedGuest = await connectClient(WebSocket, url, origin);
@@ -141,6 +146,11 @@ test('a silent Room connection is broadcast as reconnecting before it resumes', 
       ))
     ), resumeMark);
     assert.equal(reconnectedRoom.members.length, 2);
+    assert.equal(
+      reconnectedRoom.members.find(member => member.participantId === guestWelcome.participantId)
+        .presenceState,
+      'connected',
+    );
   } finally {
     await resumedGuest?.close();
     await guest?.close();

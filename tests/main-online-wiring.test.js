@@ -100,6 +100,7 @@ test('main protects prepare/loading ordering and resumed load acknowledgements',
     source,
     /mountedSession\?\.kind === 'online'[\s\S]*mountedSession\.raceId === message\?\.raceId[\s\S]*resumeFromPrepare/,
   );
+  assert.match(source, /new OnlineRaceSession\(\{[\s\S]*roomState: onlineRoomState/);
 });
 
 test('main persists v2 nicknames and routes Room exits back to the Lobby', () => {

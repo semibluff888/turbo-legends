@@ -286,6 +286,9 @@ waiting → loading → countdown → racing → results → waiting
   window. A successful resume keeps takeover AI active until the first newer
   movement input arrives. An explicit leave during a race abandons the session
   and cannot be resumed; its AI finishes the race.
+- Each `room_state` member exposes an additive `presenceState` value:
+  `connected`, `reconnecting`, `disconnected`, or `left`. Presence changes use
+  the existing event-driven room broadcast and are not repeated in 20 Hz race snapshots.
 - A connected participant that sends no accepted input for 1.5 seconds is also
   temporarily switched to takeover AI. A newer valid input restores control.
 - Every player can return from results independently. Returned players may change

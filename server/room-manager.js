@@ -55,6 +55,12 @@ function hasOnlineMember(room) {
   return occupiedMembers(room).some((member) => member.connected);
 }
 
+function presenceStateOf(member) {
+  if (member.abandoned) return member.resumeExpired ? 'disconnected' : 'left';
+  if (!member.connected) return 'reconnecting';
+  return 'connected';
+}
+
 function finiteOrNull(value) {
   return Number.isFinite(value) ? value : null;
 }
@@ -619,6 +625,7 @@ export class RoomManager extends EventEmitter {
         isHost: member.participantId === room.hostParticipantId,
         ready: member.ready,
         connected: member.connected,
+        presenceState: presenceStateOf(member),
         postRaceState: member.postRaceState,
         activityState: room.state === ROOM_STATES.RESULTS
           && member.postRaceState !== POST_RACE_STATES.ROOM

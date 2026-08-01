@@ -104,6 +104,64 @@ test('online snapshot populates Kart-shaped state and item views', () => {
   assert.equal(firstBox.respawnAt, 9);
 });
 
+test('room state updates live racer presence and cached state hydrates a resumed race', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  const session = new OnlineRaceSession({
+    client,
+    track,
+    raceId: 'race-presence',
+    roster: roster(),
+    localParticipantId: 'local',
+    roomState: {
+      raceId: 'race-presence',
+      members: [
+        { participantId: 'local', connected: true, presenceState: 'connected', controllerKind: 'human' },
+        { participantId: 'remote', connected: false, presenceState: 'left', controllerKind: 'takeover-ai' },
+      ],
+    },
+  });
+  const remote = session.karts.find((kart) => kart.participantId === 'remote');
+
+  assert.equal(remote.presenceState, 'left');
+  assert.equal(remote.connected, false);
+  assert.equal(remote.controllerKind, 'takeover-ai');
+
+  client.emit('room_state', {
+    raceId: 'race-presence',
+    members: [
+      { participantId: 'remote', connected: false, presenceState: 'reconnecting', controllerKind: 'takeover-ai' },
+    ],
+  });
+  assert.equal(remote.presenceState, 'reconnecting');
+
+  client.emit('room_state', {
+    raceId: 'another-race',
+    members: [
+      { participantId: 'remote', connected: false, presenceState: 'disconnected' },
+    ],
+  });
+  assert.equal(remote.presenceState, 'reconnecting');
+
+  client.emit('room_state', {
+    raceId: 'race-presence',
+    members: [
+      { participantId: 'remote', connected: true, presenceState: 'connected', controllerKind: 'takeover-ai' },
+    ],
+  });
+  assert.equal(remote.presenceState, 'connected');
+  assert.equal(remote.controllerKind, 'takeover-ai');
+
+  session.applySnapshot({
+    raceId: 'race-presence',
+    tick: 1,
+    state: RACE_STATE.RACING,
+    karts: [snapshotKart(0), snapshotKart(1, { controllerKind: 'human' })],
+  });
+  assert.equal(remote.presenceState, 'connected');
+  assert.equal(remote.controllerKind, 'human');
+});
+
 test('announced roster is staged on the starting grid while clients finish loading', () => {
   const track = new Track(getTrackDef('sunset-circuit'));
   const session = new OnlineRaceSession({
