@@ -288,6 +288,9 @@ export function attachGameWebSocket(httpServer, {
       case CLIENT_MESSAGE_TYPES.SET_READY:
         roomManager.setReady(session.participantId, message.ready);
         break;
+      case CLIENT_MESSAGE_TYPES.KICK_PLAYER:
+        roomManager.kickPlayer(session.participantId, message.participantId);
+        break;
       case CLIENT_MESSAGE_TYPES.START_RACE:
         roomManager.startRace(session.participantId);
         logger.info?.('[multiplayer] race loading started');
@@ -347,6 +350,18 @@ export function attachGameWebSocket(httpServer, {
       unbindParticipant(session, false);
       subscribeLobby(session);
     }
+  }
+
+  function onParticipantKicked({ roomCode, roomName, participantId }) {
+    const session = participantSessions.get(participantId);
+    if (!session) return;
+    send(session, serverMessage(SERVER_MESSAGE_TYPES.KICKED, {
+      roomCode,
+      roomName,
+      message: 'You were removed from the room by the host.',
+    }));
+    unbindParticipant(session, false);
+    subscribeLobby(session);
   }
 
   function onUpgrade(request, socket, head) {
@@ -424,6 +439,7 @@ export function attachGameWebSocket(httpServer, {
   roomManager.on('message', onManagerMessage);
   roomManager.on('lobbyChanged', onLobbyChanged);
   roomManager.on('roomDestroyed', onRoomDestroyed);
+  roomManager.on('participantKicked', onParticipantKicked);
 
   const heartbeat = setInterval(() => {
     const now = Date.now();
@@ -451,6 +467,7 @@ export function attachGameWebSocket(httpServer, {
     roomManager.off('message', onManagerMessage);
     roomManager.off('lobbyChanged', onLobbyChanged);
     roomManager.off('roomDestroyed', onRoomDestroyed);
+    roomManager.off('participantKicked', onParticipantKicked);
     for (const session of sessions) session.socket.close(code, reason);
     await new Promise((resolve) => wss.close(resolve));
   }

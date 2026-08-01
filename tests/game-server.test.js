@@ -356,6 +356,60 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
   }
 });
 
+test('a host can kick a guest back to the Lobby with an explicit notification', {
+  skip: wsModule ? false : 'ws dependency is not installed in this workspace',
+}, async () => {
+  const { WebSocket } = wsModule;
+  const logger = { info() {}, warn() {}, error() {} };
+  const server = await createGameServer({ root: PROJECT_ROOT, logger });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const port = server.address().port;
+  const origin = `http://127.0.0.1:${port}`;
+  const url = `ws://127.0.0.1:${port}/ws`;
+  let host;
+  let guest;
+  try {
+    host = await connectClient(WebSocket, url, origin);
+    host.send({
+      type: 'create_room', displayName: 'Host', characterId: 'pip',
+      roomName: 'Kick Test', roomType: 'public', maxPlayers: 4,
+    });
+    const hostWelcome = await host.next(message => message.type === 'welcome' && message.session);
+    await host.next(message => message.type === 'room_state' && message.members.length === 1);
+
+    guest = await connectClient(WebSocket, url, origin);
+    guest.send({
+      type: 'join_room', roomCode: hostWelcome.roomCode,
+      displayName: 'Guest', characterId: 'nova',
+    });
+    const guestWelcome = await guest.next(message => message.type === 'welcome' && message.session);
+    await guest.next(message => message.type === 'room_state' && message.members.length === 2);
+    await host.next(message => message.type === 'room_state' && message.members.length === 2);
+
+    const hostMark = host.mark();
+    const guestMark = guest.mark();
+    host.send({ type: 'kick_player', participantId: guestWelcome.participantId });
+
+    const kicked = await guest.next(message => message.type === 'kicked', guestMark);
+    const lobby = await guest.next(message => message.type === 'lobby_state', guestMark);
+    const hostRoom = await host.next(message => (
+      message.type === 'room_state' && message.members.length === 1
+    ), hostMark);
+    assert.equal(kicked.roomCode, hostWelcome.roomCode);
+    assert.equal(kicked.message, 'You were removed from the room by the host.');
+    assert.equal(guest.messagesAfter(guestMark)[0].type, 'kicked');
+    assert.equal(lobby.rooms[0].playerCount, 1);
+    assert.deepEqual(hostRoom.members.map(member => member.participantId), [hostWelcome.participantId]);
+  } finally {
+    await guest?.close();
+    await host?.close();
+    await server.shutdown();
+  }
+});
+
 test('quick match stays subscribed after no-match and can join a later public room with a duplicate name', {
   skip: wsModule ? false : 'ws dependency is not installed in this workspace',
 }, async () => {

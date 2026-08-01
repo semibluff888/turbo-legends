@@ -203,6 +203,10 @@ export class OnlineClient {
     return this.send({ type: CLIENT_MESSAGE_TYPES.SET_READY, ready: !!ready });
   }
 
+  kickPlayer(participantId) {
+    return this.send({ type: CLIENT_MESSAGE_TYPES.KICK_PLAYER, participantId });
+  }
+
   startRace() {
     return this.send({ type: CLIENT_MESSAGE_TYPES.START_RACE });
   }
@@ -396,6 +400,11 @@ export class OnlineClient {
         ? members.find((member) => String(member?.participantId || member?.id || '') === String(this.selfId || ''))
         : null;
       if (phase === ROOM_STATES.WAITING || self?.postRaceState === 'room') this.raceId = null;
+    } else if (message.type === SERVER_MESSAGE_TYPES.KICKED) {
+      this._cancelReconnect();
+      this._clearRoomSession();
+      this.scope = 'lobby';
+      this._connectionPurpose = null;
     } else if (message.type === SERVER_MESSAGE_TYPES.PREPARE_RACE) {
       this.raceId = message.raceId;
     } else if (message.type === SERVER_MESSAGE_TYPES.RACE_RESULTS) {

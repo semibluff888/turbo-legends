@@ -339,6 +339,36 @@ test('returnRoom keeps the Room session and clears race id after the local retur
   assert.equal(client.room.code, 'ROOM22');
 });
 
+test('kickPlayer sends the target id and kicked clears the resumable Room session', () => {
+  FakeWebSocket.instances.length = 0;
+  const client = makeClient();
+  const kicked = [];
+  client.on('kicked', (message) => kicked.push(message));
+  client.enterLobby();
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  boundWelcome(socket, { participantId: 'participant_host' });
+
+  assert.equal(client.kickPlayer('participant_002'), true);
+  assert.deepEqual(socket.sent.at(-1), {
+    v: PROTOCOL_VERSION,
+    type: 'kick_player',
+    participantId: 'participant_002',
+  });
+
+  socket.receive({
+    v: PROTOCOL_VERSION,
+    type: 'kicked',
+    roomCode: 'ROOM22',
+    message: 'You were removed from the room by the host.',
+  });
+  assert.equal(client.scope, 'lobby');
+  assert.equal(client.room, null);
+  assert.equal(client.selfId, null);
+  assert.equal(client.resumeToken, null);
+  assert.equal(kicked.length, 1);
+});
+
 test('race input is suppressed while the browser WebSocket send buffer is congested', () => {
   FakeWebSocket.instances.length = 0;
   const client = makeClient();

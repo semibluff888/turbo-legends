@@ -19,12 +19,37 @@ test('protocol v2 exports Lobby, Room, and matchmaking message names', () => {
   assert.equal(CLIENT_MESSAGE_TYPES.QUICK_MATCH, 'quick_match');
   assert.equal(CLIENT_MESSAGE_TYPES.RETURN_ROOM, 'return_room');
   assert.equal(CLIENT_MESSAGE_TYPES.LEAVE_ROOM, 'leave_room');
+  assert.equal(CLIENT_MESSAGE_TYPES.KICK_PLAYER, 'kick_player');
   assert.equal(SERVER_MESSAGE_TYPES.LOBBY_STATE, 'lobby_state');
+  assert.equal(SERVER_MESSAGE_TYPES.KICKED, 'kicked');
   assert.equal(SERVER_MESSAGE_TYPES.PREPARE_RACE, 'prepare_race');
   assert.equal(SERVER_MESSAGE_TYPES.SERVER_STATS, 'server_stats');
   assert.equal(ROOM_STATES.WAITING, 'waiting');
   assert.equal(ROOM_TYPES.PUBLIC, 'public');
   assert.equal(ROOM_TYPES.PRIVATE, 'private');
+});
+
+test('room settings accept AI auto-fill and kick-player validates its target id', () => {
+  assert.deepEqual(validateClientMessage({
+    type: 'set_room', v: 2, autoFillAi: false,
+  }), {
+    ok: true,
+    value: { type: 'set_room', v: 2, autoFillAi: false },
+  });
+  assert.equal(
+    validateClientMessage({ type: 'set_room', v: 2, autoFillAi: 'yes' }).error.code,
+    ERROR_CODES.INVALID_SETTING,
+  );
+  assert.deepEqual(validateClientMessage({
+    type: 'kick_player', v: 2, participantId: 'participant_002', ignored: true,
+  }), {
+    ok: true,
+    value: { type: 'kick_player', v: 2, participantId: 'participant_002' },
+  });
+  assert.equal(
+    validateClientMessage({ type: 'kick_player', v: 2, participantId: 'short' }).error.code,
+    ERROR_CODES.INVALID_MESSAGE,
+  );
 });
 
 test('create-room validation normalizes metadata and keeps a private password case-sensitive', () => {

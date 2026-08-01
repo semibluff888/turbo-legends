@@ -54,6 +54,28 @@ test('seeded grid helper is deterministic and simulation preserves announced kar
   }
 });
 
+test('authoritative simulation supports dynamic rosters from two to eight karts', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const twoKartRoster = makeRoster([
+    CONTROLLER_KIND.HUMAN,
+    CONTROLLER_KIND.HUMAN,
+  ]).slice(0, 2);
+  const simulation = new RaceSimulation(track, {
+    roster: twoKartRoster,
+    seed: 772,
+    mode: 'online',
+  });
+
+  assert.equal(simulation.roster.length, 2);
+  assert.equal(simulation.karts.length, 2);
+  assert.deepEqual(simulation.karts.map((kart) => kart.rank), [1, 2]);
+  simulation.update(FIXED_DT, [
+    { throttle: 1, brake: 0, steer: 0, drift: false, useItem: false, lookBack: false },
+    { throttle: 1, brake: 0, steer: 0, drift: false, useItem: false, lookBack: false },
+  ]);
+  assert.equal(simulation.state, RACE_STATE.COUNTDOWN);
+});
+
 test('human controls are isolated by kart index and missing input resets only that seat', () => {
   const simulation = makeSimulation({
     kinds: [CONTROLLER_KIND.HUMAN, CONTROLLER_KIND.HUMAN],
@@ -201,7 +223,10 @@ test('a finished kart releases controls and coasts to a stop', () => {
 
 test('roster and controller validation rejects ambiguous multiplayer state', () => {
   const track = new Track(getTrackDef('sunset-circuit'));
-  assert.throws(() => new RaceSimulation(track, { roster: makeRoster().slice(0, 7) }), /exactly 8/);
+  assert.throws(() => new RaceSimulation(track, { roster: makeRoster().slice(0, 1) }), /2 to 8/);
+  assert.throws(() => new RaceSimulation(track, {
+    roster: [...makeRoster(), { ...makeRoster()[0], participantId: 'participant-extra' }],
+  }), /2 to 8/);
 
   const duplicateCharacter = makeRoster();
   duplicateCharacter[1].characterId = duplicateCharacter[0].characterId;

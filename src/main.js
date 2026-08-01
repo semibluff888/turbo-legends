@@ -225,6 +225,9 @@ const onlineScreens = new OnlineScreens({
   onReadyChange({ ready }) {
     onlineClient.setReady(ready);
   },
+  onKickPlayer({ participantId }) {
+    onlineClient.kickPlayer(participantId);
+  },
   onStartRace() {
     onlineClient.startRace();
   },
@@ -501,6 +504,21 @@ function wireOnlineClient() {
     finishLocalRoomReconnect();
     showOnlineRoom(message, {
       preservePanel: (mode === 'settings' || mode === 'help') && panelReturn === 'online-room',
+    });
+  });
+  onlineClient.on('kicked', (message) => {
+    finishLocalRoomReconnect({ restoreFocus: false });
+    pendingOnlineError = null;
+    clearOnlineRoomUrl();
+    onlineRoomState = null;
+    onlineResultsState = null;
+    paused = false;
+    if (race) endRace();
+    buildAttract();
+    showOnlineLobby(onlineLobbyState || { rooms: [] });
+    onlineScreens.showAlert(message?.message || UI_COPY.online.room.kickedMessage, {
+      title: UI_COPY.online.alerts.kickedTitle,
+      restoreFocus: null,
     });
   });
   onlineClient.on('prepare_race', (message) => {

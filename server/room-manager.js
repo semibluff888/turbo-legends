@@ -294,7 +294,7 @@ export class RoomManager extends EventEmitter {
       maxPlayers,
       state: ROOM_STATES.WAITING,
       hostParticipantId: null,
-      settings: { trackId: track.id, difficulty: 'normal' },
+      settings: { trackId: track.id, difficulty: 'normal', autoFillAi: true },
       members: new Map(),
       race: null,
       lastRaceId: null,
@@ -465,11 +465,43 @@ export class RoomManager extends EventEmitter {
         changed = true;
       }
     }
+    if (patch.autoFillAi !== undefined) {
+      if (typeof patch.autoFillAi !== 'boolean') {
+        throw new GameError(ERROR_CODES.INVALID_SETTING, 'AI auto-fill must be enabled or disabled.');
+      }
+      if (room.settings.autoFillAi !== patch.autoFillAi) {
+        room.settings.autoFillAi = patch.autoFillAi;
+        changed = true;
+      }
+    }
     if (changed) {
       for (const member of room.members.values()) member.ready = false;
       this._broadcastRoomState(room);
     }
     return this.getRoomState(room.code);
+  }
+
+  kickPlayer(participantId, targetParticipantId) {
+    const { room } = this._findParticipant(participantId);
+    this._requireWaiting(room);
+    this._requireHost(room, participantId);
+    if (participantId === targetParticipantId) {
+      throw new GameError(ERROR_CODES.FORBIDDEN, 'The room host cannot kick themselves.');
+    }
+    const target = room.members.get(targetParticipantId);
+    if (!target || target.abandoned) {
+      throw new GameError(ERROR_CODES.NOT_IN_ROOM, 'That player is no longer in the room.');
+    }
+    const event = {
+      roomCode: room.code,
+      roomName: room.roomName,
+      participantId: target.participantId,
+      displayName: target.displayName,
+    };
+    this._removeParticipant(room, target);
+    this.emit('participantKicked', event);
+    this._broadcastRoomState(room);
+    return event;
   }
 
   setReady(participantId, ready) {
@@ -644,6 +676,7 @@ export class RoomManager extends EventEmitter {
       settings: {
         trackId: room.settings.trackId,
         difficulty: room.settings.difficulty,
+        autoFillAi: room.settings.autoFillAi,
         laps: track?.laps ?? 3,
       },
       raceId: room.race?.raceId ?? null,
@@ -770,16 +803,18 @@ export class RoomManager extends EventEmitter {
         characterId: member.characterId,
         controllerKind: CONTROLLER_KINDS.HUMAN,
       }));
-    const used = new Set(roster.map((entry) => entry.characterId));
-    for (const character of this.characters) {
-      if (roster.length >= this.characters.length || roster.length >= 8) break;
-      if (used.has(character.id)) continue;
-      roster.push({
-        participantId: `ai-${character.id}`,
-        displayName: character.name,
-        characterId: character.id,
-        controllerKind: CONTROLLER_KINDS.AI,
-      });
+    if (room.settings.autoFillAi) {
+      const used = new Set(roster.map((entry) => entry.characterId));
+      for (const character of this.characters) {
+        if (roster.length >= room.maxPlayers || roster.length >= this.characters.length) break;
+        if (used.has(character.id)) continue;
+        roster.push({
+          participantId: `ai-${character.id}`,
+          displayName: character.name,
+          characterId: character.id,
+          controllerKind: CONTROLLER_KINDS.AI,
+        });
+      }
     }
     const ordered = shuffleRosterForGrid(roster, seed);
     for (let i = 0; i < ordered.length; i++) ordered[i].kartIndex = i;

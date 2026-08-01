@@ -159,7 +159,7 @@ test('room view uses custom capacity and participant ids with duplicate nickname
     maxPlayers: 4,
     phase: 'waiting',
     hostParticipantId: 'p1',
-    settings: { trackId: 'harbor-loop', difficulty: 'hard' },
+    settings: { trackId: 'harbor-loop', difficulty: 'hard', autoFillAi: false },
     members: [
       { participantId: 'p1', displayName: 'Turbo', characterId: 'nova', ready: true, connected: true },
       { participantId: 'p2', displayName: 'Turbo', characterId: 'pip', ready: true, connected: true },
@@ -174,6 +174,7 @@ test('room view uses custom capacity and participant ids with duplicate nickname
   assert.equal(hostView.capacity, 4);
   assert.equal(hostView.playerCount, 2);
   assert.equal(hostView.canStart, true);
+  assert.equal(hostView.autoFillAi, false);
   assert.deepEqual(hostView.occupiedCharacterIds, ['nova', 'pip']);
   assert.equal(guestView.localMember.participantId, 'p2');
   assert.equal(guestView.localMember.displayName, 'Turbo');
@@ -311,6 +312,26 @@ test('alert confirmation runs its action once while programmatic dismissal stays
   assert.equal(confirmations, 1);
 });
 
+test('alert cancellation stays separate from confirmation', () => {
+  let confirmations = 0;
+  let cancellations = 0;
+  const screen = Object.assign(Object.create(OnlineScreens.prototype), {
+    _activeAlert: {
+      node: { hidden: false },
+      restoreFocus: null,
+      suspendedDialog: null,
+      onConfirm() { confirmations += 1; },
+      onCancel() { cancellations += 1; },
+      isConfirm: true,
+    },
+  });
+
+  screen.cancelAlert();
+  screen.cancelAlert();
+  assert.equal(confirmations, 0);
+  assert.equal(cancellations, 1);
+});
+
 test('authoritative results use participant ids and do not invent times', () => {
   const view = buildOnlineResultsView({
     trackName: 'Summit Raceway',
@@ -345,6 +366,9 @@ test('Lobby and Room use field feedback, direct page actions, and persistent roo
   assert.match(roomSource, /data-room-status/);
   assert.match(roomSource, /data-room-reconnect/);
   assert.match(roomSource, /copy\.reconnecting/);
+  assert.match(roomSource, /data-room-setting="autoFillAi"/);
+  assert.match(roomSource, /data-action="kick-player"/);
+  assert.match(roomSource, /copy\.kickMessage/);
   assert.match(onlineScreensSource, /member\.connected && member\.ready/);
   assert.match(onlineScreensSource, /is-reconnecting/);
   assert.match(onlineScreensSource, /waitingForReconnect/);

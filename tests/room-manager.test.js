@@ -54,6 +54,7 @@ function createHarness(options = {}) {
   let participantSequence = 0;
   const simulations = [];
   const messages = [];
+  const kicked = [];
   const managerErrors = [];
   const manager = new RoomManager({
     now: () => now,
@@ -70,11 +71,13 @@ function createHarness(options = {}) {
     ...options,
   });
   manager.on('message', (event) => messages.push(event));
+  manager.on('participantKicked', (event) => kicked.push(event));
   manager.on('managerError', (error) => managerErrors.push(error));
   return {
     manager,
     simulations,
     messages,
+    kicked,
     managerErrors,
     now: () => now,
     advance(ms) { now += ms; },
@@ -126,11 +129,77 @@ test('waiting room allows duplicate names while enforcing characters, host setti
   harness.manager.setReady(guest.participantId, true);
   harness.manager.setReady(duplicateName.participantId, true);
   assert.equal(harness.manager.getRoomState(host.roomCode).canStart, true);
-  harness.manager.setRoom(host.participantId, { difficulty: 'hard' });
+  assert.equal(harness.manager.getRoomState(host.roomCode).settings.autoFillAi, true);
+  harness.manager.setRoom(host.participantId, { difficulty: 'hard', autoFillAi: false });
   assert.deepEqual(
     harness.manager.getRoomState(host.roomCode).members.map((member) => member.ready),
     [false, false, false],
   );
+  assert.equal(harness.manager.getRoomState(host.roomCode).settings.autoFillAi, false);
+});
+
+test('AI auto-fill uses room capacity and can be disabled by the host', () => {
+  const filledHarness = createHarness();
+  const filledHost = filledHarness.manager.createRoom({
+    displayName: 'Host', characterId: 'pip', roomName: 'Four Kart Cup',
+    roomType: ROOM_TYPES.PUBLIC, maxPlayers: 4,
+  });
+  const filledGuest = filledHarness.manager.joinRoom(filledHost.roomCode, {
+    displayName: 'Guest', characterId: 'nova',
+  });
+  filledHarness.manager.setReady(filledHost.participantId, true);
+  filledHarness.manager.setReady(filledGuest.participantId, true);
+  const filledRace = filledHarness.manager.startRace(filledHost.participantId);
+  assert.equal(filledRace.roster.length, 4);
+  assert.equal(filledRace.roster.filter((entry) => entry.controllerKind === 'ai').length, 2);
+
+  const humansOnlyHarness = createHarness();
+  const humansOnlyHost = humansOnlyHarness.manager.createRoom({
+    displayName: 'Host', characterId: 'pip', roomName: 'Human Cup',
+    roomType: ROOM_TYPES.PUBLIC, maxPlayers: 4,
+  });
+  const humansOnlyGuest = humansOnlyHarness.manager.joinRoom(humansOnlyHost.roomCode, {
+    displayName: 'Guest', characterId: 'nova',
+  });
+  humansOnlyHarness.manager.setRoom(humansOnlyHost.participantId, { autoFillAi: false });
+  humansOnlyHarness.manager.setReady(humansOnlyHost.participantId, true);
+  humansOnlyHarness.manager.setReady(humansOnlyGuest.participantId, true);
+  const humansOnlyRace = humansOnlyHarness.manager.startRace(humansOnlyHost.participantId);
+  assert.equal(humansOnlyRace.roster.length, 2);
+  assert.equal(humansOnlyRace.roster.every((entry) => entry.controllerKind === 'human'), true);
+});
+
+test('only the host can kick another waiting-room player', () => {
+  const harness = createHarness();
+  const { host, guest } = addTwoPlayers(harness);
+
+  assert.throws(
+    () => harness.manager.kickPlayer(guest.participantId, host.participantId),
+    (error) => error.code === ERROR_CODES.FORBIDDEN,
+  );
+  assert.throws(
+    () => harness.manager.kickPlayer(host.participantId, host.participantId),
+    (error) => error.code === ERROR_CODES.FORBIDDEN,
+  );
+
+  const result = harness.manager.kickPlayer(host.participantId, guest.participantId);
+  assert.equal(result.participantId, guest.participantId);
+  assert.deepEqual(harness.kicked, [{
+    roomCode: host.roomCode,
+    roomName: 'Host Raceway',
+    participantId: guest.participantId,
+    displayName: 'Guest',
+  }]);
+  assert.deepEqual(
+    harness.manager.getRoomState(host.roomCode).members.map((member) => member.participantId),
+    [host.participantId],
+  );
+  assert.equal(harness.manager.participantRooms.has(guest.participantId), false);
+
+  const replacement = harness.manager.joinRoom(host.roomCode, {
+    displayName: 'Replacement', characterId: 'nova',
+  });
+  assert.notEqual(replacement.participantId, guest.participantId);
 });
 
 test('room metadata, capacity, and list status use each room human-seat limit', () => {
@@ -587,6 +656,28 @@ test('production race factory accepts the announced roster without reordering it
   harness.advance(17);
   await harness.manager.tick();
   assert.equal(room.race.tick, 1);
+});
+
+test('production race factory starts a two-player race when AI auto-fill is disabled', async () => {
+  const harness = createHarness({ raceFactory: createDefaultRaceFactory() });
+  const { host, guest } = addTwoPlayers(harness);
+  harness.manager.setRoom(host.participantId, { autoFillAi: false });
+  harness.manager.setReady(host.participantId, true);
+  harness.manager.setReady(guest.participantId, true);
+  const race = harness.manager.startRace(host.participantId);
+
+  await harness.manager.markRaceLoaded(host.participantId, race.raceId);
+  await harness.manager.markRaceLoaded(guest.participantId, race.raceId);
+
+  const room = harness.manager.rooms.get(host.roomCode);
+  assert.equal(room.state, ROOM_STATES.COUNTDOWN);
+  assert.equal(room.race.roster.length, 2);
+  assert.equal(room.race.simulation.karts.length, 2);
+  assert.deepEqual(
+    room.race.simulation.roster.map((entry) => entry.participantId),
+    race.roster.map((entry) => entry.participantId),
+  );
+  assert.deepEqual(harness.managerErrors, []);
 });
 
 test('late input from the current finished race is ignored but another race id is rejected', async () => {

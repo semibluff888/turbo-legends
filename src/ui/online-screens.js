@@ -332,6 +332,7 @@ export function buildRoomView(roomState = {}, localParticipantId = '') {
     occupiedCharacterIds,
     trackId: String(firstDefined(settings.trackId, roomState.trackId, TRACKS[0]?.id, '')),
     difficulty: String(firstDefined(settings.difficulty, roomState.difficulty, 'normal')),
+    autoFillAi: Boolean(firstDefined(settings.autoFillAi, roomState.autoFillAi, true)),
   };
 }
 
@@ -477,7 +478,10 @@ export class OnlineScreens {
           aria-labelledby="online-alert-title" aria-describedby="online-alert-message">
           <h2 id="online-alert-title" data-alert-title>${copy.genericTitle}</h2>
           <p id="online-alert-message" data-alert-message></p>
-          <button type="button" class="online-action online-action-primary" data-action="dismiss-alert">${copy.dismiss}</button>
+          <div class="online-alert-actions">
+            <button type="button" class="online-action online-action-quiet" data-action="cancel-alert" hidden>${copy.cancel}</button>
+            <button type="button" class="online-action online-action-primary" data-action="dismiss-alert">${copy.dismiss}</button>
+          </div>
         </section>
       </div>`;
     this._sharedUi = {
@@ -486,6 +490,7 @@ export class OnlineScreens {
       alert: host.querySelector('[data-online-alert]'),
     };
     this._listen(host.querySelector('[data-action="dismiss-alert"]'), 'click', () => this.confirmAlert());
+    this._listen(host.querySelector('[data-action="cancel-alert"]'), 'click', () => this.cancelAlert());
     this._listen(this._sharedUi.alert, 'keydown', (event) => this._handleAlertKeydown(event));
   }
 
@@ -570,7 +575,7 @@ export class OnlineScreens {
     if (action === 'join') return copy.joinTitle;
     if (action === 'create') return copy.createTitle;
     if (action === 'quick') return copy.quickTitle;
-    if (['start', 'ready', 'character', 'settings'].includes(action)) return copy.roomTitle;
+    if (['start', 'ready', 'character', 'settings', 'kick'].includes(action)) return copy.roomTitle;
     return copy.genericTitle;
   }
 
@@ -602,7 +607,9 @@ export class OnlineScreens {
     title = UI_COPY.online.alerts.genericTitle,
     restoreFocus = this.doc.activeElement,
     buttonLabel = UI_COPY.online.alerts.dismiss,
+    cancelLabel = null,
     onConfirm = null,
+    onCancel = null,
   } = {}) {
     const alert = this._sharedUi?.alert;
     if (!alert) return;
@@ -615,12 +622,17 @@ export class OnlineScreens {
     alert.querySelector('[data-alert-title]').textContent = title;
     alert.querySelector('[data-alert-message]').textContent = String(message || UI_COPY.online.errors.generic);
     alert.querySelector('[data-action="dismiss-alert"]').textContent = String(buttonLabel);
+    const cancel = alert.querySelector('[data-action="cancel-alert"]');
+    cancel.textContent = String(cancelLabel || UI_COPY.online.alerts.cancel);
+    cancel.hidden = !cancelLabel;
     alert.hidden = false;
     this._activeAlert = {
       node: alert,
       restoreFocus: previous,
       suspendedDialog,
       onConfirm: typeof onConfirm === 'function' ? onConfirm : null,
+      onCancel: typeof onCancel === 'function' ? onCancel : null,
+      isConfirm: Boolean(cancelLabel),
     };
     alert.querySelector('[data-action="dismiss-alert"]')?.focus();
   }
@@ -640,6 +652,13 @@ export class OnlineScreens {
     const { onConfirm } = this._activeAlert;
     this.dismissAlert();
     onConfirm?.();
+  }
+
+  cancelAlert() {
+    if (!this._activeAlert) return;
+    const { onCancel } = this._activeAlert;
+    this.dismissAlert();
+    onCancel?.();
   }
 
   showToast(message, durationMs = 2000) {
@@ -663,7 +682,8 @@ export class OnlineScreens {
     if (!this._activeAlert) return;
     if (event.key === 'Escape') {
       event.preventDefault();
-      this.confirmAlert();
+      if (this._activeAlert.isConfirm) this.cancelAlert();
+      else this.confirmAlert();
       return;
     }
     this._trapFocus(event, this._activeAlert.node);
@@ -906,6 +926,14 @@ export class OnlineScreens {
               <span class="online-field-label">${copy.difficulty}</span>
               <select class="online-select" data-room-setting="difficulty"></select>
             </label>
+            <label class="online-checkbox-field">
+              <input type="checkbox" data-room-setting="autoFillAi" checked>
+              <span class="online-checkbox-mark" aria-hidden="true"></span>
+              <span class="online-checkbox-copy">
+                <strong>${copy.autoFillAi}</strong>
+                <small>${copy.autoFillAiHelp}</small>
+              </span>
+            </label>
             <p class="online-host-note" data-host-note></p>
           </section>
         </div>
@@ -949,6 +977,7 @@ export class OnlineScreens {
       option.value = track.id;
     }
     const difficultySelect = root.querySelector('[data-room-setting="difficulty"]');
+    const autoFillAi = root.querySelector('[data-room-setting="autoFillAi"]');
     for (const [value, preset] of Object.entries(this.difficulties)) {
       const option = createNode(this.doc, 'option', '', difficultySelect, preset.label || value);
       option.value = value;
@@ -961,6 +990,28 @@ export class OnlineScreens {
     this._listen(difficultySelect, 'change', () => {
       this._pendingAction = { kind: 'settings' };
       this._emit('onSetRoom', { difficulty: difficultySelect.value });
+    });
+    this._listen(autoFillAi, 'change', () => {
+      this._pendingAction = { kind: 'settings' };
+      this._emit('onSetRoom', { autoFillAi: autoFillAi.checked });
+    });
+    this._listen(root.querySelector('[data-member-list]'), 'click', (event) => {
+      const button = event.target.closest?.('[data-action="kick-player"]');
+      if (!button || button.disabled) return;
+      const member = this._roomView.members.find((candidate) => (
+        candidate.participantId === button.dataset.participantId
+      ));
+      if (!member) return;
+      this.showAlert(copy.kickMessage.replace('{name}', member.displayName), {
+        title: copy.kickTitle,
+        buttonLabel: copy.kickConfirm,
+        cancelLabel: UI_COPY.online.alerts.cancel,
+        restoreFocus: button,
+        onConfirm: () => {
+          this._pendingAction = { kind: 'kick' };
+          this._emit('onKickPlayer', { participantId: member.participantId });
+        },
+      });
     });
     this._listen(root.querySelector('[data-action="ready"]'), 'click', () => {
       this._pendingAction = { kind: 'ready' };
@@ -1379,10 +1430,11 @@ export class OnlineScreens {
     const sortedMembers = view.members.slice().sort((a, b) => a.joinOrder - b.joinOrder);
     for (let index = 0; index < view.maxPlayers; index += 1) {
       const member = sortedMembers[index];
+      const canKick = Boolean(member && view.isHost && view.phase === 'waiting' && !member.isLocal);
       const item = createNode(
         this.doc,
         'li',
-        `online-member${member?.isLocal ? ' is-local' : ''}${member && !member.connected ? ' is-disconnected' : ''}${member ? '' : ' is-empty'}`,
+        `online-member${member?.isLocal ? ' is-local' : ''}${member && !member.connected ? ' is-disconnected' : ''}${member ? '' : ' is-empty'}${canKick ? ' can-kick' : ''}`,
         memberList,
       );
       createNode(this.doc, 'span', 'online-member-slot', item, String(index + 1).padStart(2, '0'));
@@ -1416,6 +1468,15 @@ export class OnlineScreens {
             : member.ready ? copy.ready : copy.notReady,
       );
       ready.title = member.connected ? '' : copy.reconnectingHint;
+      if (canKick) {
+        const kick = createNode(this.doc, 'button', 'online-member-kick', item, '\u00d7');
+        kick.type = 'button';
+        kick.dataset.action = 'kick-player';
+        kick.dataset.participantId = member.participantId;
+        kick.disabled = this._busy;
+        kick.setAttribute('aria-label', copy.kickPlayer.replace('{name}', member.displayName));
+        kick.title = copy.kickPlayer.replace('{name}', member.displayName);
+      }
     }
 
     for (const button of root.querySelectorAll('[data-character-id]')) {
@@ -1432,10 +1493,13 @@ export class OnlineScreens {
 
     const trackSelect = root.querySelector('[data-room-setting="trackId"]');
     const difficultySelect = root.querySelector('[data-room-setting="difficulty"]');
+    const autoFillAi = root.querySelector('[data-room-setting="autoFillAi"]');
     trackSelect.value = view.trackId;
     difficultySelect.value = view.difficulty;
+    autoFillAi.checked = view.autoFillAi;
     trackSelect.disabled = this._busy || !view.isHost || !view.canManageRoom;
     difficultySelect.disabled = this._busy || !view.isHost || !view.canManageRoom;
+    autoFillAi.disabled = this._busy || !view.isHost || !view.canManageRoom;
     root.querySelector('[data-host-note]').textContent = view.isHost
       ? copy.hostControls
       : copy.hostOnly;

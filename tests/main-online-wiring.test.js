@@ -75,6 +75,14 @@ test('Room reconnects use a blocking overlay and defer Lobby navigation until co
   );
 });
 
+test('kicked players return to the Lobby and receive an information alert', () => {
+  assert.match(
+    source,
+    /onlineClient\.on\('kicked',[\s\S]*showOnlineLobby\([\s\S]*onlineScreens\.showAlert\([\s\S]*kickedTitle/,
+  );
+  assert.match(source, /onKickPlayer\(\{ participantId \}\)[\s\S]*onlineClient\.kickPlayer\(participantId\)/);
+});
+
 test('title telemetry keeps the Lobby transport alive without navigating on background updates', () => {
   assert.match(source, /onBackToTitle\(\) \{\s*clearOnlineRoomUrl\(\);\s*goToTitle\(\);\s*\}/);
   assert.doesNotMatch(source, /onBackToTitle\(\)[\s\S]{0,120}onlineClient\.disconnect\(\)/);

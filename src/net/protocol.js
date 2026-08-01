@@ -18,6 +18,7 @@ export const CLIENT_MESSAGE_TYPES = Object.freeze({
   SELECT_CHARACTER: 'select_character',
   SET_ROOM: 'set_room',
   SET_READY: 'set_ready',
+  KICK_PLAYER: 'kick_player',
   START_RACE: 'start_race',
   RACE_LOADED: 'race_loaded',
   INPUT: 'input',
@@ -30,6 +31,7 @@ export const SERVER_MESSAGE_TYPES = Object.freeze({
   WELCOME: 'welcome',
   LOBBY_STATE: 'lobby_state',
   ROOM_STATE: 'room_state',
+  KICKED: 'kicked',
   PREPARE_RACE: 'prepare_race',
   SNAPSHOT: 'snapshot',
   RACE_EVENTS: 'race_events',
@@ -281,17 +283,29 @@ export function validateClientMessage(message) {
       return { ok: true, value: { ...base, characterId: message.characterId } };
 
     case CLIENT_MESSAGE_TYPES.SET_ROOM: {
-      if (message.trackId === undefined && message.difficulty === undefined) {
-        return fail(ERROR_CODES.INVALID_SETTING, 'A track or difficulty is required.');
+      if (message.trackId === undefined
+        && message.difficulty === undefined
+        && message.autoFillAi === undefined) {
+        return fail(ERROR_CODES.INVALID_SETTING, 'A room setting is required.');
       }
-      if (!optionalId(message.trackId) || !optionalId(message.difficulty)) {
+      if (!optionalId(message.trackId)
+        || !optionalId(message.difficulty)
+        || (message.autoFillAi !== undefined && typeof message.autoFillAi !== 'boolean')) {
         return fail(ERROR_CODES.INVALID_SETTING, 'Invalid room setting.');
       }
       const value = { ...base };
       if (message.trackId !== undefined) value.trackId = message.trackId;
       if (message.difficulty !== undefined) value.difficulty = message.difficulty;
+      if (message.autoFillAi !== undefined) value.autoFillAi = message.autoFillAi;
       return { ok: true, value };
     }
+
+    case CLIENT_MESSAGE_TYPES.KICK_PLAYER:
+      if (typeof message.participantId !== 'string'
+        || !OPAQUE_ID_PATTERN.test(message.participantId)) {
+        return fail(ERROR_CODES.INVALID_MESSAGE, 'A valid participant id is required.');
+      }
+      return { ok: true, value: { ...base, participantId: message.participantId } };
 
     case CLIENT_MESSAGE_TYPES.SET_READY:
       if (typeof message.ready !== 'boolean') {

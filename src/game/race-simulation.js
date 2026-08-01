@@ -1,6 +1,6 @@
 // RaceSimulation: authoritative, presentation-agnostic simulation for one race.
 //
-// A roster supplies the eight stable participant identities and their current
+// A roster supplies 2-8 stable participant identities and their current
 // controller ownership. Every kart has a pre-created independent AiDriver, so a
 // human seat can switch to takeover AI (and back) without rebuilding the race.
 // Human inputs are keyed by kart index and pass through the same physics and
@@ -55,8 +55,10 @@ function resolveDifficulty(difficulty) {
 }
 
 function normalizeRoster(roster) {
-  if (!Array.isArray(roster) || roster.length !== RACE.totalKarts) {
-    throw new RangeError(`RaceSimulation roster must contain exactly ${RACE.totalKarts} entries`);
+  if (!Array.isArray(roster)
+    || roster.length < 2
+    || roster.length > RACE.totalKarts) {
+    throw new RangeError(`RaceSimulation roster must contain 2 to ${RACE.totalKarts} entries`);
   }
 
   const participantIds = new Set();
@@ -99,7 +101,7 @@ function normalizeRoster(roster) {
 }
 
 /**
- * Authoritative race simulation for a complete eight-kart roster.
+ * Authoritative race simulation for a 2-8 kart roster.
  *
  * The supplied roster order is the authoritative grid order. Room/server code
  * can use shuffleRosterForGrid() before construction when it needs a seeded
