@@ -296,6 +296,7 @@ export function buildRoomView(roomState = {}, localParticipantId = '') {
 
   const localMember = members.find((member) => member.isLocal) || null;
   const onlineMembers = members.filter((member) => member.connected);
+  const reconnectingMembers = members.filter((member) => !member.connected);
   const occupiedCharacterIds = members.map((member) => member.characterId).filter(Boolean);
   const everyoneOnline = members.length > 0 && onlineMembers.length === members.length;
   const everyoneReady = everyoneOnline && members.every((member) => member.ready);
@@ -322,6 +323,8 @@ export function buildRoomView(roomState = {}, localParticipantId = '') {
     members,
     localMember,
     onlineCount: onlineMembers.length,
+    reconnectingMembers,
+    reconnectingCount: reconnectingMembers.length,
     everyoneReady,
     isHost,
     canManageRoom,
@@ -330,6 +333,23 @@ export function buildRoomView(roomState = {}, localParticipantId = '') {
     trackId: String(firstDefined(settings.trackId, roomState.trackId, TRACKS[0]?.id, '')),
     difficulty: String(firstDefined(settings.difficulty, roomState.difficulty, 'normal')),
   };
+}
+
+export function roomStatusMessage(view, copy = UI_COPY.online.room) {
+  if (view.phase !== 'waiting') return copy.phase[view.phase] || copy.loading;
+  if (view.reconnectingCount === 1) {
+    return copy.waitingForReconnect.replace('{name}', view.reconnectingMembers[0].displayName);
+  }
+  if (view.reconnectingCount > 1) {
+    return copy.waitingForReconnectCount.replace('{count}', String(view.reconnectingCount));
+  }
+  if (view.onlineCount < 2) return copy.waitingForRacer;
+  if (!view.everyoneReady) {
+    return copy.readyCount
+      .replace('{ready}', String(view.members.filter((member) => member.ready && member.connected).length))
+      .replace('{total}', String(view.onlineCount));
+  }
+  return view.isHost ? copy.readyToStart : copy.waitingForHost;
 }
 
 /** Normalize a race_results payload for the results table. */
@@ -393,6 +413,7 @@ export class OnlineScreens {
     this._activeDialog = null;
     this._activeAlert = null;
     this._activeMenu = null;
+    this._roomReconnectFocus = null;
     this._pendingAction = null;
     this._toastTimer = null;
     this._sharedUi = null;
@@ -469,7 +490,7 @@ export class OnlineScreens {
       toast: host.querySelector('[data-online-toast]'),
       alert: host.querySelector('[data-online-alert]'),
     };
-    this._listen(host.querySelector('[data-action="dismiss-alert"]'), 'click', () => this.dismissAlert());
+    this._listen(host.querySelector('[data-action="dismiss-alert"]'), 'click', () => this.confirmAlert());
     this._listen(this._sharedUi.alert, 'keydown', (event) => this._handleAlertKeydown(event));
     this._listen(this.doc, 'pointerdown', (event) => {
       if (!this._activeMenu || this._activeMenu.node.contains(event.target)) return;
@@ -637,6 +658,8 @@ export class OnlineScreens {
   showAlert(message, {
     title = UI_COPY.online.alerts.genericTitle,
     restoreFocus = this.doc.activeElement,
+    buttonLabel = UI_COPY.online.alerts.dismiss,
+    onConfirm = null,
   } = {}) {
     const alert = this._sharedUi?.alert;
     if (!alert) return;
@@ -648,11 +671,13 @@ export class OnlineScreens {
     }
     alert.querySelector('[data-alert-title]').textContent = title;
     alert.querySelector('[data-alert-message]').textContent = String(message || UI_COPY.online.errors.generic);
+    alert.querySelector('[data-action="dismiss-alert"]').textContent = String(buttonLabel);
     alert.hidden = false;
     this._activeAlert = {
       node: alert,
       restoreFocus: previous,
       suspendedDialog,
+      onConfirm: typeof onConfirm === 'function' ? onConfirm : null,
     };
     alert.querySelector('[data-action="dismiss-alert"]')?.focus();
   }
@@ -665,6 +690,13 @@ export class OnlineScreens {
     suspendedDialog?.removeAttribute('inert');
     suspendedDialog?.removeAttribute('aria-hidden');
     if (restoreFocus && previous?.isConnected) previous.focus();
+  }
+
+  confirmAlert() {
+    if (!this._activeAlert) return;
+    const { onConfirm } = this._activeAlert;
+    this.dismissAlert();
+    onConfirm?.();
   }
 
   showToast(message, durationMs = 2000) {
@@ -688,7 +720,7 @@ export class OnlineScreens {
     if (!this._activeAlert) return;
     if (event.key === 'Escape') {
       event.preventDefault();
-      this.dismissAlert();
+      this.confirmAlert();
       return;
     }
     this._trapFocus(event, this._activeAlert.node);
@@ -900,7 +932,7 @@ export class OnlineScreens {
     if (!root) return;
     const copy = UI_COPY.online.room;
     root.innerHTML = `
-      <div class="online-panel online-room-panel">
+      <div class="online-panel online-room-panel" data-room-content>
         <header class="online-room-header">
           <div class="online-room-heading">
             <p class="online-eyebrow">${copy.eyebrow}</p>
@@ -944,6 +976,14 @@ export class OnlineScreens {
           <button type="button" class="online-action online-action-secondary" data-action="ready">${copy.readyUp}</button>
           <button type="button" class="online-action online-action-primary" data-action="start">${copy.start}</button>
         </footer>
+      </div>
+      <div class="online-room-reconnect-backdrop" data-room-reconnect hidden>
+        <section class="online-room-reconnect" role="status" aria-live="assertive"
+          aria-busy="true" tabindex="-1">
+          <span class="online-room-reconnect-spinner" aria-hidden="true"></span>
+          <h3>${copy.reconnecting}</h3>
+          <p>${copy.restoringSession}</p>
+        </section>
       </div>`;
 
     this._listen(root, 'keydown', (event) => this._handleScreenKeydown(event));
@@ -1032,6 +1072,12 @@ export class OnlineScreens {
 
   _handleScreenKeydown(event) {
     event.stopPropagation();
+    const reconnectBackdrop = this.roots.room?.querySelector('[data-room-reconnect]');
+    if (reconnectBackdrop && !reconnectBackdrop.hidden) {
+      if (event.key === 'Tab' || event.key === 'Escape') event.preventDefault();
+      reconnectBackdrop.querySelector('.online-room-reconnect')?.focus({ preventScroll: true });
+      return;
+    }
     if (this._activeMenu && event.key === 'Escape') {
       event.preventDefault();
       this.closeMenu();
@@ -1347,6 +1393,33 @@ export class OnlineScreens {
     return this.updateRoom(roomState, context);
   }
 
+  setRoomReconnecting(reconnecting, { restoreFocus = true } = {}) {
+    const root = this.roots.room;
+    const content = root?.querySelector('[data-room-content]');
+    const backdrop = root?.querySelector('[data-room-reconnect]');
+    const panel = backdrop?.querySelector('.online-room-reconnect');
+    if (!root || !content || !backdrop || !panel) return false;
+
+    const next = Boolean(reconnecting);
+    if (next === !backdrop.hidden) return false;
+    if (next) {
+      this.closeMenu(false);
+      this._roomReconnectFocus = this.doc.activeElement;
+      backdrop.hidden = false;
+      panel.focus({ preventScroll: true });
+      content.setAttribute('inert', '');
+      content.setAttribute('aria-hidden', 'true');
+    } else {
+      content.removeAttribute('inert');
+      content.removeAttribute('aria-hidden');
+      backdrop.hidden = true;
+      const previous = this._roomReconnectFocus;
+      this._roomReconnectFocus = null;
+      if (restoreFocus && this._screen === 'room' && previous?.isConnected) previous.focus();
+    }
+    return true;
+  }
+
   updateRoom(roomState = this._roomState, context = {}) {
     this._roomState = roomState || {};
     if (context.localParticipantId !== undefined) {
@@ -1401,15 +1474,15 @@ export class OnlineScreens {
       const ready = createNode(
         this.doc,
         'span',
-        `online-ready-chip${member.ready ? ' is-ready' : ''}${inGame ? ' is-in-game' : ''}`,
+        `online-ready-chip${member.connected && member.ready ? ' is-ready' : ''}${member.connected && inGame ? ' is-in-game' : ''}${!member.connected ? ' is-reconnecting' : ''}`,
         badges,
         !member.connected
-          ? copy.offline
+          ? copy.reconnecting
           : inGame
             ? copy.inGame
             : member.ready ? copy.ready : copy.notReady,
       );
-      ready.title = member.connected ? '' : copy.offline;
+      ready.title = member.connected ? '' : copy.reconnectingHint;
     }
 
     for (const button of root.querySelectorAll('[data-character-id]')) {
@@ -1446,15 +1519,7 @@ export class OnlineScreens {
     start.disabled = this._busy || !view.canStart;
     root.querySelector('[data-action="leave"]').disabled = this._busy;
 
-    const status = view.phase !== 'waiting'
-      ? copy.phase[view.phase] || copy.loading
-      : view.onlineCount < 2
-        ? copy.waitingForRacer
-        : !view.everyoneReady
-          ? copy.readyCount
-            .replace('{ready}', String(view.members.filter((member) => member.ready && member.connected).length))
-            .replace('{total}', String(view.onlineCount))
-          : view.isHost ? copy.readyToStart : copy.waitingForHost;
+    const status = roomStatusMessage(view, copy);
     root.querySelector('[data-room-status]').textContent = String(context.status ?? status);
     if (context.error) this.presentError(context.error, context.errorContext);
     return view;
@@ -1582,6 +1647,7 @@ export class OnlineScreens {
     this.closeMenu(false);
     this._closeDialog(false);
     this.dismissAlert(false);
+    this.setRoomReconnecting(false, { restoreFocus: false });
     if (this._toastTimer) clearTimeout(this._toastTimer);
     this._toastTimer = null;
     if (this._sharedUi?.toast) {

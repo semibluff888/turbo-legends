@@ -34,7 +34,37 @@ test('main subscribes to the room, race, result and reconnect event stream', () 
   assert.match(source, /onlineScreens\.updateResults\(message,/);
   assert.match(source, /onlineScreens\.activeScreen === 'lobby'[\s\S]*onlineScreens\.updateLobby/);
   assert.match(source, /onlineScreens\.activeScreen === 'room'[\s\S]*onlineScreens\.updateRoom/);
-  assert.match(source, /if \(isOnlineConnectionError\(message\)\) \{[\s\S]*networkStatus\.setConnectionState\('error'\);/);
+  assert.match(
+    source,
+    /const connectionError = isOnlineConnectionError\(message\);[\s\S]*if \(connectionError\) \{[\s\S]*networkStatus\.setConnectionState\('error'\);/,
+  );
+});
+
+test('Room reconnects use a blocking overlay and defer Lobby navigation until confirmation', () => {
+  assert.match(
+    source,
+    /state === 'disconnected' \|\| state === 'reconnecting'\) beginLocalRoomReconnect\(\)/,
+  );
+  assert.match(
+    source,
+    /onlineClient\.on\('room_state',[\s\S]*finishLocalRoomReconnect\(\);[\s\S]*showOnlineRoom\(/,
+  );
+  assert.match(
+    source,
+    /if \(connectionError && beginLocalRoomReconnect\(\)\) return;/,
+  );
+  assert.match(
+    source,
+    /function presentRoomReconnectFailure[\s\S]*buttonLabel: UI_COPY\.online\.alerts\.returnLobby[\s\S]*onConfirm: returnToLobbyAfterReconnectFailure/,
+  );
+  assert.match(
+    source,
+    /function returnToLobbyAfterReconnectFailure[\s\S]*openOnlineLobby\(\{ tryResume: false \}\)/,
+  );
+  assert.match(
+    onlineScreensSource,
+    /showAlert\(message,[\s\S]*onConfirm = null[\s\S]*confirmAlert\(\)/,
+  );
 });
 
 test('title telemetry keeps the Lobby transport alive without navigating on background updates', () => {

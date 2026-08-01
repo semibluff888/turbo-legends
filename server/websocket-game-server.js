@@ -22,6 +22,12 @@ const AUTH_ACTIONS = new Set([
   CLIENT_MESSAGE_TYPES.RESUME,
 ]);
 
+// Room presence needs to react well inside the 30-second resume window. With
+// the two-pass alive check below, this detects a silent connection loss in
+// roughly 3-6 seconds instead of allowing false/true room states to bunch up
+// around the eventual resume attempt.
+export const ROOM_PRESENCE_HEARTBEAT_INTERVAL_MS = 3_000;
+
 function connectionId() {
   return randomBytes(9).toString('base64url');
 }
@@ -83,7 +89,7 @@ export function attachGameWebSocket(httpServer, {
   path = '/ws',
   allowedOrigins = [],
   logger = console,
-  heartbeatIntervalMs = 15_000,
+  heartbeatIntervalMs = ROOM_PRESENCE_HEARTBEAT_INTERVAL_MS,
   authAttemptLimit = 20,
   authAttemptWindowMs = 60_000,
   messageRatePerSecond = MAX_CLIENT_MESSAGES_PER_SECOND,

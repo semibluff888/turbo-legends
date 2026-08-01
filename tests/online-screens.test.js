@@ -15,6 +15,7 @@ import {
   normalizeRoomName,
   OnlineScreens,
   roomCodeFromSearch,
+  roomStatusMessage,
 } from '../src/ui/online-screens.js';
 
 const onlineScreensSource = readFileSync(new URL('../src/ui/online-screens.js', import.meta.url), 'utf8');
@@ -192,8 +193,121 @@ test('room start remains unavailable while a reserved member is offline', () => 
 
   assert.equal(view.playerCount, 2);
   assert.equal(view.onlineCount, 1);
+  assert.equal(view.reconnectingCount, 1);
+  assert.deepEqual(view.reconnectingMembers.map((member) => member.participantId), ['guest']);
   assert.equal(view.everyoneReady, false);
   assert.equal(view.canStart, false);
+  assert.equal(roomStatusMessage(view), 'Waiting for Same to reconnect.');
+});
+
+test('Room status summarizes multiple reconnecting racers before readiness', () => {
+  const view = buildRoomView({
+    roomCode: 'QRS789',
+    hostParticipantId: 'host',
+    members: [
+      { participantId: 'host', displayName: 'Host', ready: true, connected: true },
+      { participantId: 'guest-1', displayName: 'Nova', ready: true, connected: false },
+      { participantId: 'guest-2', displayName: 'Pip', ready: false, connected: false },
+    ],
+  }, 'host');
+
+  assert.equal(view.reconnectingCount, 2);
+  assert.equal(roomStatusMessage(view), 'Waiting for 2 racers to reconnect.');
+});
+
+test('Room reconnect overlay is idempotent, blocks content, and restores focus', () => {
+  const attributes = new Map();
+  const previous = { isConnected: true, focusCalls: 0, focus() { this.focusCalls += 1; } };
+  const content = {
+    setAttribute(name, value) { attributes.set(name, value); },
+    removeAttribute(name) { attributes.delete(name); },
+  };
+  const panel = { focusCalls: 0, focus() { this.focusCalls += 1; } };
+  const backdrop = {
+    hidden: true,
+    querySelector(selector) { return selector === '.online-room-reconnect' ? panel : null; },
+  };
+  const root = {
+    querySelector(selector) {
+      if (selector === '[data-room-content]') return content;
+      if (selector === '[data-room-reconnect]') return backdrop;
+      return null;
+    },
+  };
+  const screen = Object.assign(Object.create(OnlineScreens.prototype), {
+    roots: { room: root },
+    doc: { activeElement: previous },
+    _screen: 'room',
+    _roomReconnectFocus: null,
+    closeMenu() {},
+  });
+
+  assert.equal(screen.setRoomReconnecting(true), true);
+  assert.equal(screen.setRoomReconnecting(true), false);
+  assert.equal(backdrop.hidden, false);
+  assert.equal(attributes.has('inert'), true);
+  assert.equal(attributes.get('aria-hidden'), 'true');
+  assert.equal(panel.focusCalls, 1);
+
+  assert.equal(screen.setRoomReconnecting(false), true);
+  assert.equal(backdrop.hidden, true);
+  assert.equal(attributes.has('inert'), false);
+  assert.equal(attributes.has('aria-hidden'), false);
+  assert.equal(previous.focusCalls, 1);
+});
+
+test('Room reconnect overlay keeps keyboard focus inside the blocking state', () => {
+  const panel = { focusCalls: 0, focus() { this.focusCalls += 1; } };
+  const backdrop = {
+    hidden: false,
+    querySelector(selector) { return selector === '.online-room-reconnect' ? panel : null; },
+  };
+  const screen = Object.assign(Object.create(OnlineScreens.prototype), {
+    roots: {
+      room: {
+        querySelector(selector) { return selector === '[data-room-reconnect]' ? backdrop : null; },
+      },
+    },
+    _activeMenu: null,
+    _activeDialog: null,
+  });
+  const event = {
+    key: 'Tab',
+    prevented: false,
+    stopped: false,
+    preventDefault() { this.prevented = true; },
+    stopPropagation() { this.stopped = true; },
+  };
+
+  screen._handleScreenKeydown(event);
+  assert.equal(event.prevented, true);
+  assert.equal(event.stopped, true);
+  assert.equal(panel.focusCalls, 1);
+});
+
+test('alert confirmation runs its action once while programmatic dismissal stays passive', () => {
+  let confirmations = 0;
+  const screen = Object.assign(Object.create(OnlineScreens.prototype), {
+    _activeAlert: {
+      node: { hidden: false },
+      restoreFocus: null,
+      suspendedDialog: null,
+      onConfirm() { confirmations += 1; },
+    },
+  });
+
+  screen.dismissAlert(false);
+  assert.equal(confirmations, 0);
+
+  screen._activeAlert = {
+    node: { hidden: false },
+    restoreFocus: null,
+    suspendedDialog: null,
+    onConfirm() { confirmations += 1; },
+  };
+  screen.confirmAlert();
+  screen.confirmAlert();
+  assert.equal(confirmations, 1);
 });
 
 test('authoritative results use participant ids and do not invent times', () => {
@@ -228,6 +342,11 @@ test('Lobby and Room replace footer errors with field feedback, menus, and persi
   assert.match(lobbySource, /data-field-error="join-password"/);
   assert.match(lobbySource, /data-room-count/);
   assert.match(roomSource, /data-room-status/);
+  assert.match(roomSource, /data-room-reconnect/);
+  assert.match(roomSource, /copy\.reconnecting/);
+  assert.match(onlineScreensSource, /member\.connected && member\.ready/);
+  assert.match(onlineScreensSource, /is-reconnecting/);
+  assert.match(onlineScreensSource, /waitingForReconnect/);
   assert.match(lobbySource, /_wirePageMenu\(root, 'lobby'\)/);
   assert.match(roomSource, /_wirePageMenu\(root, 'room'\)/);
 });

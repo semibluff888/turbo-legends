@@ -5,6 +5,7 @@ import { request } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 import { createGameServer } from '../server.mjs';
+import { ROOM_PRESENCE_HEARTBEAT_INTERVAL_MS } from '../server/websocket-game-server.js';
 
 const PROJECT_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const wsModule = await import('ws').catch(() => null);
@@ -25,8 +26,8 @@ function readJson(port, path) {
   });
 }
 
-async function connectClient(WebSocket, url, origin) {
-  const socket = new WebSocket(url, { headers: { Origin: origin } });
+async function connectClient(WebSocket, url, origin, options = {}) {
+  const socket = new WebSocket(url, { ...options, headers: { Origin: origin } });
   const messages = [];
   const waiters = [];
   socket.on('message', data => {
@@ -67,6 +68,86 @@ async function connectClient(WebSocket, url, origin) {
     },
   };
 }
+
+test('Room presence heartbeat is shorter than the reconnect window', () => {
+  assert.equal(ROOM_PRESENCE_HEARTBEAT_INTERVAL_MS, 3_000);
+});
+
+test('a silent Room connection is broadcast as reconnecting before it resumes', {
+  skip: wsModule ? false : 'ws dependency is not installed in this workspace',
+}, async () => {
+  const { WebSocket } = wsModule;
+  const logger = { info() {}, warn() {}, error() {} };
+  const server = await createGameServer({
+    root: PROJECT_ROOT,
+    logger,
+    webSocketOptions: { heartbeatIntervalMs: 20 },
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const port = server.address().port;
+  const origin = `http://127.0.0.1:${port}`;
+  const url = `ws://127.0.0.1:${port}/ws`;
+  let host;
+  let guest;
+  let resumedGuest;
+  try {
+    host = await connectClient(WebSocket, url, origin);
+    host.send({
+      type: 'create_room',
+      displayName: 'Host',
+      roomName: 'Presence Test',
+      roomType: 'public',
+      maxPlayers: 4,
+      characterId: 'pip',
+    });
+    const hostWelcome = await host.next(message => message.type === 'welcome' && message.session);
+    await host.next(message => message.type === 'room_state' && message.members.length === 1);
+
+    guest = await connectClient(WebSocket, url, origin, { autoPong: false });
+    guest.send({
+      type: 'join_room',
+      roomCode: hostWelcome.roomCode,
+      displayName: 'Guest',
+      characterId: 'nova',
+    });
+    const guestWelcome = await guest.next(message => message.type === 'welcome' && message.session);
+    await host.next(message => message.type === 'room_state' && message.members.length === 2);
+
+    const disconnectMark = host.mark();
+    const disconnectedRoom = await host.next(message => (
+      message.type === 'room_state'
+      && message.members.some(member => (
+        member.participantId === guestWelcome.participantId && !member.connected
+      ))
+    ), disconnectMark);
+    assert.equal(disconnectedRoom.members.length, 2);
+
+    const resumeMark = host.mark();
+    resumedGuest = await connectClient(WebSocket, url, origin);
+    resumedGuest.send({
+      type: 'resume',
+      roomCode: hostWelcome.roomCode,
+      participantId: guestWelcome.participantId,
+      resumeToken: guestWelcome.resumeToken,
+    });
+    await resumedGuest.next(message => message.type === 'welcome' && message.session?.resumed);
+    const reconnectedRoom = await host.next(message => (
+      message.type === 'room_state'
+      && message.members.some(member => (
+        member.participantId === guestWelcome.participantId && member.connected
+      ))
+    ), resumeMark);
+    assert.equal(reconnectedRoom.members.length, 2);
+  } finally {
+    await resumedGuest?.close();
+    await guest?.close();
+    await host?.close();
+    await server.shutdown();
+  }
+});
 
 class QuickRaceSimulation {
   constructor({ roster, laps }) {
@@ -219,6 +300,7 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
     );
     assert.equal(oneClientStats.onlineCount, 1);
 
+    const resumeMark = host.mark();
     resumedGuest = await connectClient(WebSocket, url, origin);
     resumedGuest.send({
       type: 'resume',
@@ -231,6 +313,13 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
     assert.equal(resumedWelcome.resumed, true);
     assert.equal(resumedRoom.self.participantId, guestWelcome.participantId);
     assert.equal(resumedRoom.self.connected, true);
+    const reconnectedRoom = await host.next(message => (
+      message.type === 'room_state'
+      && message.members.some(member => (
+        member.participantId === guestWelcome.participantId && member.connected
+      ))
+    ), resumeMark);
+    assert.equal(reconnectedRoom.members.length, 2);
 
     const leaveMark = resumedGuest.mark();
     resumedGuest.send({ type: 'leave_room' });

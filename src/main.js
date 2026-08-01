@@ -32,6 +32,7 @@ import { Hud } from './ui/hud.js';
 import { NetworkStatus } from './ui/network-status.js';
 import { Screens } from './ui/screens.js';
 import { buildInviteUrl, buildLobbyUrl, OnlineScreens } from './ui/online-screens.js';
+import { UI_COPY } from './ui/copy.js';
 import {
   loadOnlineDisplayName,
   saveOnlineDisplayName,
@@ -80,6 +81,8 @@ let pendingOnlineError = null;
 let onlineDisplayName = '';
 let handledInviteRoomCode = '';
 let pendingInviteJoinCode = '';
+let localRoomReconnecting = false;
+let reconnectFailurePending = false;
 
 const playerControls = makeControls();
 
@@ -421,10 +424,59 @@ function onlineHostId(roomState = onlineRoomState) {
     || null;
 }
 
+function hasRoomReconnectUiContext() {
+  return mode === 'online-room'
+    || ((mode === 'settings' || mode === 'help') && panelReturn === 'online-room');
+}
+
+function beginLocalRoomReconnect() {
+  if (reconnectFailurePending
+    || onlineClient.scope !== 'room'
+    || !hasRoomReconnectUiContext()) return false;
+  localRoomReconnecting = true;
+  onlineScreens.setRoomReconnecting(true);
+  return true;
+}
+
+function finishLocalRoomReconnect({ restoreFocus = true } = {}) {
+  if (!localRoomReconnecting) return false;
+  localRoomReconnecting = false;
+  onlineScreens.setRoomReconnecting(false, { restoreFocus });
+  return true;
+}
+
+function returnToLobbyAfterReconnectFailure() {
+  if (!reconnectFailurePending) return;
+  reconnectFailurePending = false;
+  openOnlineLobby({ tryResume: false });
+}
+
+function presentRoomReconnectFailure(event) {
+  finishLocalRoomReconnect({ restoreFocus: false });
+  reconnectFailurePending = true;
+  pendingOnlineError = null;
+  clearOnlineRoomUrl();
+  onlineRoomState = null;
+  onlineScreens.setBusy(false);
+  buildAttract();
+  onlineScreens.showAlert(
+    onlineErrorMessage(event, event?.code === 'session_replaced'
+      ? 'This room session was resumed in another window.'
+      : 'The reconnect window expired. Join the room again.'),
+    {
+      title: UI_COPY.online.alerts.reconnectExpiredTitle,
+      buttonLabel: UI_COPY.online.alerts.returnLobby,
+      restoreFocus: null,
+      onConfirm: returnToLobbyAfterReconnectFailure,
+    },
+  );
+}
+
 function wireOnlineClient() {
   onlineClient.on('connection', ({ state }) => {
     const viewState = state === 'idle' ? 'disconnected' : state;
     networkStatus.setConnectionState(viewState);
+    if (state === 'disconnected' || state === 'reconnecting') beginLocalRoomReconnect();
   });
   onlineClient.on('telemetry', (metrics) => networkStatus.setMetrics(metrics));
   onlineClient.on('lobby_state', (message) => {
@@ -438,6 +490,7 @@ function wireOnlineClient() {
     }
   });
   onlineClient.on('room_state', (message) => {
+    finishLocalRoomReconnect();
     showOnlineRoom(message, {
       preservePanel: (mode === 'settings' || mode === 'help') && panelReturn === 'online-room',
     });
@@ -462,13 +515,25 @@ function wireOnlineClient() {
   });
   onlineClient.on('error', (message) => {
     onlineScreens.setBusy(false);
-    if (isOnlineConnectionError(message)) {
+    const connectionError = isOnlineConnectionError(message);
+    if (connectionError) {
       networkStatus.setConnectionState('error');
     }
+    if (reconnectFailurePending) return;
+    if (connectionError && beginLocalRoomReconnect()) return;
+    if (localRoomReconnecting && [
+      ERROR_CODES.SESSION_NOT_FOUND,
+      ERROR_CODES.SESSION_EXPIRED,
+      'session_replaced',
+    ].includes(String(message?.code || ''))) return;
     if (pendingInviteJoinCode) clearOnlineRoomUrl();
-    reportOnlineError(message, { connectionError: isOnlineConnectionError(message) });
+    reportOnlineError(message, { connectionError });
   });
   onlineClient.on('reconnect_expired', (event) => {
+    if (hasRoomReconnectUiContext() || localRoomReconnecting) {
+      presentRoomReconnectFailure(event);
+      return;
+    }
     pendingOnlineError = null;
     clearOnlineRoomUrl();
     if (race?.session.kind === 'online') endRace();

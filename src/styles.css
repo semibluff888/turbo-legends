@@ -1434,7 +1434,8 @@ kbd {
   background: rgba(255, 255, 255, 0.045);
 }
 .online-member.is-local { border-color: rgba(255, 210, 63, 0.58); background: rgba(255, 210, 63, 0.08); }
-.online-member.is-disconnected { opacity: 0.55; }
+.online-member.is-disconnected .online-member-slot,
+.online-member.is-disconnected .online-member-identity { opacity: 0.55; }
 .online-member.is-empty { color: rgba(255, 255, 255, 0.28); border-style: dashed; }
 .online-member-slot { color: rgba(255, 255, 255, 0.42); font-size: 11px; font-weight: 900; text-align: center; }
 .online-member-identity { min-width: 0; display: flex; flex-direction: column; }
@@ -1458,6 +1459,11 @@ kbd {
 .online-ready-chip { margin: 0; color: rgba(255, 255, 255, 0.52); background: rgba(255, 255, 255, 0.08); }
 .online-ready-chip.is-ready { color: #122b22; background: #77f0be; }
 .online-ready-chip.is-in-game { color: #071e31; background: #7fe3ff; }
+.online-ready-chip.is-reconnecting {
+  color: #352006;
+  background: #ffc45c;
+  box-shadow: 0 0 14px rgba(255, 174, 66, 0.24);
+}
 
 .online-character-grid { display: grid; grid-template-columns: repeat(4, minmax(70px, 1fr)); gap: 8px; }
 .online-character-option {
@@ -1833,6 +1839,43 @@ kbd {
 .online-setup-card h3 { margin-bottom: 0; }
 .online-room-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .online-room-actions .online-action { min-width: 160px; }
+
+.online-room-reconnect-backdrop {
+  position: absolute;
+  z-index: 8;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(5, 3, 18, 0.74);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.online-room-reconnect {
+  width: min(430px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 28px;
+  border: 3px solid rgba(255, 196, 92, 0.62);
+  border-radius: 22px;
+  outline: none;
+  color: #fff5dd;
+  background: rgba(31, 22, 49, 0.97);
+  box-shadow: 0 26px 72px rgba(4, 2, 14, 0.74), 0 0 34px rgba(255, 174, 66, 0.14);
+  text-align: center;
+}
+.online-room-reconnect h3 { font-size: 24px; font-weight: 900; letter-spacing: 0.08em; }
+.online-room-reconnect p { color: rgba(255, 255, 255, 0.72); font-size: 12px; font-weight: 800; }
+.online-room-reconnect-spinner {
+  width: 42px;
+  height: 42px;
+  border: 5px solid rgba(255, 255, 255, 0.16);
+  border-top-color: #ffc45c;
+  border-radius: 50%;
+  animation: reconnect-spin 0.85s linear infinite;
+}
 
 /* Shared online feedback ------------------------------------------------- */
 
@@ -2564,6 +2607,10 @@ body.touch #hud:not([hidden]) #minimap {
 @keyframes status-pop {
   from { transform: translateX(-50%) translateY(-12px) scale(0.92); opacity: 0; }
   to   { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; }
+}
+
+@keyframes reconnect-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ---------------------------------------------------------------------------
