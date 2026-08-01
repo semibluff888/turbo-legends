@@ -286,6 +286,10 @@ waiting → loading → countdown → racing → results → waiting
   window. A successful resume keeps takeover AI active until the first newer
   movement input arrives. An explicit leave during a race abandons the session
   and cannot be resumed; its AI finishes the race.
+- The browser also arms its own 30-second Room reconnect watchdog, so a retry
+  socket stuck while offline still expires locally. During a mounted online race,
+  expiry shows a blocking confirmation before the client destroys the race and
+  returns to the Lobby.
 - Each `room_state` member exposes an additive `presenceState` value:
   `connected`, `reconnecting`, `disconnected`, or `left`. Presence changes use
   the existing event-driven room broadcast and are not repeated in 20 Hz race snapshots.

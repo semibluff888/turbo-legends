@@ -448,6 +448,9 @@ function finishLocalRoomReconnect({ restoreFocus = true } = {}) {
 function returnToLobbyAfterReconnectFailure() {
   if (!reconnectFailurePending) return;
   reconnectFailurePending = false;
+  if (race?.session.kind === 'online') endRace();
+  paused = false;
+  buildAttract();
   openOnlineLobby({ tryResume: false });
 }
 
@@ -455,6 +458,11 @@ function presentRoomReconnectFailure(event) {
   finishLocalRoomReconnect({ restoreFocus: false });
   reconnectFailurePending = true;
   pendingOnlineError = null;
+  if (race?.session.kind === 'online') {
+    paused = true;
+    resetControls(playerControls);
+    audio.setGameplaySfxPaused(true);
+  }
   clearOnlineRoomUrl();
   onlineRoomState = null;
   onlineScreens.setBusy(false);
@@ -530,7 +538,9 @@ function wireOnlineClient() {
     reportOnlineError(message, { connectionError });
   });
   onlineClient.on('reconnect_expired', (event) => {
-    if (hasRoomReconnectUiContext() || localRoomReconnecting) {
+    if (hasRoomReconnectUiContext()
+      || localRoomReconnecting
+      || race?.session.kind === 'online') {
       presentRoomReconnectFailure(event);
       return;
     }

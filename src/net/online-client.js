@@ -86,6 +86,7 @@ export class OnlineClient {
     this._connectionFailureReported = false;
     this._pendingMessages = [];
     this._reconnectTimer = null;
+    this._reconnectExpiryTimer = null;
     this._reconnectAttempt = 0;
     this._reconnectDeadline = 0;
     this._telemetryEnabled = false;
@@ -370,6 +371,7 @@ export class OnlineClient {
         this.scope = 'room';
         this._reconnectAttempt = 0;
         this._reconnectDeadline = 0;
+        this._clearReconnectExpiry();
         this._connectionPurpose = null;
       }
       this.state = 'connected';
@@ -477,11 +479,7 @@ export class OnlineClient {
 
     if (!this._reconnectDeadline) this._reconnectDeadline = this._now() + RECONNECT_WINDOW_MS;
     if (this._now() >= this._reconnectDeadline) {
-      const expired = { roomCode: this.room.code, code: ERROR_CODES.SESSION_EXPIRED };
-      this._clearRoomSession();
-      this.scope = 'lobby';
-      this._emit('reconnect_expired', expired);
-      this._scheduleLobbyReconnect();
+      this._expireRoomReconnect();
       return;
     }
     const delay = this._nextReconnectDelay();
@@ -489,6 +487,7 @@ export class OnlineClient {
       this._reconnectTimer = null;
       this._open(this._resumeMessage(), true);
     }, delay);
+    this._armReconnectExpiry();
   }
 
   _scheduleLobbyReconnect() {
@@ -513,9 +512,39 @@ export class OnlineClient {
     if (this._reconnectTimer != null) this._clearTimeout(this._reconnectTimer);
     this._reconnectTimer = null;
     if (resetAttempts) {
+      this._clearReconnectExpiry();
       this._reconnectAttempt = 0;
       this._reconnectDeadline = 0;
     }
+  }
+
+  _armReconnectExpiry() {
+    if (this._reconnectExpiryTimer != null || !this._reconnectDeadline) return;
+    const delay = Math.max(0, this._reconnectDeadline - this._now());
+    this._reconnectExpiryTimer = this._setTimeout(() => {
+      this._reconnectExpiryTimer = null;
+      if (!this._expireRoomReconnect()) this._armReconnectExpiry();
+    }, delay);
+  }
+
+  _clearReconnectExpiry() {
+    if (this._reconnectExpiryTimer != null) this._clearTimeout(this._reconnectExpiryTimer);
+    this._reconnectExpiryTimer = null;
+  }
+
+  _expireRoomReconnect() {
+    if (!this._reconnectDeadline || this._now() < this._reconnectDeadline
+      || this.scope !== 'room' || !this.room?.code || !this.selfId || !this.resumeToken) {
+      return false;
+    }
+    const expired = { roomCode: this.room.code, code: ERROR_CODES.SESSION_EXPIRED };
+    this._cancelReconnect({ resetAttempts: false });
+    this._closeCurrentSocket('Room reconnect expired');
+    this._clearRoomSession();
+    this.scope = 'lobby';
+    this._emit('reconnect_expired', expired);
+    this._scheduleLobbyReconnect();
+    return true;
   }
 
   _startTelemetryLoop() {
@@ -615,6 +644,8 @@ export class OnlineClient {
   }
 
   _clearRoomSession() {
+    this._clearReconnectExpiry();
+    this._reconnectDeadline = 0;
     this._purgePersistedSessions();
     this.room = null;
     this.selfId = null;

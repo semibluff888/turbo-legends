@@ -500,7 +500,7 @@ test('an anonymous welcome does not hide a later rejected resume', () => {
   assert.deepEqual(socket.sent.at(-1), { v: PROTOCOL_VERSION, type: 'enter_lobby' });
 });
 
-test('the Room reconnect deadline retires credentials and falls back to Lobby', () => {
+test('the local Room reconnect watchdog expires even while a retry socket stays connecting', () => {
   FakeWebSocket.instances.length = 0;
   const storage = new MemoryStorage();
   const timers = [];
@@ -518,16 +518,46 @@ test('the Room reconnect deadline retires credentials and falls back to Lobby', 
   FakeWebSocket.instances[0].open();
   boundWelcome(FakeWebSocket.instances[0]);
   FakeWebSocket.instances[0].close(1006, 'network');
+  assert.equal(timers[0].ms, 250);
+  assert.equal(timers[1].ms, 30_000);
+
   timers[0].fn();
-  FakeWebSocket.instances[1].open();
   now = 31_001;
-  FakeWebSocket.instances[1].close(1006, 'network');
+  timers[1].fn();
 
   assert.equal(storage.getItem(ONLINE_SESSION_STORAGE_KEY), null);
   assert.equal(client.room, null);
   assert.equal(client.scope, 'lobby');
   assert.deepEqual(expired, [{ roomCode: 'ROOM22', code: 'session_expired' }]);
-  assert.equal(timers.length, 2);
+  assert.equal(FakeWebSocket.instances[1].readyState, 3);
+  assert.equal(timers.length, 3);
+});
+
+test('a successful Room resume makes a queued local expiry callback harmless', () => {
+  FakeWebSocket.instances.length = 0;
+  const timers = [];
+  const expired = [];
+  let now = 1_000;
+  const client = makeClient({
+    setTimeoutImpl(fn, ms) { timers.push({ fn, ms }); return timers.length; },
+    clearTimeoutImpl() {},
+    now: () => now,
+  });
+  client.on('reconnect_expired', (event) => expired.push(event));
+
+  client.enterLobby();
+  FakeWebSocket.instances[0].open();
+  boundWelcome(FakeWebSocket.instances[0]);
+  FakeWebSocket.instances[0].close(1006, 'network');
+  timers[0].fn();
+  FakeWebSocket.instances[1].open();
+  boundWelcome(FakeWebSocket.instances[1]);
+
+  now = 31_001;
+  timers[1].fn();
+  assert.deepEqual(expired, []);
+  assert.equal(client.scope, 'room');
+  assert.equal(client.room.code, 'ROOM22');
 });
 
 test('leaveRoom clears credentials, sends leave_room, and keeps the socket open', () => {
@@ -583,8 +613,9 @@ test('leaveRoom cancels a pending Room reconnect and opens a Lobby connection', 
   FakeWebSocket.instances[0].close(1006, 'network');
   client.leaveRoom();
 
-  assert.deepEqual(cleared, [1]);
+  assert.deepEqual(cleared, [1, 2]);
   assert.equal(client._reconnectTimer, null);
+  assert.equal(client._reconnectExpiryTimer, null);
   const lobbySocket = FakeWebSocket.instances[1];
   lobbySocket.open();
   assert.deepEqual(lobbySocket.sent[0], { v: PROTOCOL_VERSION, type: 'enter_lobby' });

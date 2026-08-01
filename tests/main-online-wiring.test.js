@@ -59,7 +59,15 @@ test('Room reconnects use a blocking overlay and defer Lobby navigation until co
   );
   assert.match(
     source,
-    /function returnToLobbyAfterReconnectFailure[\s\S]*openOnlineLobby\(\{ tryResume: false \}\)/,
+    /function returnToLobbyAfterReconnectFailure[\s\S]*if \(race\?\.session\.kind === 'online'\) endRace\(\);[\s\S]*openOnlineLobby\(\{ tryResume: false \}\)/,
+  );
+  assert.match(
+    source,
+    /function presentRoomReconnectFailure[\s\S]*race\?\.session\.kind === 'online'[\s\S]*paused = true;[\s\S]*showAlert/,
+  );
+  assert.match(
+    source,
+    /onlineClient\.on\('reconnect_expired',[\s\S]*race\?\.session\.kind === 'online'[\s\S]*presentRoomReconnectFailure\(event\)/,
   );
   assert.match(
     onlineScreensSource,
