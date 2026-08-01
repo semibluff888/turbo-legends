@@ -116,11 +116,11 @@ export class Screens {
     if (!root) return;
     const menu = UI_COPY.title.items.map((item) => `
       <button class="main-menu-option menu-option main-menu-${item.value}"
-        type="button" data-value="${item.value}">
+        type="button" data-value="${item.value}" title="${item.desc}"
+        aria-label="${item.label}: ${item.desc}">
         <span class="main-menu-icon" aria-hidden="true">${item.icon}</span>
         <span class="main-menu-copy">
           <span class="main-menu-label">${item.label}</span>
-          <span class="main-menu-desc">${item.desc}</span>
         </span>
         ${item.badge ? `<span class="main-menu-badge">${item.badge}</span>` : '<span class="main-menu-arrow">›</span>'}
       </button>`).join('');

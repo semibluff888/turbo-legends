@@ -412,7 +412,6 @@ export class OnlineScreens {
     this._localParticipantId = '';
     this._activeDialog = null;
     this._activeAlert = null;
-    this._activeMenu = null;
     this._roomReconnectFocus = null;
     this._pendingAction = null;
     this._toastTimer = null;
@@ -456,16 +455,12 @@ export class OnlineScreens {
     }
   }
 
-  _menuMarkup() {
-    const copy = UI_COPY.online.menu;
+  _pageActionsMarkup() {
+    const copy = UI_COPY.online.pageActions;
     return `
-      <div class="online-page-menu" data-page-menu>
-        <button type="button" class="online-menu-trigger" data-action="toggle-menu"
-          aria-haspopup="menu" aria-expanded="false">${copy.label}</button>
-        <div class="online-menu-popover" data-menu-popover role="menu" hidden>
-          <button type="button" role="menuitem" data-menu-action="settings">${copy.settings}</button>
-          <button type="button" role="menuitem" data-menu-action="help">${copy.help}</button>
-        </div>
+      <div class="online-page-actions" aria-label="Page actions">
+        <button type="button" class="online-page-action" data-page-action="settings">${copy.settings}</button>
+        <button type="button" class="online-page-action" data-page-action="help">${copy.help}</button>
       </div>`;
   }
 
@@ -492,71 +487,19 @@ export class OnlineScreens {
     };
     this._listen(host.querySelector('[data-action="dismiss-alert"]'), 'click', () => this.confirmAlert());
     this._listen(this._sharedUi.alert, 'keydown', (event) => this._handleAlertKeydown(event));
-    this._listen(this.doc, 'pointerdown', (event) => {
-      if (!this._activeMenu || this._activeMenu.node.contains(event.target)) return;
-      this.closeMenu();
-    });
   }
 
-  _wirePageMenu(root, screen) {
-    const node = root.querySelector('[data-page-menu]');
-    const trigger = node?.querySelector('[data-action="toggle-menu"]');
-    const popover = node?.querySelector('[data-menu-popover]');
-    if (!node || !trigger || !popover) return;
-    this._listen(trigger, 'click', () => {
-      if (this._activeMenu?.node === node) this.closeMenu();
-      else this._openMenu(screen, node, trigger, popover);
-    });
-    this._listen(trigger, 'keydown', (event) => {
-      if (event.key !== 'ArrowDown') return;
-      event.preventDefault();
-      this._openMenu(screen, node, trigger, popover);
-    });
-    this._listen(popover, 'keydown', (event) => {
-      const items = [...popover.querySelectorAll('[role="menuitem"]')];
-      if (!items.length) return;
-      const index = Math.max(0, items.indexOf(this.doc.activeElement));
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        this.closeMenu();
-      } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-        event.preventDefault();
-        const direction = event.key === 'ArrowDown' ? 1 : -1;
-        items[(index + direction + items.length) % items.length].focus();
-      } else if (event.key === 'Home' || event.key === 'End') {
-        event.preventDefault();
-        items[event.key === 'Home' ? 0 : items.length - 1].focus();
-      }
-    });
-    for (const item of popover.querySelectorAll('[data-menu-action]')) {
+  _wirePageActions(root) {
+    for (const item of root.querySelectorAll('[data-page-action]')) {
       this._listen(item, 'click', () => {
-        const action = item.dataset.menuAction;
-        this.closeMenu(false);
-        if (action === 'settings') this._emit('onOpenSettings');
-        else if (action === 'help') this._emit('onOpenHelp');
+        if (item.dataset.pageAction === 'settings') this._emit('onOpenSettings');
+        else if (item.dataset.pageAction === 'help') this._emit('onOpenHelp');
       });
     }
   }
 
-  _openMenu(screen, node, trigger, popover) {
-    this.closeMenu(false);
-    popover.hidden = false;
-    trigger.setAttribute('aria-expanded', 'true');
-    this._activeMenu = { screen, node, trigger, popover };
-    popover.querySelector('[role="menuitem"]')?.focus();
-  }
-
-  closeMenu(restoreFocus = true) {
-    if (!this._activeMenu) return;
-    const { trigger, popover } = this._activeMenu;
-    popover.hidden = true;
-    trigger.setAttribute('aria-expanded', 'false');
-    this._activeMenu = null;
-    if (restoreFocus && trigger.isConnected) trigger.focus();
-  }
-
-  focusMenuTrigger(screen = this._screen) {
-    this.roots[screen]?.querySelector('[data-action="toggle-menu"]')?.focus();
+  focusPageAction(screen = this._screen) {
+    this.roots[screen]?.querySelector('[data-page-action="settings"]')?.focus();
   }
 
   _fieldControl(field) {
@@ -752,11 +695,9 @@ export class OnlineScreens {
         <header class="online-panel-header online-directory-header">
           <button type="button" class="online-back" data-action="back" aria-label="${copy.back}">${copy.back}</button>
           <div class="online-heading-wrap online-heading-wrap-compact">
-            <p class="online-eyebrow">${copy.eyebrow}</p>
             <h2 class="online-heading" data-screen-heading tabindex="-1">${copy.heading}</h2>
-            <p class="online-subtitle">${copy.subtitle}</p>
           </div>
-          ${this._menuMarkup()}
+          ${this._pageActionsMarkup()}
         </header>
 
         <section class="online-lobby-toolbar" aria-label="${copy.playerSetup}">
@@ -774,7 +715,6 @@ export class OnlineScreens {
         <section class="online-room-browser" aria-labelledby="online-room-list-heading">
           <div class="online-room-browser-header">
             <div>
-              <p class="online-eyebrow">${copy.availableRooms}</p>
               <h3 id="online-room-list-heading">${copy.roomList}</h3>
               <p class="online-room-browser-count" data-room-count role="status" aria-live="polite"></p>
             </div>
@@ -830,7 +770,7 @@ export class OnlineScreens {
           </div>
           <label class="online-field" data-private-password-field hidden>
             <span class="online-field-label">${copy.password}</span>
-            <input class="online-input" data-create-field="password" type="password" minlength="4" maxlength="20"
+            <input class="online-input" data-create-field="password" type="password" minlength="3" maxlength="20"
               autocomplete="off" placeholder="${copy.passwordPlaceholder}"
               aria-describedby="online-create-password-help online-create-password-error" />
             <span id="online-create-password-help" class="online-field-help">${copy.passwordHelp}</span>
@@ -848,7 +788,7 @@ export class OnlineScreens {
         <form class="online-dialog" data-form="join" role="dialog" aria-modal="true" aria-labelledby="online-join-heading">
           <div class="online-dialog-header">
             <div>
-              <p class="online-eyebrow">${copy.friendRoom}</p>
+              <p class="online-eyebrow">${copy.privateRoomHeading}</p>
               <h3 id="online-join-heading" data-join-room-name>${copy.joinRoom}</h3>
               <p class="online-dialog-room-code" data-join-room-code></p>
             </div>
@@ -856,7 +796,7 @@ export class OnlineScreens {
           </div>
           <label class="online-field">
             <span class="online-field-label">${copy.password}</span>
-            <input class="online-input" data-join-field="password" type="password" maxlength="20"
+            <input class="online-input" data-join-field="password" type="password" minlength="3" maxlength="20"
               autocomplete="off" placeholder="${copy.enterPassword}" required
               aria-describedby="online-join-password-error" />
             <span id="online-join-password-error" class="online-field-error"
@@ -871,7 +811,7 @@ export class OnlineScreens {
 
     this._listen(root, 'keydown', (event) => this._handleScreenKeydown(event));
     this._listen(root.querySelector('[data-action="back"]'), 'click', () => this._emit('onBackToTitle'));
-    this._wirePageMenu(root, 'lobby');
+    this._wirePageActions(root);
     this._listen(root.querySelector('[data-action="quick"]'), 'click', () => this._submitQuickMatch());
     this._listen(root.querySelector('[data-action="open-create"]'), 'click', (event) => this._openCreateDialog(event.currentTarget));
     for (const button of root.querySelectorAll('[data-action="close-dialog"]')) {
@@ -935,7 +875,6 @@ export class OnlineScreens {
       <div class="online-panel online-room-panel" data-room-content>
         <header class="online-room-header">
           <div class="online-room-heading">
-            <p class="online-eyebrow">${copy.eyebrow}</p>
             <h2 class="online-room-name" data-room-name data-screen-heading tabindex="-1">${copy.unnamedRoom}</h2>
             <div class="online-room-summary">
               <span class="online-room-type" data-room-type></span>
@@ -945,7 +884,7 @@ export class OnlineScreens {
               </button>
             </div>
           </div>
-          ${this._menuMarkup()}
+          ${this._pageActionsMarkup()}
         </header>
 
         <div class="online-room-grid">
@@ -987,7 +926,7 @@ export class OnlineScreens {
       </div>`;
 
     this._listen(root, 'keydown', (event) => this._handleScreenKeydown(event));
-    this._wirePageMenu(root, 'room');
+    this._wirePageActions(root);
 
     const characterGrid = root.querySelector('[data-character-grid]');
     for (const character of this.characters) {
@@ -1076,11 +1015,6 @@ export class OnlineScreens {
     if (reconnectBackdrop && !reconnectBackdrop.hidden) {
       if (event.key === 'Tab' || event.key === 'Escape') event.preventDefault();
       reconnectBackdrop.querySelector('.online-room-reconnect')?.focus({ preventScroll: true });
-      return;
-    }
-    if (this._activeMenu && event.key === 'Escape') {
-      event.preventDefault();
-      this.closeMenu();
       return;
     }
     if (!this._activeDialog) return;
@@ -1403,7 +1337,6 @@ export class OnlineScreens {
     const next = Boolean(reconnecting);
     if (next === !backdrop.hidden) return false;
     if (next) {
-      this.closeMenu(false);
       this._roomReconnectFocus = this.doc.activeElement;
       backdrop.hidden = false;
       panel.focus({ preventScroll: true });
@@ -1644,7 +1577,6 @@ export class OnlineScreens {
   }
 
   hideAll() {
-    this.closeMenu(false);
     this._closeDialog(false);
     this.dismissAlert(false);
     this.setRoomReconnecting(false, { restoreFocus: false });

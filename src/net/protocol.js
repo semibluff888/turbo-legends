@@ -176,11 +176,11 @@ export function validateRoomPassword(value, { required = false } = {}) {
       : { ok: true, value: undefined };
   }
   if (typeof value !== 'string') {
-    return fail(ERROR_CODES.PASSWORD_INVALID, 'Password must contain 4 to 20 visible characters.');
+    return fail(ERROR_CODES.PASSWORD_INVALID, 'Password must contain 3 to 20 visible characters.');
   }
   const length = Array.from(value).length;
-  if (length < 4 || length > 20 || value.trim() !== value || CONTROL_OR_BIDI.test(value)) {
-    return fail(ERROR_CODES.PASSWORD_INVALID, 'Password must contain 4 to 20 visible characters.');
+  if (length < 3 || length > 20 || value.trim() !== value || CONTROL_OR_BIDI.test(value)) {
+    return fail(ERROR_CODES.PASSWORD_INVALID, 'Password must contain 3 to 20 visible characters.');
   }
   return { ok: true, value };
 }

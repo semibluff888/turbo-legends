@@ -265,7 +265,7 @@ waiting → loading → countdown → racing → results → waiting
 - Rooms have an immutable display name, `public` or `private` type, and a human
   capacity from two to eight. AI still fills every race to eight karts.
 - Both room types appear in the multiplayer lobby. Private rooms require a
-  case-sensitive 4–20 character password; only a salted scrypt digest is kept.
+  case-sensitive 3–20 character password; only a salted scrypt digest is kept.
 - A room accepts humans only while in `waiting` and below its own capacity.
   Reserved reconnect seats count toward the displayed occupancy and capacity.
 - Nicknames are 1–20 visible characters, may repeat, and reject control or

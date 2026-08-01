@@ -28,7 +28,8 @@ test('online input helpers normalize display fields and room codes', () => {
   assert.equal(normalizeRoomCode('io-01 abc234-more'), 'ABC234');
   assert.equal(roomCodeFromSearch('?campaign=summer&room=jkm567'), 'JKM567');
   assert.equal(isValidRoomPassword('Pit7'), true);
-  assert.equal(isValidRoomPassword('pit'), false);
+  assert.equal(isValidRoomPassword('pit'), true);
+  assert.equal(isValidRoomPassword('pi'), false);
   assert.equal(isValidRoomPassword('    '), false);
   assert.equal(isValidRoomPassword(' Pit7'), false);
   assert.equal(isValidRoomPassword('Pit7\u202e'), false);
@@ -81,7 +82,7 @@ test('lobby view normalizes room types, status and joinability', () => {
         playerCount: 3, maxPlayers: 8, hostDisplayName: 'Nova', status: 'racing',
       },
       {
-        roomCode: 'DEF345', roomName: 'Friends Cup', roomType: 'private',
+        roomCode: 'DEF345', roomName: 'Private Cup', roomType: 'private',
         playerCount: 1, maxPlayers: 4, hostDisplayName: 'Pip', status: 'waiting',
       },
       {
@@ -328,7 +329,7 @@ test('authoritative results use participant ids and do not invent times', () => 
   assert.equal(formatOnlineTime(view.standings[2].bestLap), '—');
 });
 
-test('Lobby and Room replace footer errors with field feedback, menus, and persistent room state', () => {
+test('Lobby and Room use field feedback, direct page actions, and persistent room state', () => {
   const lobbyStart = onlineScreensSource.indexOf('  _buildLobby() {');
   const roomStart = onlineScreensSource.indexOf('  _buildRoom() {');
   const resultsStart = onlineScreensSource.indexOf('  _buildResults() {');
@@ -347,8 +348,11 @@ test('Lobby and Room replace footer errors with field feedback, menus, and persi
   assert.match(onlineScreensSource, /member\.connected && member\.ready/);
   assert.match(onlineScreensSource, /is-reconnecting/);
   assert.match(onlineScreensSource, /waitingForReconnect/);
-  assert.match(lobbySource, /_wirePageMenu\(root, 'lobby'\)/);
-  assert.match(roomSource, /_wirePageMenu\(root, 'room'\)/);
+  assert.match(lobbySource, /_wirePageActions\(root\)/);
+  assert.match(roomSource, /_wirePageActions\(root\)/);
+  assert.doesNotMatch(lobbySource, /copy\.(?:eyebrow|subtitle|availableRooms)/);
+  assert.doesNotMatch(roomSource, /copy\.eyebrow/);
+  assert.match(lobbySource, /minlength="3"/);
 });
 
 test('password failures stay inline while quick-match failures use the shared alert', () => {

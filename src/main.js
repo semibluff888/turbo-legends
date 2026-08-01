@@ -614,7 +614,7 @@ function closePanel() {
     screens.hideAll();
     mode = panelReturn;
     networkStatus.showDetails();
-    onlineScreens.focusMenuTrigger(panelReturn === 'online-lobby' ? 'lobby' : 'room');
+    onlineScreens.focusPageAction(panelReturn === 'online-lobby' ? 'lobby' : 'room');
   } else {
     goToTitle();
   }

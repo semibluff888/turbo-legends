@@ -160,7 +160,7 @@ test('settings and help return to online screens while their live state keeps up
   );
   assert.match(
     source,
-    /panelReturn === 'online-lobby' \|\| panelReturn === 'online-room'[\s\S]*onlineScreens\.focusMenuTrigger/,
+    /panelReturn === 'online-lobby' \|\| panelReturn === 'online-room'[\s\S]*onlineScreens\.focusPageAction/,
   );
   assert.match(
     source,

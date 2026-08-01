@@ -169,7 +169,7 @@ test('room metadata, capacity, and list status use each room human-seat limit', 
 test('private rooms hash case-sensitive passwords and expose no verifier data', () => {
   const harness = createHarness();
   const host = harness.manager.createRoom({
-    displayName: 'Host', characterId: 'pip', roomName: 'Friends Only',
+    displayName: 'Host', characterId: 'pip', roomName: 'Private Only',
     roomType: ROOM_TYPES.PRIVATE, maxPlayers: 4, password: 'PitLane9',
   });
   const room = harness.manager.rooms.get(host.roomCode);

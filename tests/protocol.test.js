@@ -75,8 +75,12 @@ test('create-room validation rejects invalid names, types, capacities, and priva
     ERROR_CODES.PASSWORD_REQUIRED,
   );
   assert.equal(
-    validateClientMessage({ ...base, roomType: 'private', password: 'abc' }).error.code,
+    validateClientMessage({ ...base, roomType: 'private', password: 'ab' }).error.code,
     ERROR_CODES.PASSWORD_INVALID,
+  );
+  assert.equal(
+    validateClientMessage({ ...base, roomType: 'private', password: 'abc' }).ok,
+    true,
   );
 });
 

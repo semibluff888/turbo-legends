@@ -38,12 +38,12 @@ counts.
 
 ## Multiplayer
 
-- A live multiplayer lobby lists public and password-protected friends rooms,
+- A live multiplayer lobby lists public and password-protected private rooms,
   with search, direct joining, invite codes, and quick match for available
   public rooms.
 - Rooms choose a 2–8 human-player capacity; AI fills every race to eight karts.
   Full rooms and rooms already in a race remain visible but cannot be joined.
-- Room names may repeat. Friends rooms require a case-sensitive 4–20 character
+- Room names may repeat. Private rooms require a case-sensitive 3–20 character
   password, stored by the server only as a salted scrypt digest.
 - The host chooses the track and AI difficulty. Every connected player must be
   ready before the host can start.
