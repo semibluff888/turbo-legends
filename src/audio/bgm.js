@@ -3,6 +3,7 @@ export const DEFAULT_RACE_BGM = 'default';
 
 export const MENU_BGM_CHOICES = Object.freeze([
   Object.freeze({ value: 'rainbow-drift', label: 'Rainbow Drift' }),
+  Object.freeze({ value: 'neon-kart-groove', label: 'Neon Kart Groove' }),
 ]);
 
 export const RACE_BGM_CHOICES = Object.freeze([
@@ -17,6 +18,11 @@ const TRACKS = Object.freeze({
     id: 'rainbow-drift',
     label: 'Rainbow Drift',
     url: new URL('../../sound/Rainbow Drift.mp3', import.meta.url).href,
+  }),
+  'neon-kart-groove': Object.freeze({
+    id: 'neon-kart-groove',
+    label: 'Neon Kart Groove',
+    url: new URL('../../sound/Neon Kart Groove.mp3', import.meta.url).href,
   }),
   'rainbow-lap-rush': Object.freeze({
     id: 'rainbow-lap-rush',

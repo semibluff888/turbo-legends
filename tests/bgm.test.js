@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  MENU_BGM_CHOICES,
   resolveMenuBgm,
   resolveRaceBgm,
   sanitizeMenuBgm,
@@ -26,4 +27,14 @@ test('BGM preferences sanitize invalid values and expose encoded asset URLs', ()
   assert.equal(resolveMenuBgm('bad').id, 'rainbow-drift');
   assert.match(resolveRaceBgm('default', 'harbor-loop').url,
     /Rainbow%20Kart%20Parade%20\(0\.90x\)\.mp3$/);
+});
+
+test('menu BGM choices include Neon Kart Groove', () => {
+  assert.deepEqual(
+    MENU_BGM_CHOICES.find((choice) => choice.value === 'neon-kart-groove'),
+    { value: 'neon-kart-groove', label: 'Neon Kart Groove' },
+  );
+  assert.equal(sanitizeMenuBgm('neon-kart-groove'), 'neon-kart-groove');
+  assert.equal(resolveMenuBgm('neon-kart-groove').id, 'neon-kart-groove');
+  assert.match(resolveMenuBgm('neon-kart-groove').url, /Neon%20Kart%20Groove\.mp3$/);
 });
