@@ -49,13 +49,17 @@ test('network status switches detailed and race fields without retaining stale m
   view.setVersion('1.2.3');
   view.showDetails();
   assert.equal(root.dataset.context, 'details');
-  assert.equal(online.textContent, 'ONLINE 12');
+  assert.ok(
+    root.innerHTML.indexOf('data-network-online') < root.innerHTML.indexOf('data-network-connection'),
+    'online player count should appear before the network connection state',
+  );
+  assert.equal(online.textContent, 'ONLINE PLAYERS 12');
   assert.equal(latency.textContent, '43 ms');
   assert.equal(latency.dataset.level, 'good');
   assert.equal(version.textContent, 'VERSION 1.2.3');
 
   view.setMetrics({ latencyMs: null, onlineCount: null });
-  assert.equal(online.textContent, 'ONLINE —');
+  assert.equal(online.textContent, 'ONLINE PLAYERS —');
   assert.equal(latency.textContent, '— ms');
   assert.equal(latency.dataset.level, 'unknown');
   view.setMetrics({ latencyMs: 43.4, onlineCount: 12 });
@@ -67,7 +71,7 @@ test('network status switches detailed and race fields without retaining stale m
   assert.equal(version.hidden, true);
 
   view.setConnectionState('reconnecting');
-  assert.equal(online.textContent, 'ONLINE —');
+  assert.equal(online.textContent, 'ONLINE PLAYERS —');
   assert.equal(latency.textContent, '— ms');
   assert.equal(latency.dataset.level, 'unknown');
 });

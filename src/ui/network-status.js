@@ -26,14 +26,14 @@ export class NetworkStatus {
     this.root = root;
     root.innerHTML = `
       <div class="network-summary">
+        <span class="network-online" data-network-online>ONLINE PLAYERS —</span>
+        <span class="network-separator" data-network-online-separator aria-hidden="true">·</span>
         <span class="network-connection" data-network-connection role="status" aria-live="polite">
           <span class="network-dot" aria-hidden="true"></span>
           <span data-network-state>OFFLINE</span>
         </span>
         <span class="network-separator" aria-hidden="true">·</span>
         <span class="network-latency" data-network-latency data-level="unknown">— ms</span>
-        <span class="network-separator" data-network-online-separator aria-hidden="true">·</span>
-        <span class="network-online" data-network-online>ONLINE —</span>
       </div>
       <div class="game-version" data-game-version>VERSION —</div>
     `;
@@ -89,7 +89,7 @@ export class NetworkStatus {
       : null;
     this._latency.dataset.level = level;
     this._latency.textContent = latency === null ? '— ms' : `${latency} ms`;
-    this._online.textContent = count === null ? 'ONLINE —' : `ONLINE ${count}`;
+    this._online.textContent = count === null ? 'ONLINE PLAYERS —' : `ONLINE PLAYERS ${count}`;
   }
 
   setVersion(version) {

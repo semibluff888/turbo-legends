@@ -319,11 +319,6 @@ kbd {
 .network-summary,
 .game-version {
   position: absolute;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(16, 12, 38, 0.68);
-  box-shadow: 0 6px 18px rgba(8, 4, 22, 0.35);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
 }
 
 .network-summary {
@@ -345,6 +340,11 @@ kbd {
 #network-status-overlay[data-context='race'] .network-summary {
   top: max(16px, env(safe-area-inset-top, 0px) + 10px);
   left: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(16, 12, 38, 0.68);
+  box-shadow: 0 6px 18px rgba(8, 4, 22, 0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   transform: translateX(-50%);
 }
 
