@@ -1,0 +1,27 @@
+services:
+  turbo-legends:
+    build:
+      context: .
+    image: turbo-legends:local
+    container_name: turbo-legends
+    restart: unless-stopped
+    init: true
+    ports:
+      - "8888:5173"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 5173
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 15s

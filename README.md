@@ -36,6 +36,20 @@ HOST=0.0.0.0 npm start
 The process also exposes `GET /healthz` with uptime, room, race, and connection
 counts.
 
+## Run with Docker
+
+The included Compose configuration publishes the game on host port `8888`:
+
+```bash
+docker compose up -d --build
+curl http://127.0.0.1:8888/healthz
+```
+
+Open `http://YOUR_VPS_IP:8888/` and allow inbound TCP port `8888` in both the
+VPS firewall and the hosting provider's security group. See
+[`DEPLOYMENT.md`](DEPLOYMENT.md) for the complete VPS deployment, update, and
+troubleshooting guide.
+
 ## Multiplayer
 
 - A live multiplayer lobby lists public and password-protected private rooms,
