@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   MENU_BGM_CHOICES,
+  RACE_BGM_CHOICES,
   resolveMenuBgm,
   resolveRaceBgm,
   sanitizeMenuBgm,
@@ -37,4 +38,23 @@ test('menu BGM choices include Neon Kart Groove', () => {
   assert.equal(sanitizeMenuBgm('neon-kart-groove'), 'neon-kart-groove');
   assert.equal(resolveMenuBgm('neon-kart-groove').id, 'neon-kart-groove');
   assert.match(resolveMenuBgm('neon-kart-groove').url, /Neon%20Kart%20Groove\.mp3$/);
+});
+
+test('menu and race BGM choices expose random playback modes', () => {
+  assert.deepEqual(MENU_BGM_CHOICES[0], { value: 'random', label: 'Random' });
+  assert.deepEqual(RACE_BGM_CHOICES[1], { value: 'random', label: 'Random' });
+  assert.equal(sanitizeMenuBgm('random'), 'random');
+  assert.equal(sanitizeRaceBgm('random'), 'random');
+});
+
+test('random BGM selection uses the tracks available for each scene', () => {
+  const firstMenu = resolveMenuBgm('random', { random: () => 0 });
+  const lastMenu = resolveMenuBgm('random', { random: () => 0.999 });
+  assert.equal(firstMenu.id, 'rainbow-drift');
+  assert.equal(lastMenu.id, 'neon-kart-groove');
+
+  const firstRace = resolveRaceBgm('random', 'sunset-circuit', { random: () => 0 });
+  const lastRace = resolveRaceBgm('random', 'sunset-circuit', { random: () => 0.999 });
+  assert.equal(firstRace.id, 'rainbow-lap-rush');
+  assert.equal(lastRace.id, 'rainbow-kart-dash');
 });

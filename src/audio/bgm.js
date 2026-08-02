@@ -1,13 +1,16 @@
 export const DEFAULT_MENU_BGM = 'rainbow-drift';
 export const DEFAULT_RACE_BGM = 'default';
+export const RANDOM_BGM = 'random';
 
 export const MENU_BGM_CHOICES = Object.freeze([
+  Object.freeze({ value: RANDOM_BGM, label: 'Random' }),
   Object.freeze({ value: 'rainbow-drift', label: 'Rainbow Drift' }),
   Object.freeze({ value: 'neon-kart-groove', label: 'Neon Kart Groove' }),
 ]);
 
 export const RACE_BGM_CHOICES = Object.freeze([
   Object.freeze({ value: 'default', label: 'Default (By Track)' }),
+  Object.freeze({ value: RANDOM_BGM, label: 'Random' }),
   Object.freeze({ value: 'rainbow-lap-rush', label: 'Rainbow Lap Rush' }),
   Object.freeze({ value: 'rainbow-kart-parade', label: 'Rainbow Kart Parade (0.90x)' }),
   Object.freeze({ value: 'rainbow-kart-dash', label: 'Rainbow Kart Dash' }),
@@ -47,8 +50,22 @@ export const DEFAULT_RACE_BGM_BY_TRACK = Object.freeze({
   'summit-raceway': 'rainbow-kart-dash',
 });
 
+const MENU_TRACK_IDS = Object.freeze(MENU_BGM_CHOICES
+  .map((choice) => choice.value)
+  .filter((id) => id !== RANDOM_BGM));
+const RACE_TRACK_IDS = Object.freeze(RACE_BGM_CHOICES
+  .map((choice) => choice.value)
+  .filter((id) => id !== DEFAULT_RACE_BGM && id !== RANDOM_BGM));
 const MENU_BGM_IDS = new Set(MENU_BGM_CHOICES.map((choice) => choice.value));
 const RACE_BGM_IDS = new Set(RACE_BGM_CHOICES.map((choice) => choice.value));
+
+function randomTrackId(trackIds, random) {
+  const sample = Number(random());
+  const normalized = Number.isFinite(sample)
+    ? Math.min(Math.max(sample, 0), 0.999999999)
+    : 0;
+  return trackIds[Math.floor(normalized * trackIds.length)];
+}
 
 export function sanitizeMenuBgm(value) {
   return MENU_BGM_IDS.has(value) ? value : DEFAULT_MENU_BGM;
@@ -62,12 +79,32 @@ export function getBgmTrack(id) {
   return TRACKS[id] || TRACKS[DEFAULT_MENU_BGM];
 }
 
-export function resolveMenuBgm(preference) {
-  return getBgmTrack(sanitizeMenuBgm(preference));
+export function resolveMenuBgm(preference, options = {}) {
+  const selected = sanitizeMenuBgm(preference);
+  if (selected !== RANDOM_BGM) return getBgmTrack(selected);
+
+  const currentTrackId = options.currentTrackId;
+  if (!options.reroll && MENU_TRACK_IDS.includes(currentTrackId)) {
+    return getBgmTrack(currentTrackId);
+  }
+  return getBgmTrack(randomTrackId(
+    MENU_TRACK_IDS,
+    options.random || Math.random,
+  ));
 }
 
-export function resolveRaceBgm(preference, trackId) {
+export function resolveRaceBgm(preference, trackId, options = {}) {
   const selected = sanitizeRaceBgm(preference);
+  if (selected === RANDOM_BGM) {
+    const currentTrackId = options.currentTrackId;
+    if (!options.reroll && RACE_TRACK_IDS.includes(currentTrackId)) {
+      return getBgmTrack(currentTrackId);
+    }
+    return getBgmTrack(randomTrackId(
+      RACE_TRACK_IDS,
+      options.random || Math.random,
+    ));
+  }
   const id = selected === DEFAULT_RACE_BGM
     ? (DEFAULT_RACE_BGM_BY_TRACK[trackId] || DEFAULT_RACE_BGM_BY_TRACK['sunset-circuit'])
     : selected;

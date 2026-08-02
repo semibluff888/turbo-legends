@@ -53,6 +53,7 @@ export class AudioManager {
     this._bgmElement = null;
     this._bgmNode = null;
     this._bgmPlayPending = false;
+    this._random = options.random || Math.random;
     this._createMediaElement = options.createMediaElement || (() => {
       if (typeof Audio !== 'undefined') return new Audio();
       if (typeof document !== 'undefined' && document.createElement) {
@@ -194,16 +195,21 @@ export class AudioManager {
       : 0;
   }
 
-  _desiredBgmTrack() {
-    if (this._musicContext === 'menu') return resolveMenuBgm(this._menuBgm);
+  _desiredBgmTrack({ rerollRandom = false } = {}) {
+    const options = {
+      currentTrackId: this._bgmId,
+      random: this._random,
+      reroll: rerollRandom,
+    };
+    if (this._musicContext === 'menu') return resolveMenuBgm(this._menuBgm, options);
     if (this._musicContext === 'race') {
-      return resolveRaceBgm(this._raceBgm, this._raceTrackId);
+      return resolveRaceBgm(this._raceBgm, this._raceTrackId, options);
     }
     return null;
   }
 
-  _syncBgm({ restart = false } = {}) {
-    const track = this._desiredBgmTrack();
+  _syncBgm({ restart = false, rerollRandom = false } = {}) {
+    const track = this._desiredBgmTrack({ rerollRandom });
     const media = this._ensureBgmMedia();
     if (!track || !media) return;
 
@@ -286,8 +292,10 @@ export class AudioManager {
       this._raceBgm = sanitizeRaceBgm(settings.raceBgm);
     }
 
-    const bgmChanged = previousMenuBgm !== this._menuBgm
-      || previousRaceBgm !== this._raceBgm;
+    const activeBgmChanged = (this._musicContext === 'menu'
+      && previousMenuBgm !== this._menuBgm)
+      || (this._musicContext === 'race'
+        && previousRaceBgm !== this._raceBgm);
 
     if (this.ctx) {
       this._ramp(this.master.gain,
@@ -297,7 +305,9 @@ export class AudioManager {
       this._ramp(this.sfxGain.gain, AUDIO.sfxVolume * this._sfxVolume, 0.06);
     }
     this._applyBgmVolume();
-    if (bgmChanged) this._syncBgm();
+    if (activeBgmChanged) {
+      this._syncBgm({ rerollRandom: true });
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -601,17 +611,19 @@ export class AudioManager {
   // -------------------------------------------------------------------------
 
   playMenuMusic() {
+    const enteringMenu = this._musicContext !== 'menu';
     this._musicContext = 'menu';
     this._raceTrackId = null;
     this.setFinalLap(false);
-    this._syncBgm();
+    this._syncBgm({ rerollRandom: enteringMenu });
   }
 
   playRaceMusic(trackId, { restart = false } = {}) {
+    const enteringRace = this._musicContext !== 'race' || restart;
     this._musicContext = 'race';
     this._raceTrackId = trackId;
     this.setFinalLap(false);
-    this._syncBgm({ restart });
+    this._syncBgm({ restart, rerollRandom: enteringRace });
   }
 
   setFinalLap(b) {

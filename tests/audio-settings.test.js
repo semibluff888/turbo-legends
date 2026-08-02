@@ -188,6 +188,42 @@ test('race BGM setting changes switch the active race immediately', () => {
   assert.equal(media.currentTime, 0);
 });
 
+test('random menu BGM picks once on entry and keeps looping that track', () => {
+  const audio = new AudioManager({
+    createMediaElement: () => new FakeMedia(),
+    random: () => 0,
+  });
+  audio.applySettings({ menuBgm: 'random' });
+  audio.playMenuMusic();
+
+  const media = audio._bgmElement;
+  assert.equal(media.loop, true);
+  assert.match(media.src, /Rainbow%20Drift\.mp3$/);
+
+  media.currentTime = 20;
+  audio.playMenuMusic();
+  assert.match(media.src, /Rainbow%20Drift\.mp3$/);
+  assert.equal(media.currentTime, 20);
+  assert.equal(media.loadCalls, 1);
+});
+
+test('each fresh race selects one random BGM and loops it', () => {
+  const samples = [0, 0.5];
+  const audio = new AudioManager({
+    createMediaElement: () => new FakeMedia(),
+    random: () => samples.shift(),
+  });
+  audio.applySettings({ raceBgm: 'random' });
+  audio.playRaceMusic('sunset-circuit', { restart: true });
+
+  const media = audio._bgmElement;
+  assert.equal(media.loop, true);
+  assert.match(media.src, /Rainbow%20Lap%20Rush\.mp3$/);
+
+  audio.playRaceMusic('harbor-loop', { restart: true });
+  assert.match(media.src, /Rainbow%20Kart%20Parade%20\(0\.90x\)\.mp3$/);
+});
+
 test('final lap changes BGM playback rate and resets for a fresh race', () => {
   const audio = new AudioManager();
   const media = attachFakeMedia(audio);
