@@ -147,6 +147,7 @@ export class OnlineClient {
       roomType,
       maxPlayers: Number(value.maxPlayers ?? 8),
     };
+    if (value.trackId) message.trackId = String(value.trackId);
     if (roomType === ROOM_TYPES.PRIVATE && value.password !== undefined) {
       message.password = String(value.password);
     }

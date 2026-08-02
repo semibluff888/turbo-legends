@@ -256,6 +256,10 @@ export function validateClientMessage(message) {
         base.roomName = roomName.value;
         base.roomType = roomType.value;
         base.maxPlayers = capacity.value;
+        if (!optionalId(message.trackId)) {
+          return fail(ERROR_CODES.INVALID_SETTING, 'Invalid track id.');
+        }
+        if (message.trackId !== undefined) base.trackId = message.trackId;
         if (roomType.value === ROOM_TYPES.PRIVATE) base.password = password.value;
       } else if (message.type === CLIENT_MESSAGE_TYPES.JOIN_ROOM) {
         const roomCode = normalizeRoomCode(message.roomCode ?? message.code);

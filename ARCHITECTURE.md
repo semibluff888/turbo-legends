@@ -337,10 +337,10 @@ error, pong
 ```
 
 `lobby_state` contains public-safe summaries for both public and private rooms:
-room code/name/type, password requirement, occupied/capacity counts, host display
-name, status, and whether the room is joinable. It never contains member IDs,
+room code/name/type, selected track, password requirement, occupied/capacity counts,
+host display name, status, and whether the room is joinable. It never contains member IDs,
 resume tokens, passwords, or password digests. `create_room` supplies room
-name/type/capacity and an optional private-room password; `join_room` supplies
+name/type/capacity/track and an optional private-room password; `join_room` supplies
 the password only when needed.
 
 The authoritative driving message is:

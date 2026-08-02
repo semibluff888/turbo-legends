@@ -240,7 +240,8 @@ test('create, join and quick match reuse the existing Lobby socket', () => {
   socket.receive({ v: PROTOCOL_VERSION, type: 'lobby_state', rooms: [] });
 
   client.createRoom({
-    displayName: 'Nova', roomName: 'Nova Grid', roomType: 'private', maxPlayers: 6, password: 'FastPass',
+    displayName: 'Nova', roomName: 'Nova Grid', roomType: 'private', maxPlayers: 6,
+    trackId: 'harbor-loop', password: 'FastPass',
     characterId: 'kit', paintId: 'turbo-blue', avatarId: 'cat',
   });
   client.joinRoom({
@@ -260,6 +261,7 @@ test('create, join and quick match reuse the existing Lobby socket', () => {
       roomName: 'Nova Grid',
       roomType: 'private',
       maxPlayers: 6,
+      trackId: 'harbor-loop',
       password: 'FastPass',
       characterId: 'kit',
       paintId: 'turbo-blue',

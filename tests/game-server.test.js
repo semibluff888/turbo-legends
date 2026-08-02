@@ -101,6 +101,7 @@ test('a silent Room connection is broadcast as reconnecting before it resumes', 
       roomName: 'Presence Test',
       roomType: 'public',
       maxPlayers: 4,
+      trackId: 'harbor-loop',
       characterId: 'pip',
     });
     const hostWelcome = await host.next(message => message.type === 'welcome' && message.session);
@@ -251,6 +252,7 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
       roomName: 'Host Raceway',
       roomType: 'public',
       maxPlayers: 4,
+      trackId: 'harbor-loop',
       characterId: 'pip',
     });
     const hostWelcome = await host.next(message => message.type === 'welcome' && message.session);
@@ -261,6 +263,7 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
     assert.equal(hostRoom.roomName, 'Host Raceway');
     assert.equal(hostRoom.roomType, 'public');
     assert.equal(hostRoom.maxPlayers, 4);
+    assert.equal(hostRoom.settings.trackId, 'harbor-loop');
 
     const twoClientMark = host.mark();
     guest = await connectClient(WebSocket, url, origin);
@@ -279,6 +282,7 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
       playerCount: 1,
       maxPlayers: 4,
       hostDisplayName: 'Host',
+      trackId: 'harbor-loop',
       status: 'waiting',
       joinable: true,
     });

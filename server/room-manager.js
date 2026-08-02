@@ -269,6 +269,7 @@ export class RoomManager extends EventEmitter {
         playerCount,
         maxPlayers: room.maxPlayers,
         hostDisplayName: host?.displayName ?? '',
+        trackId: room.settings.trackId,
         status: !isWaiting ? 'in_game' : isFull ? 'full' : 'waiting',
         joinable: isWaiting && !isFull,
       });
@@ -303,8 +304,9 @@ export class RoomManager extends EventEmitter {
       : null;
     const now = this.now();
     const roomCode = this._allocateRoomCode();
-    const track = this.tracks.values().next().value;
-    if (!track) throw new GameError(ERROR_CODES.INVALID_SETTING, 'No tracks are configured.');
+    const defaultTrack = this.tracks.values().next().value;
+    const track = options.trackId === undefined ? defaultTrack : this.tracks.get(options.trackId);
+    if (!track) throw new GameError(ERROR_CODES.INVALID_SETTING, 'Choose a valid track.');
     const room = {
       code: roomCode,
       roomName,

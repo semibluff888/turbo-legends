@@ -88,6 +88,7 @@ test('lobby view normalizes room types, status and joinability', () => {
       {
         roomCode: 'ABC234', roomName: 'Sunset Sprint', roomType: 'public',
         playerCount: 2, maxPlayers: 8, hostDisplayName: 'Alex', status: 'WAITING',
+        trackId: 'harbor-loop',
       },
     ],
   });
@@ -96,6 +97,7 @@ test('lobby view normalizes room types, status and joinability', () => {
     'DEF345', 'ABC234', 'GHJ456', 'KMN567',
   ]);
   assert.equal(view.rooms[0].requiresPassword, true);
+  assert.equal(view.rooms[1].trackName, 'Harbor Loop');
   assert.equal(view.rooms[0].joinable, true);
   assert.equal(view.rooms[2].status, 'full');
   assert.equal(view.rooms[2].joinable, false);
@@ -104,12 +106,13 @@ test('lobby view normalizes room types, status and joinability', () => {
   assert.equal(view.joinableRooms, 2);
 });
 
-test('lobby search matches room, host and code without case sensitivity', () => {
+test('lobby search matches room, track, host and code without case sensitivity', () => {
   const lobby = {
     rooms: [
       {
         roomCode: 'ABC234', roomName: 'Sunset Sprint', roomType: 'public',
         playerCount: 1, maxPlayers: 8, hostDisplayName: 'TurboFox', status: 'waiting',
+        trackId: 'summit-raceway',
       },
       {
         roomCode: 'DEF345', roomName: 'Harbor Crew', roomType: 'private',
@@ -129,6 +132,10 @@ test('lobby search matches room, host and code without case sensitivity', () => 
   assert.deepEqual(
     buildLobbyView(lobby, { search: 'def345' }).rooms.map((room) => room.roomCode),
     ['DEF345'],
+  );
+  assert.deepEqual(
+    buildLobbyView(lobby, { search: 'summit' }).rooms.map((room) => room.roomCode),
+    ['ABC234'],
   );
 });
 
@@ -364,6 +371,7 @@ test('Lobby and Room use field feedback, direct page actions, and persistent roo
   assert.doesNotMatch(roomSource, /data-online-(?:status|error)/);
   assert.match(lobbySource, /data-field-error="nickname"/);
   assert.match(lobbySource, /data-field-error="create-room-name"/);
+  assert.match(lobbySource, /data-create-track-preview/);
   assert.match(lobbySource, /data-field-error="join-password"/);
   assert.match(lobbySource, /data-room-count/);
   assert.match(roomSource, /data-room-status/);
@@ -380,6 +388,10 @@ test('Lobby and Room use field feedback, direct page actions, and persistent roo
   assert.doesNotMatch(lobbySource, /copy\.(?:eyebrow|subtitle|availableRooms)/);
   assert.doesNotMatch(roomSource, /copy\.eyebrow/);
   assert.match(lobbySource, /minlength="3"/);
+  assert.doesNotMatch(lobbySource, /quickMatchHint/);
+  assert.match(onlineScreensSource, /viewBox="0 0 100 60" preserveAspectRatio="xMidYMid meet"/);
+  assert.match(onlineScreensSource, /<polygon points=/);
+  assert.doesNotMatch(onlineScreensSource, /preserveAspectRatio="xMidYMid slice"/);
 });
 
 test('password failures stay inline while quick-match failures use the shared alert', () => {

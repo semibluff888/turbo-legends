@@ -184,7 +184,7 @@ const onlineScreens = new OnlineScreens({
   onNicknameChange({ displayName }) {
     acceptOnlineDisplayName(displayName);
   },
-  onCreateRoom({ displayName, roomName, roomType, maxPlayers, password }) {
+  onCreateRoom({ displayName, roomName, roomType, maxPlayers, trackId, password }) {
     const savedName = acceptOnlineDisplayName(displayName);
     if (!savedName) return;
     clearOnlineRoomUrl();
@@ -195,6 +195,7 @@ const onlineScreens = new OnlineScreens({
       roomName,
       roomType,
       maxPlayers,
+      trackId,
       ...onlineLoadout,
       ...(password !== undefined ? { password } : {}),
     });

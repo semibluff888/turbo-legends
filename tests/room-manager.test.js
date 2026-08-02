@@ -258,12 +258,13 @@ test('room metadata, capacity, and list status use each room human-seat limit', 
   const harness = createHarness();
   const host = harness.manager.createRoom({
     displayName: 'Host', characterId: 'pip', roomName: 'Two Seat Sprint',
-    roomType: ROOM_TYPES.PUBLIC, maxPlayers: 2,
+    roomType: ROOM_TYPES.PUBLIC, maxPlayers: 2, trackId: 'harbor-loop',
   });
   let state = harness.manager.getRoomState(host.roomCode);
   assert.equal(state.roomName, 'Two Seat Sprint');
   assert.equal(state.roomType, ROOM_TYPES.PUBLIC);
   assert.equal(state.maxPlayers, 2);
+  assert.equal(state.settings.trackId, 'harbor-loop');
   assert.deepEqual(harness.manager.listRooms(), [{
     roomCode: host.roomCode,
     roomName: 'Two Seat Sprint',
@@ -272,6 +273,7 @@ test('room metadata, capacity, and list status use each room human-seat limit', 
     playerCount: 1,
     maxPlayers: 2,
     hostDisplayName: 'Host',
+    trackId: 'harbor-loop',
     status: 'waiting',
     joinable: true,
   }]);

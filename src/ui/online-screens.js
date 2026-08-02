@@ -34,6 +34,55 @@ const LOADOUT_STAT_ROWS = [
 
 const cssColor = (value) => `#${(value >>> 0).toString(16).padStart(6, '0')}`;
 
+function trackOutlinePoints(points = []) {
+  if (!points.length) return '';
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, Number(point.x) || 0);
+    maxX = Math.max(maxX, Number(point.x) || 0);
+    minZ = Math.min(minZ, Number(point.z) || 0);
+    maxZ = Math.max(maxZ, Number(point.z) || 0);
+  }
+  const pad = 6;
+  const width = 100 - pad * 2;
+  const height = 60 - pad * 2;
+  const scale = Math.min(
+    width / Math.max(1e-6, maxX - minX),
+    height / Math.max(1e-6, maxZ - minZ),
+  );
+  const offsetX = (100 - (maxX - minX) * scale) / 2;
+  const offsetY = (60 - (maxZ - minZ) * scale) / 2;
+  return points.map((point) => (
+    `${(offsetX + ((Number(point.x) || 0) - minX) * scale).toFixed(1)},${(
+      60 - offsetY - ((Number(point.z) || 0) - minZ) * scale
+    ).toFixed(1)}`
+  )).join(' ');
+}
+
+function trackPreviewMarkup(track) {
+  if (!track) return '';
+  const theme = track.theme || {};
+  const road = theme.road == null ? '#3a3f4a' : cssColor(theme.road);
+  const points = trackOutlinePoints(track.points);
+  return `
+    <svg viewBox="0 0 100 60" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+      <polygon points="${points}" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="7"
+        stroke-linejoin="round" stroke-linecap="round" />
+      <polygon points="${points}" fill="none" stroke="${road}" stroke-width="4.5"
+        stroke-linejoin="round" stroke-linecap="round" />
+    </svg>`;
+}
+
+function trackPreviewBackground(track) {
+  const theme = track?.theme || {};
+  const sky = theme.sky == null ? '#4aa8ff' : cssColor(theme.sky);
+  const offroad = theme.offroad == null ? '#557755' : cssColor(theme.offroad);
+  return `linear-gradient(180deg, ${sky}cc, ${offroad}cc)`;
+}
+
 function sameLoadout(a, b) {
   return Boolean(a && b
     && a.characterId === b.characterId
@@ -131,9 +180,8 @@ function statusSortOrder(room) {
   return 3;
 }
 
-function defaultRoomName(displayName) {
-  const name = normalizeDisplayName(displayName);
-  return normalizeRoomName(name ? `${name}'s Room` : UI_COPY.online.lobby.defaultRoomName);
+function defaultRoomName() {
+  return normalizeRoomName(UI_COPY.online.lobby.defaultRoomName);
 }
 
 /** Normalize a user-entered room code to the server's unambiguous alphabet. */
@@ -220,6 +268,8 @@ export function buildLobbyView(lobbyState = {}, options = {}) {
     lobbyState.inviteRoomCode,
     '',
   ));
+  const tracks = Array.isArray(options.tracks) ? options.tracks : TRACKS;
+  const trackById = new Map(tracks.map((track) => [track.id, track]));
 
   const rooms = (Array.isArray(rawRooms) ? rawRooms : []).map((room, index) => {
     const roomCode = normalizeRoomCode(firstDefined(room.roomCode, room.code, ''));
@@ -240,7 +290,16 @@ export function buildLobbyView(lobbyState = {}, options = {}) {
     const requiresPassword = room.requiresPassword === true || roomType === 'private';
     const joinable = status === 'waiting' && room.joinable !== false;
     const isInvited = Boolean(inviteRoomCode && roomCode === inviteRoomCode);
-    const haystack = `${roomName}\n${hostDisplayName}\n${roomCode}`.toLocaleLowerCase();
+    const trackId = String(firstDefined(
+      room.trackId,
+      room.settings?.trackId,
+      room.track?.id,
+      tracks[0]?.id,
+      '',
+    ));
+    const track = trackById.get(trackId) || tracks[0] || null;
+    const trackName = String(firstDefined(room.trackName, room.track?.name, track?.name, trackId));
+    const haystack = `${roomName}\n${hostDisplayName}\n${roomCode}\n${trackName}`.toLocaleLowerCase();
     const matchesSearch = !normalizedSearch || haystack.includes(normalizedSearch) || isInvited;
     return {
       roomCode,
@@ -250,6 +309,9 @@ export function buildLobbyView(lobbyState = {}, options = {}) {
       playerCount,
       maxPlayers,
       hostDisplayName,
+      trackId,
+      trackName,
+      track,
       status,
       joinable,
       isInvited,
@@ -427,6 +489,7 @@ export class OnlineScreens {
         ? DEFAULT_ONLINE_LOADOUT.avatarId : this.avatars[0]?.id,
     };
     this.tracks = options.tracks || TRACKS;
+    this.trackById = new Map(this.tracks.map((track) => [track.id, track]));
     this.difficulties = options.difficulties || DIFFICULTY;
     this.location = options.location || globalThis.location;
     this.navigator = options.navigator || globalThis.navigator;
@@ -440,6 +503,7 @@ export class OnlineScreens {
     this._locatedInviteCode = '';
     this._lobbyView = buildLobbyView();
     this._lobbyRoomByCode = new Map();
+    this._createFormInitialized = false;
     this._roomState = {};
     this._roomView = buildRoomView();
     this._resultsState = {};
@@ -497,8 +561,14 @@ export class OnlineScreens {
     const copy = UI_COPY.online.pageActions;
     return `
       <div class="online-page-actions" aria-label="Page actions">
-        <button type="button" class="online-page-action" data-page-action="settings">${copy.settings}</button>
-        <button type="button" class="online-page-action" data-page-action="help">${copy.help}</button>
+        <button type="button" class="online-page-action" data-page-action="settings">
+          <span class="online-page-action-icon" aria-hidden="true">&#9881;</span>
+          <span>${copy.settings}</span>
+        </button>
+        <button type="button" class="online-page-action" data-page-action="help">
+          <span class="online-page-action-icon" aria-hidden="true">?</span>
+          <span>${copy.help}</span>
+        </button>
       </div>`;
   }
 
@@ -550,6 +620,7 @@ export class OnlineScreens {
       'create-room-name': '[data-create-field="roomName"]',
       'create-room-type': '[data-create-field="roomType"]',
       'create-max-players': '[data-create-field="maxPlayers"]',
+      'create-track': '[data-create-field="trackId"]',
       'create-password': '[data-create-field="password"]',
       'join-password': '[data-join-field="password"]',
     };
@@ -580,7 +651,7 @@ export class OnlineScreens {
   _clearDialogFieldErrors(name) {
     if (name === 'loadout') return;
     const fields = name === 'create'
-      ? ['create-room-name', 'create-room-type', 'create-max-players', 'create-password']
+      ? ['create-room-name', 'create-room-type', 'create-max-players', 'create-track', 'create-password']
       : ['join-password'];
     for (const field of fields) this.clearFieldError(field);
   }
@@ -754,96 +825,106 @@ export class OnlineScreens {
     const copy = UI_COPY.online.lobby;
     root.innerHTML = `
       <div class="online-panel online-directory-panel">
-        <header class="online-panel-header online-directory-header">
-          <button type="button" class="online-back" data-action="back" aria-label="${copy.back}">${copy.back}</button>
-          <div class="online-heading-wrap online-heading-wrap-compact">
-            <h2 class="online-heading" data-screen-heading tabindex="-1">${copy.heading}</h2>
+        <header class="online-directory-header">
+          <button type="button" class="online-back online-lobby-back" data-action="back" aria-label="${copy.back}">
+            <span aria-hidden="true">&#8592;</span><span>${copy.back}</span>
+          </button>
+          <div class="online-lobby-brand">
+            <h2 data-screen-heading tabindex="-1" aria-label="Turbo Legends">
+              <span>TURBO</span><strong>LEGENDS</strong>
+            </h2>
+            <small>${copy.heading}</small>
           </div>
-          ${this._pageActionsMarkup()}
+          <div class="online-lobby-account">
+            <label class="online-nickname-field">
+              <span class="sr-only">${copy.nickname}</span>
+              <span class="online-profile-mark" aria-hidden="true">TL</span>
+              <input class="online-input" data-field="nickname" type="text" maxlength="20"
+                autocomplete="nickname" spellcheck="false" placeholder="${copy.nicknamePlaceholder}"
+                aria-describedby="online-nickname-error" />
+              <span class="online-nickname-edit" aria-hidden="true">&#9998;</span>
+              <span id="online-nickname-error" class="online-field-error" data-field-error="nickname" role="alert" hidden></span>
+            </label>
+            ${this._pageActionsMarkup()}
+          </div>
         </header>
 
-        <section class="online-lobby-toolbar" aria-label="${copy.playerSetup}">
-          <label class="online-field online-nickname-field">
-            <span class="online-field-label">${copy.nickname}</span>
-            <input class="online-input" data-field="nickname" type="text" maxlength="20"
-              autocomplete="nickname" spellcheck="false" placeholder="${copy.nicknamePlaceholder}"
-              aria-describedby="online-nickname-error" />
-            <span id="online-nickname-error" class="online-field-error" data-field-error="nickname" role="alert" hidden></span>
-          </label>
-          <button type="button" class="online-action online-action-secondary" data-action="quick" data-busy-action>${copy.quickMatch}</button>
-          <button type="button" class="online-action online-action-primary" data-action="open-create" data-busy-action>${copy.createRoom}</button>
-        </section>
+        <div class="online-lobby-layout">
+          <aside class="online-lobby-sidebar" aria-label="${copy.playerSetup}">
+            <button type="button" class="online-action online-action-secondary online-quick-start"
+              data-action="quick" data-busy-action>
+              <span class="online-quick-start-icon" aria-hidden="true">&#9889;</span>
+              <span><strong>${copy.quickMatch}</strong></span>
+            </button>
 
-        <section class="online-room-browser" aria-labelledby="online-room-list-heading">
-          <div class="online-room-browser-header">
-            <div>
-              <h3 id="online-room-list-heading">${copy.roomList}</h3>
-              <p class="online-room-browser-count" data-room-count role="status" aria-live="polite"></p>
+            <form class="online-create-card" data-form="create" aria-labelledby="online-create-heading">
+              <div class="online-create-card-heading">
+                <span aria-hidden="true">+</span>
+                <h3 id="online-create-heading">${copy.createRoom}</h3>
+              </div>
+              <label class="online-field">
+                <span class="online-field-label">${copy.roomName}</span>
+                <input class="online-input" data-create-field="roomName" type="text" maxlength="32" required
+                  placeholder="${copy.roomNamePlaceholder}" aria-describedby="online-create-room-name-error" />
+                <span id="online-create-room-name-error" class="online-field-error"
+                  data-field-error="create-room-name" role="alert" hidden></span>
+              </label>
+              <label class="online-field">
+                <span class="online-field-label">${copy.maxPlayers}</span>
+                <select class="online-select" data-create-field="maxPlayers"
+                  aria-describedby="online-create-max-players-error">
+                  <option value="2">2</option><option value="3">3</option><option value="4">4</option>
+                  <option value="5">5</option><option value="6">6</option><option value="7">7</option>
+                  <option value="8" selected>8</option>
+                </select>
+                <span id="online-create-max-players-error" class="online-field-error"
+                  data-field-error="create-max-players" role="alert" hidden></span>
+              </label>
+              <label class="online-field">
+                <span class="online-field-label">${copy.track}</span>
+                <span class="online-create-track-preview" data-create-track-preview aria-hidden="true"></span>
+                <select class="online-select" data-create-field="trackId" aria-label="${copy.track}"></select>
+              </label>
+              <label class="online-field">
+                <span class="online-field-label">${copy.roomType}</span>
+                <select class="online-select" data-create-field="roomType"
+                  aria-describedby="online-create-room-type-error">
+                  <option value="public">${copy.publicRoom}</option>
+                  <option value="private">${copy.privateRoom}</option>
+                </select>
+                <span id="online-create-room-type-error" class="online-field-error"
+                  data-field-error="create-room-type" role="alert" hidden></span>
+              </label>
+              <label class="online-field" data-private-password-field hidden>
+                <span class="online-field-label">${copy.password}</span>
+                <input class="online-input" data-create-field="password" type="password" minlength="3" maxlength="20"
+                  autocomplete="off" placeholder="${copy.passwordPlaceholder}"
+                  aria-describedby="online-create-password-help online-create-password-error" />
+                <span id="online-create-password-help" class="online-field-help">${copy.passwordHelp}</span>
+                <span id="online-create-password-error" class="online-field-error"
+                  data-field-error="create-password" role="alert" hidden></span>
+              </label>
+              <button type="submit" class="online-action online-action-primary online-create-submit" data-busy-action>
+                <span aria-hidden="true">+</span> ${copy.create}
+              </button>
+            </form>
+          </aside>
+
+          <section class="online-room-browser" aria-labelledby="online-room-list-heading">
+            <div class="online-room-browser-header">
+              <div>
+                <h3 id="online-room-list-heading">${copy.roomList}</h3>
+                <p class="online-room-browser-count" data-room-count role="status" aria-live="polite"></p>
+              </div>
+              <label class="online-search-field">
+                <span class="sr-only">${copy.search}</span>
+                <input class="online-input online-search-input" data-field="search" type="search"
+                  autocomplete="off" spellcheck="false" placeholder="${copy.searchPlaceholder}" />
+              </label>
             </div>
-            <label class="online-search-field">
-              <span class="sr-only">${copy.search}</span>
-              <input class="online-input online-search-input" data-field="search" type="search"
-                autocomplete="off" spellcheck="false" placeholder="${copy.searchPlaceholder}" />
-            </label>
-          </div>
-          <div class="online-room-list" data-room-list role="list"></div>
-        </section>
-
-      </div>
-
-      <div class="online-dialog-backdrop" data-dialog="create" hidden>
-        <form class="online-dialog" data-form="create" role="dialog" aria-modal="true" aria-labelledby="online-create-heading">
-          <div class="online-dialog-header">
-            <div>
-              <p class="online-eyebrow">${copy.newRoom}</p>
-              <h3 id="online-create-heading">${copy.createRoom}</h3>
-            </div>
-            <button type="button" class="online-dialog-close" data-action="close-dialog" aria-label="${copy.close}">\u00d7</button>
-          </div>
-          <label class="online-field">
-            <span class="online-field-label">${copy.roomName}</span>
-            <input class="online-input" data-create-field="roomName" type="text" maxlength="32" required
-              aria-describedby="online-create-room-name-error" />
-            <span id="online-create-room-name-error" class="online-field-error"
-              data-field-error="create-room-name" role="alert" hidden></span>
-          </label>
-          <div class="online-dialog-fields-row">
-            <label class="online-field">
-              <span class="online-field-label">${copy.roomType}</span>
-              <select class="online-select" data-create-field="roomType"
-                aria-describedby="online-create-room-type-error">
-                <option value="public">${copy.publicRoom}</option>
-                <option value="private">${copy.privateRoom}</option>
-              </select>
-              <span id="online-create-room-type-error" class="online-field-error"
-                data-field-error="create-room-type" role="alert" hidden></span>
-            </label>
-            <label class="online-field">
-              <span class="online-field-label">${copy.maxPlayers}</span>
-              <select class="online-select" data-create-field="maxPlayers"
-                aria-describedby="online-create-max-players-error">
-                <option value="2">2</option><option value="3">3</option><option value="4">4</option>
-                <option value="5">5</option><option value="6">6</option><option value="7">7</option>
-                <option value="8" selected>8</option>
-              </select>
-              <span id="online-create-max-players-error" class="online-field-error"
-                data-field-error="create-max-players" role="alert" hidden></span>
-            </label>
-          </div>
-          <label class="online-field" data-private-password-field hidden>
-            <span class="online-field-label">${copy.password}</span>
-            <input class="online-input" data-create-field="password" type="password" minlength="3" maxlength="20"
-              autocomplete="off" placeholder="${copy.passwordPlaceholder}"
-              aria-describedby="online-create-password-help online-create-password-error" />
-            <span id="online-create-password-help" class="online-field-help">${copy.passwordHelp}</span>
-            <span id="online-create-password-error" class="online-field-error"
-              data-field-error="create-password" role="alert" hidden></span>
-          </label>
-          <div class="online-dialog-actions">
-            <button type="button" class="online-action online-action-quiet" data-action="close-dialog">${copy.cancel}</button>
-            <button type="submit" class="online-action online-action-primary" data-busy-action>${copy.create}</button>
-          </div>
-        </form>
+            <div class="online-room-list" data-room-list role="list"></div>
+          </section>
+        </div>
       </div>
 
       <div class="online-dialog-backdrop" data-dialog="join" hidden>
@@ -854,7 +935,7 @@ export class OnlineScreens {
               <h3 id="online-join-heading" data-join-room-name>${copy.joinRoom}</h3>
               <p class="online-dialog-room-code" data-join-room-code></p>
             </div>
-            <button type="button" class="online-dialog-close" data-action="close-dialog" aria-label="${copy.close}">\u00d7</button>
+            <button type="button" class="online-dialog-close" data-action="close-dialog" aria-label="${copy.close}">&#215;</button>
           </div>
           <label class="online-field">
             <span class="online-field-label">${copy.password}</span>
@@ -875,7 +956,6 @@ export class OnlineScreens {
     this._listen(root.querySelector('[data-action="back"]'), 'click', () => this._emit('onBackToTitle'));
     this._wirePageActions(root);
     this._listen(root.querySelector('[data-action="quick"]'), 'click', () => this._submitQuickMatch());
-    this._listen(root.querySelector('[data-action="open-create"]'), 'click', (event) => this._openCreateDialog(event.currentTarget));
     for (const button of root.querySelectorAll('[data-action="close-dialog"]')) {
       this._listen(button, 'click', () => this._closeDialog());
     }
@@ -883,6 +963,11 @@ export class OnlineScreens {
     const nickname = root.querySelector('[data-field="nickname"]');
     const search = root.querySelector('[data-field="search"]');
     const roomType = root.querySelector('[data-create-field="roomType"]');
+    const trackSelect = root.querySelector('[data-create-field="trackId"]');
+    for (const track of this.tracks) {
+      const option = createNode(this.doc, 'option', '', trackSelect, track.name);
+      option.value = track.id;
+    }
     this._listen(nickname, 'input', () => this.clearFieldError('nickname'));
     this._listen(nickname, 'change', () => this._commitNickname(true));
     this._listen(nickname, 'keydown', (event) => {
@@ -908,6 +993,7 @@ export class OnlineScreens {
       this.clearFieldError('create-password');
       this._syncCreateRoomType();
     });
+    this._listen(trackSelect, 'change', () => this._syncCreateTrackPreview());
     this._listen(root.querySelector('[data-create-field="maxPlayers"]'), 'change', () => {
       this.clearFieldError('create-max-players');
     });
@@ -927,6 +1013,8 @@ export class OnlineScreens {
       if (room.requiresPassword) this._openJoinDialog(room, button);
       else this._submitJoinRoom(room);
     });
+    this._syncCreateRoomType();
+    this._syncCreateTrackPreview();
   }
 
   _buildRoom() {
@@ -1404,18 +1492,6 @@ export class OnlineScreens {
     return displayName;
   }
 
-  _openCreateDialog(opener) {
-    const displayName = this._commitNickname(true);
-    if (!displayName || this._busy) return;
-    const root = this.roots.lobby;
-    root.querySelector('[data-create-field="roomName"]').value = defaultRoomName(displayName);
-    root.querySelector('[data-create-field="roomType"]').value = 'public';
-    root.querySelector('[data-create-field="maxPlayers"]').value = String(ONLINE_ROOM_CAPACITY);
-    root.querySelector('[data-create-field="password"]').value = '';
-    this._syncCreateRoomType();
-    this._openDialog('create', opener);
-  }
-
   _syncCreateRoomType() {
     const root = this.roots.lobby;
     if (!root) return;
@@ -1429,6 +1505,17 @@ export class OnlineScreens {
     }
   }
 
+  _syncCreateTrackPreview() {
+    const root = this.roots.lobby;
+    const select = root?.querySelector('[data-create-field="trackId"]');
+    const preview = root?.querySelector('[data-create-track-preview]');
+    if (!select || !preview) return;
+    const track = this.trackById.get(select.value) || this.tracks[0] || null;
+    preview.innerHTML = trackPreviewMarkup(track);
+    preview.style.background = trackPreviewBackground(track);
+    preview.title = track?.name || '';
+  }
+
   _submitCreateRoom() {
     if (this._busy) return;
     const displayName = this._commitNickname(true);
@@ -1437,6 +1524,7 @@ export class OnlineScreens {
     const roomNameInput = root.querySelector('[data-create-field="roomName"]');
     const roomName = normalizeRoomName(roomNameInput.value);
     const roomType = root.querySelector('[data-create-field="roomType"]').value;
+    const trackId = root.querySelector('[data-create-field="trackId"]')?.value || this.tracks[0]?.id;
     const maxPlayers = clampInteger(
       root.querySelector('[data-create-field="maxPlayers"]').value,
       ONLINE_ROOM_MIN_CAPACITY,
@@ -1456,7 +1544,7 @@ export class OnlineScreens {
       this.showFieldError('create-password', UI_COPY.online.errors.PASSWORD_REQUIRED, { focus: true });
       return;
     }
-    const payload = { displayName, roomName, roomType, maxPlayers };
+    const payload = { displayName, roomName, roomType, maxPlayers, trackId };
     if (roomType === 'private') payload.password = password;
     this._pendingAction = { kind: 'create' };
     this._emit('onCreateRoom', payload);
@@ -1540,6 +1628,7 @@ export class OnlineScreens {
     this._lobbyView = buildLobbyView(this._lobbyState, {
       search: this._lobbySearch,
       inviteRoomCode: this._inviteRoomCode,
+      tracks: this.tracks,
     });
     this._renderLobbyRooms(this._lobbyView);
     this._syncLobbyCount(this._lobbyView);
@@ -1595,6 +1684,14 @@ export class OnlineScreens {
       );
       type.title = room.requiresPassword ? copy.passwordRequired : copy.noPasswordRequired;
       createNode(this.doc, 'span', 'online-room-list-code', title, room.roomCode);
+
+      const track = createNode(this.doc, 'div', 'online-room-list-track', card);
+      const trackPreview = createNode(this.doc, 'span', 'online-room-track-preview', track);
+      trackPreview.innerHTML = trackPreviewMarkup(room.track);
+      trackPreview.style.background = trackPreviewBackground(room.track);
+      const trackCopy = createNode(this.doc, 'span', 'online-room-track-copy', track);
+      createNode(this.doc, 'small', '', trackCopy, copy.track);
+      createNode(this.doc, 'strong', '', trackCopy, room.trackName);
 
       const facts = createNode(this.doc, 'dl', 'online-room-facts', card);
       const playerFact = createNode(this.doc, 'div', '', facts);
@@ -1683,6 +1780,22 @@ export class OnlineScreens {
       this._displayName = normalizeDisplayName(context.displayName);
       const input = this.roots.lobby?.querySelector('[data-field="nickname"]');
       if (input && this.doc.activeElement !== input) input.value = this._displayName;
+    }
+    if (!this._createFormInitialized) {
+      const root = this.roots.lobby;
+      const roomName = root?.querySelector('[data-create-field="roomName"]');
+      const roomType = root?.querySelector('[data-create-field="roomType"]');
+      const maxPlayers = root?.querySelector('[data-create-field="maxPlayers"]');
+      const trackId = root?.querySelector('[data-create-field="trackId"]');
+      const password = root?.querySelector('[data-create-field="password"]');
+      if (roomName) roomName.value = defaultRoomName();
+      if (roomType) roomType.value = 'public';
+      if (maxPlayers) maxPlayers.value = String(ONLINE_ROOM_CAPACITY);
+      if (trackId && this.tracks[0]) trackId.value = this.tracks[0].id;
+      if (password) password.value = '';
+      this._createFormInitialized = true;
+      this._syncCreateRoomType();
+      this._syncCreateTrackPreview();
     }
     if (context.inviteRoomCode !== undefined || context.roomCode !== undefined) {
       const nextInvite = normalizeRoomCode(firstDefined(context.inviteRoomCode, context.roomCode, ''));

@@ -92,6 +92,7 @@ test('create-room validation normalizes metadata and keeps a private password ca
     roomName: '  Nova   Night  ',
     roomType: 'PRIVATE',
     maxPlayers: 6,
+    trackId: 'harbor-loop',
     password: 'PitLane9',
     ignored: 'not public protocol data',
   });
@@ -105,6 +106,7 @@ test('create-room validation normalizes metadata and keeps a private password ca
       roomName: 'Nova Night',
       roomType: 'private',
       maxPlayers: 6,
+      trackId: 'harbor-loop',
       password: 'PitLane9',
     },
   });
@@ -126,6 +128,10 @@ test('create-room validation rejects invalid names, types, capacities, and priva
   assert.equal(
     validateClientMessage({ ...base, maxPlayers: 9 }).error.code,
     ERROR_CODES.ROOM_CAPACITY_INVALID,
+  );
+  assert.equal(
+    validateClientMessage({ ...base, trackId: 'Not A Track' }).error.code,
+    ERROR_CODES.INVALID_SETTING,
   );
   assert.equal(
     validateClientMessage({ ...base, roomType: 'private' }).error.code,
