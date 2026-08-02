@@ -67,12 +67,27 @@ test('every online avatar builds a disposable procedural kart preview', () => {
   }
 });
 
+test('online loadout storage randomizes a first-time paint and avatar', () => {
+  const storage = new MemoryStorage();
+  const samples = [0.999, 0.5];
+  assert.deepEqual(loadOnlineLoadout(storage, () => samples.shift()), {
+    characterId: 'kit',
+    paintId: 'graphite-gold',
+    avatarId: 'bear',
+  });
+});
+
 test('online loadout storage sanitizes invalid values and persists valid choices', () => {
   const storage = new MemoryStorage();
   storage.setItem(ONLINE_LOADOUT_STORAGE_KEY, JSON.stringify({
     characterId: 'missing', paintId: 'missing', avatarId: 'missing',
   }));
-  assert.deepEqual(loadOnlineLoadout(storage), DEFAULT_ONLINE_LOADOUT);
+  const samples = [0, 0.999];
+  assert.deepEqual(loadOnlineLoadout(storage, () => samples.shift()), {
+    characterId: 'kit',
+    paintId: 'turbo-blue',
+    avatarId: 'raccoon',
+  });
 
   const saved = saveOnlineLoadout({
     characterId: 'nova', paintId: 'sunset-pop', avatarId: 'fox',
@@ -80,6 +95,7 @@ test('online loadout storage sanitizes invalid values and persists valid choices
   assert.deepEqual(saved, {
     characterId: 'nova', paintId: 'sunset-pop', avatarId: 'fox',
   });
-  assert.deepEqual(loadOnlineLoadout(storage), saved);
+  assert.deepEqual(loadOnlineLoadout(storage, () => {
+    throw new Error('valid saved choices must not be randomized');
+  }), saved);
 });
-
