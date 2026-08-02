@@ -241,9 +241,15 @@ test('create, join and quick match reuse the existing Lobby socket', () => {
 
   client.createRoom({
     displayName: 'Nova', roomName: 'Nova Grid', roomType: 'private', maxPlayers: 6, password: 'FastPass',
+    characterId: 'kit', paintId: 'turbo-blue', avatarId: 'cat',
   });
-  client.joinRoom({ roomCode: 'ab2cd3', displayName: 'Nova', password: 'FastPass' });
-  client.quickMatch({ displayName: 'Nova' });
+  client.joinRoom({
+    roomCode: 'ab2cd3', displayName: 'Nova', password: 'FastPass',
+    characterId: 'kit', paintId: 'pearl-flash', avatarId: 'rabbit',
+  });
+  client.quickMatch({
+    displayName: 'Nova', characterId: 'kit', paintId: 'violet-volt', avatarId: 'fox',
+  });
 
   assert.equal(FakeWebSocket.instances.length, 1);
   assert.deepEqual(socket.sent.slice(1), [
@@ -255,6 +261,9 @@ test('create, join and quick match reuse the existing Lobby socket', () => {
       roomType: 'private',
       maxPlayers: 6,
       password: 'FastPass',
+      characterId: 'kit',
+      paintId: 'turbo-blue',
+      avatarId: 'cat',
     },
     {
       v: PROTOCOL_VERSION,
@@ -262,9 +271,34 @@ test('create, join and quick match reuse the existing Lobby socket', () => {
       roomCode: 'AB2CD3',
       displayName: 'Nova',
       password: 'FastPass',
+      characterId: 'kit',
+      paintId: 'pearl-flash',
+      avatarId: 'rabbit',
     },
-    { v: PROTOCOL_VERSION, type: 'quick_match', displayName: 'Nova' },
+    {
+      v: PROTOCOL_VERSION, type: 'quick_match', displayName: 'Nova',
+      characterId: 'kit', paintId: 'violet-volt', avatarId: 'fox',
+    },
   ]);
+});
+
+test('setLoadout sends one atomic Room command', () => {
+  FakeWebSocket.instances.length = 0;
+  const client = makeClient();
+  client.enterLobby();
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  boundWelcome(socket);
+  assert.equal(client.setLoadout({
+    characterId: 'kit', paintId: 'graphite-gold', avatarId: 'tiger',
+  }), true);
+  assert.deepEqual(socket.sent.at(-1), {
+    v: PROTOCOL_VERSION,
+    type: 'set_loadout',
+    characterId: 'kit',
+    paintId: 'graphite-gold',
+    avatarId: 'tiger',
+  });
 });
 
 test('a command issued while connecting is queued behind enter_lobby', () => {

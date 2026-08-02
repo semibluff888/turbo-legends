@@ -5,7 +5,12 @@
 // Keeping the view-model helpers free of DOM access makes protocol/UI behavior
 // straightforward to exercise with Node's built-in test runner.
 
-import { DIFFICULTY } from '../core/constants.js';
+import { CHARACTER_STAT_RANGE, DIFFICULTY } from '../core/constants.js';
+import {
+  AVATARS,
+  DEFAULT_ONLINE_LOADOUT,
+  PAINT_THEMES,
+} from '../game/appearance.js';
 import { CHARACTERS } from '../game/characters.js';
 import { onlineErrorMessage } from '../net/online-flow.js';
 import { ERROR_CODES, validateRoomPassword } from '../net/protocol.js';
@@ -22,6 +27,19 @@ const ROOM_TYPES = new Set(['public', 'private']);
 const IN_GAME_PHASES = new Set(['loading', 'countdown', 'racing', 'race', 'results', 'in_game', 'ingame']);
 const MEDALS = ['\u{1F947}', '\u{1F948}', '\u{1F949}'];
 const ERROR_COPY_KEYS = new Map(Object.entries(ERROR_CODES).map(([key, value]) => [value, key]));
+const LOADOUT_TABS = new Set(['racer', 'paint', 'avatar']);
+const LOADOUT_STAT_ROWS = [
+  ['speed', 'Speed'], ['accel', 'Accel'], ['handling', 'Turn'], ['weight', 'Weight'],
+];
+
+const cssColor = (value) => `#${(value >>> 0).toString(16).padStart(6, '0')}`;
+
+function sameLoadout(a, b) {
+  return Boolean(a && b
+    && a.characterId === b.characterId
+    && a.paintId === b.paintId
+    && a.avatarId === b.avatarId);
+}
 
 function firstDefined(...values) {
   return values.find((value) => value !== undefined && value !== null);
@@ -279,6 +297,8 @@ export function buildRoomView(roomState = {}, localParticipantId = '') {
       participantId,
       displayName: String(firstDefined(member.displayName, member.nickname, member.name, `Racer ${index + 1}`)),
       characterId: String(firstDefined(member.characterId, member.character?.id, '')),
+      paintId: String(firstDefined(member.paintId, DEFAULT_ONLINE_LOADOUT.paintId)),
+      avatarId: String(firstDefined(member.avatarId, DEFAULT_ONLINE_LOADOUT.avatarId)),
       ready: Boolean(firstDefined(member.ready, member.isReady, false)),
       connected: !['disconnected', 'offline', 'expired'].includes(state),
       connectionState: state,
@@ -297,7 +317,6 @@ export function buildRoomView(roomState = {}, localParticipantId = '') {
   const localMember = members.find((member) => member.isLocal) || null;
   const onlineMembers = members.filter((member) => member.connected);
   const reconnectingMembers = members.filter((member) => !member.connected);
-  const occupiedCharacterIds = members.map((member) => member.characterId).filter(Boolean);
   const everyoneOnline = members.length > 0 && onlineMembers.length === members.length;
   const everyoneReady = everyoneOnline && members.every((member) => member.ready);
   const serverAllowsStart = typeof roomState.canStart === 'boolean'
@@ -329,7 +348,6 @@ export function buildRoomView(roomState = {}, localParticipantId = '') {
     isHost,
     canManageRoom,
     canStart: isHost && serverAllowsStart && phase === 'waiting',
-    occupiedCharacterIds,
     trackId: String(firstDefined(settings.trackId, roomState.trackId, TRACKS[0]?.id, '')),
     difficulty: String(firstDefined(settings.difficulty, roomState.difficulty, 'normal')),
     autoFillAi: Boolean(firstDefined(settings.autoFillAi, roomState.autoFillAi, true)),
@@ -365,6 +383,8 @@ export function buildOnlineResultsView(resultState = {}, localParticipantId = ''
       participantId,
       displayName: String(firstDefined(row.displayName, row.nickname, row.name, `Racer ${index + 1}`)),
       characterId: String(firstDefined(row.characterId, row.character?.id, '')),
+      paintId: String(firstDefined(row.paintId, DEFAULT_ONLINE_LOADOUT.paintId)),
+      avatarId: String(firstDefined(row.avatarId, DEFAULT_ONLINE_LOADOUT.avatarId)),
       rank: Math.max(1, Math.trunc(finiteNumber(row.rank, row.position, index + 1) ?? index + 1)),
       finishTime,
       bestLap,
@@ -393,6 +413,19 @@ export class OnlineScreens {
 
     this.callbacks = callbacks || {};
     this.characters = options.characters || CHARACTERS;
+    this.paints = options.paints || PAINT_THEMES;
+    this.avatars = options.avatars || AVATARS;
+    this.characterById = new Map(this.characters.map((character) => [character.id, character]));
+    this.paintById = new Map(this.paints.map((paint) => [paint.id, paint]));
+    this.avatarById = new Map(this.avatars.map((avatar) => [avatar.id, avatar]));
+    this.defaultLoadout = {
+      characterId: this.characterById.has(DEFAULT_ONLINE_LOADOUT.characterId)
+        ? DEFAULT_ONLINE_LOADOUT.characterId : this.characters[0]?.id,
+      paintId: this.paintById.has(DEFAULT_ONLINE_LOADOUT.paintId)
+        ? DEFAULT_ONLINE_LOADOUT.paintId : this.paints[0]?.id,
+      avatarId: this.avatarById.has(DEFAULT_ONLINE_LOADOUT.avatarId)
+        ? DEFAULT_ONLINE_LOADOUT.avatarId : this.avatars[0]?.id,
+    };
     this.tracks = options.tracks || TRACKS;
     this.difficulties = options.difficulties || DIFFICULTY;
     this.location = options.location || globalThis.location;
@@ -415,6 +448,10 @@ export class OnlineScreens {
     this._activeAlert = null;
     this._roomReconnectFocus = null;
     this._pendingAction = null;
+    this._loadoutDraft = { ...this.defaultLoadout };
+    this._loadoutTab = 'racer';
+    this._pendingLoadout = null;
+    this._previewHost = null;
     this._toastTimer = null;
     this._sharedUi = null;
 
@@ -541,6 +578,7 @@ export class OnlineScreens {
   }
 
   _clearDialogFieldErrors(name) {
+    if (name === 'loadout') return;
     const fields = name === 'create'
       ? ['create-room-name', 'create-room-type', 'create-max-players', 'create-password']
       : ['join-password'];
@@ -575,7 +613,7 @@ export class OnlineScreens {
     if (action === 'join') return copy.joinTitle;
     if (action === 'create') return copy.createTitle;
     if (action === 'quick') return copy.quickTitle;
-    if (['start', 'ready', 'character', 'settings', 'kick'].includes(action)) return copy.roomTitle;
+    if (['start', 'ready', 'character', 'loadout', 'settings', 'kick'].includes(action)) return copy.roomTitle;
     return copy.genericTitle;
   }
 
@@ -586,6 +624,10 @@ export class OnlineScreens {
     const field = this._fieldForError(code, action);
     const text = this._errorText(message);
     this._pendingAction = null;
+    if (action === 'loadout') {
+      this._pendingLoadout = null;
+      this._syncLoadoutDialog();
+    }
     if (field && this.showFieldError(field, text, { focus: true })) return 'field';
     let restoreFocus = this.doc.activeElement;
     if (this._activeDialog?.name === 'join' && action === 'join') {
@@ -912,9 +954,21 @@ export class OnlineScreens {
             <h3>${copy.racers}</h3>
             <ol class="online-member-list" data-member-list></ol>
           </section>
-          <section class="online-card online-character-card">
-            <h3>${copy.chooseRacer}</h3>
-            <div class="online-character-grid" data-character-grid></div>
+          <section class="online-card online-loadout-card">
+            <h3>${copy.yourRacer}</h3>
+            <button type="button" class="online-loadout-preview-button" data-action="open-loadout">
+              <span class="online-loadout-preview-host" data-loadout-preview-host="room">
+                <span class="online-loadout-preview-fallback" data-loadout-avatar-glyph aria-hidden="true">\u{1F431}</span>
+              </span>
+              <span class="sr-only">${copy.customize}</span>
+            </button>
+            <div class="online-loadout-summary">
+              <strong data-loadout-racer>Kit</strong>
+              <span class="online-loadout-detail"><i data-loadout-paint-swatch></i><span data-loadout-paint>Turbo Blue</span></span>
+              <span class="online-loadout-detail"><span data-loadout-avatar-glyph>\u{1F431}</span><span data-loadout-avatar>Cat</span></span>
+            </div>
+            <button type="button" class="online-action online-action-secondary online-loadout-customize"
+              data-action="open-loadout">${copy.customize}</button>
           </section>
           <section class="online-card online-setup-card">
             <h3>${copy.raceSetup}</h3>
@@ -944,6 +998,57 @@ export class OnlineScreens {
           <button type="button" class="online-action online-action-primary" data-action="start">${copy.start}</button>
         </footer>
       </div>
+      <div class="online-dialog-backdrop online-loadout-backdrop" data-dialog="loadout" hidden>
+        <form class="online-loadout-dialog" data-form="loadout" role="dialog" aria-modal="true"
+          aria-labelledby="online-loadout-heading">
+          <header class="online-dialog-header">
+            <div>
+              <p class="online-eyebrow">${copy.loadoutEyebrow}</p>
+              <h3 id="online-loadout-heading">${copy.customizeRacer}</h3>
+            </div>
+            <button type="button" class="online-dialog-close" data-action="close-loadout"
+              aria-label="${copy.close}">\u00d7</button>
+          </header>
+          <div class="online-loadout-dialog-grid">
+            <section class="online-loadout-dialog-preview">
+              <div class="online-loadout-preview-host" data-loadout-preview-host="dialog">
+                <span class="online-loadout-preview-fallback" data-loadout-avatar-glyph aria-hidden="true">\u{1F431}</span>
+              </div>
+              <div class="online-loadout-dialog-selection">
+                <strong data-draft-racer>Kit</strong>
+                <span data-draft-paint>Turbo Blue</span>
+                <span data-draft-avatar>Cat</span>
+              </div>
+            </section>
+            <section class="online-loadout-editor">
+              <div class="online-loadout-tabs" role="tablist" aria-label="${copy.customizeRacer}">
+                <button type="button" role="tab" id="online-loadout-tab-racer"
+                  aria-controls="online-loadout-panel-racer" data-loadout-tab="racer">${copy.racerTab}</button>
+                <button type="button" role="tab" id="online-loadout-tab-paint"
+                  aria-controls="online-loadout-panel-paint" data-loadout-tab="paint">${copy.paintTab}</button>
+                <button type="button" role="tab" id="online-loadout-tab-avatar"
+                  aria-controls="online-loadout-panel-avatar" data-loadout-tab="avatar">${copy.avatarTab}</button>
+              </div>
+              <div class="online-loadout-panel" id="online-loadout-panel-racer"
+                aria-labelledby="online-loadout-tab-racer" data-loadout-panel="racer" role="tabpanel">
+                <div class="online-loadout-racer-grid" data-loadout-racer-grid></div>
+              </div>
+              <div class="online-loadout-panel" id="online-loadout-panel-paint"
+                aria-labelledby="online-loadout-tab-paint" data-loadout-panel="paint" role="tabpanel" hidden>
+                <div class="online-loadout-paint-grid" data-loadout-paint-grid></div>
+              </div>
+              <div class="online-loadout-panel" id="online-loadout-panel-avatar"
+                aria-labelledby="online-loadout-tab-avatar" data-loadout-panel="avatar" role="tabpanel" hidden>
+                <div class="online-loadout-avatar-grid" data-loadout-avatar-grid></div>
+              </div>
+            </section>
+          </div>
+          <footer class="online-dialog-actions online-loadout-actions">
+            <button type="button" class="online-action online-action-quiet" data-action="cancel-loadout">${copy.cancel}</button>
+            <button type="submit" class="online-action online-action-primary" data-action="save-loadout">${copy.save}</button>
+          </footer>
+        </form>
+      </div>
       <div class="online-room-reconnect-backdrop" data-room-reconnect hidden>
         <section class="online-room-reconnect" role="status" aria-live="assertive"
           aria-busy="true" tabindex="-1">
@@ -956,19 +1061,63 @@ export class OnlineScreens {
     this._listen(root, 'keydown', (event) => this._handleScreenKeydown(event));
     this._wirePageActions(root);
 
-    const characterGrid = root.querySelector('[data-character-grid]');
+    const racerGrid = root.querySelector('[data-loadout-racer-grid]');
     for (const character of this.characters) {
-      const button = createNode(this.doc, 'button', 'online-character-option', characterGrid);
+      const button = createNode(this.doc, 'button', 'online-loadout-racer-option', racerGrid);
       button.type = 'button';
-      button.dataset.characterId = character.id;
-      button.style.setProperty('--character-color', `#${(character.color >>> 0).toString(16).padStart(6, '0')}`);
-      createNode(this.doc, 'span', 'online-character-swatch', button, '\u{1F3CE}\u{FE0F}');
-      createNode(this.doc, 'span', 'online-character-name', button, character.name);
-      createNode(this.doc, 'span', 'online-character-lock', button, copy.taken);
-      this._listen(button, 'click', () => {
-        this._pendingAction = { kind: 'character' };
-        this._emit('onSelectCharacter', { characterId: character.id });
-      });
+      button.dataset.loadoutCharacterId = character.id;
+      const swatch = createNode(this.doc, 'span', 'online-loadout-racer-swatch', button, '\u{1F3CE}\u{FE0F}');
+      swatch.style.background = `linear-gradient(135deg, ${cssColor(character.color)}, ${cssColor(character.accentColor)})`;
+      const body = createNode(this.doc, 'span', 'online-loadout-racer-body', button);
+      const nameRow = createNode(this.doc, 'span', 'online-loadout-racer-name-row', body);
+      createNode(this.doc, 'strong', '', nameRow, character.name);
+      createNode(this.doc, 'span', `chip chip-${character.weightClass}`, nameRow, character.weightClass);
+      createNode(this.doc, 'span', 'online-loadout-racer-blurb', body, character.blurb);
+      const stats = createNode(this.doc, 'span', 'online-loadout-racer-stats', body);
+      for (const [key, label] of LOADOUT_STAT_ROWS) {
+        const row = createNode(this.doc, 'span', 'online-loadout-stat-row', stats);
+        createNode(this.doc, 'span', '', row, label);
+        const bar = createNode(this.doc, 'span', 'online-loadout-stat-bar', row);
+        const fill = createNode(this.doc, 'span', 'online-loadout-stat-fill', bar);
+        const [minimum, maximum] = CHARACTER_STAT_RANGE[key];
+        fill.style.width = `${Math.max(8, Math.min(100,
+          ((character.stats[key] - minimum) / (maximum - minimum)) * 100)).toFixed(0)}%`;
+      }
+      this._listen(button, 'click', () => this._updateLoadoutDraft({ characterId: character.id }));
+    }
+
+    const paintGrid = root.querySelector('[data-loadout-paint-grid]');
+    for (const paint of this.paints) {
+      const button = createNode(this.doc, 'button', 'online-loadout-paint-option', paintGrid);
+      button.type = 'button';
+      button.dataset.loadoutPaintId = paint.id;
+      const swatch = createNode(this.doc, 'span', 'online-loadout-paint-swatch', button);
+      swatch.style.background = `linear-gradient(135deg, ${cssColor(paint.color)} 52%, ${cssColor(paint.accentColor)} 52%)`;
+      createNode(this.doc, 'strong', '', button, paint.name);
+      this._listen(button, 'click', () => this._updateLoadoutDraft({ paintId: paint.id }));
+    }
+
+    const avatarGrid = root.querySelector('[data-loadout-avatar-grid]');
+    for (const avatar of this.avatars) {
+      const button = createNode(this.doc, 'button', 'online-loadout-avatar-option', avatarGrid);
+      button.type = 'button';
+      button.dataset.loadoutAvatarId = avatar.id;
+      createNode(this.doc, 'span', 'online-loadout-avatar-glyph', button, avatar.glyph);
+      createNode(this.doc, 'strong', '', button, avatar.name);
+      this._listen(button, 'click', () => this._updateLoadoutDraft({ avatarId: avatar.id }));
+    }
+
+    for (const button of root.querySelectorAll('[data-action="open-loadout"]')) {
+      this._listen(button, 'click', (event) => this._openLoadoutDialog(event.currentTarget));
+    }
+    this._listen(root.querySelector('[data-action="close-loadout"]'), 'click', () => this._closeDialog());
+    this._listen(root.querySelector('[data-action="cancel-loadout"]'), 'click', () => this._closeDialog());
+    this._listen(root.querySelector('[data-form="loadout"]'), 'submit', (event) => {
+      event.preventDefault();
+      this._submitLoadout();
+    });
+    for (const tab of root.querySelectorAll('[data-loadout-tab]')) {
+      this._listen(tab, 'click', () => this._setLoadoutTab(tab.dataset.loadoutTab));
     }
 
     const trackSelect = root.querySelector('[data-room-setting="trackId"]');
@@ -1025,6 +1174,154 @@ export class OnlineScreens {
     this._listen(root.querySelector('[data-action="copy"]'), 'click', () => this._copyInvite());
   }
 
+  _sanitizeLoadout(value) {
+    const source = value && typeof value === 'object' ? value : {};
+    return {
+      characterId: this.characterById.has(source.characterId)
+        ? source.characterId : this.defaultLoadout.characterId,
+      paintId: this.paintById.has(source.paintId)
+        ? source.paintId : this.defaultLoadout.paintId,
+      avatarId: this.avatarById.has(source.avatarId)
+        ? source.avatarId : this.defaultLoadout.avatarId,
+    };
+  }
+
+  _memberLoadout(member = this._roomView.localMember) {
+    return this._sanitizeLoadout(member);
+  }
+
+  _mountLoadoutPreview(host, loadout) {
+    if (!host) return;
+    this._previewHost = host;
+    this._emit('onLoadoutPreviewMount', { host, loadout: { ...loadout } });
+  }
+
+  _updateLoadoutPreview(loadout) {
+    if (!this._previewHost) return;
+    this._emit('onLoadoutPreviewChange', { loadout: { ...loadout } });
+  }
+
+  _detachLoadoutPreview() {
+    if (!this._previewHost) return;
+    this._previewHost = null;
+    this._emit('onLoadoutPreviewDetach');
+  }
+
+  _openLoadoutDialog(opener) {
+    if (this._busy || this._pendingLoadout || !this._roomView.canManageRoom) return;
+    const node = this.roots.room?.querySelector('[data-dialog="loadout"]');
+    if (!node) return;
+    this._closeDialog(false);
+    this._loadoutDraft = this._memberLoadout();
+    this._loadoutTab = 'racer';
+    node.hidden = false;
+    this._activeDialog = { name: 'loadout', node, opener };
+    this._syncLoadoutDialog();
+    this._mountLoadoutPreview(
+      node.querySelector('[data-loadout-preview-host="dialog"]'),
+      this._loadoutDraft,
+    );
+    node.querySelector('[data-loadout-tab="racer"]')?.focus();
+  }
+
+  _setLoadoutTab(tab) {
+    if (!LOADOUT_TABS.has(tab) || this._pendingLoadout) return;
+    this._loadoutTab = tab;
+    this._syncLoadoutDialog();
+  }
+
+  _updateLoadoutDraft(patch) {
+    if (this._activeDialog?.name !== 'loadout' || this._pendingLoadout) return;
+    this._loadoutDraft = this._sanitizeLoadout({ ...this._loadoutDraft, ...patch });
+    this._syncLoadoutDialog();
+    this._updateLoadoutPreview(this._loadoutDraft);
+  }
+
+  _syncLoadoutDialog() {
+    const node = this.roots.room?.querySelector('[data-dialog="loadout"]');
+    if (!node) return;
+    const character = this.characters.find((candidate) => candidate.id === this._loadoutDraft.characterId)
+      || this.characters[0];
+    const paint = this.paints.find((candidate) => candidate.id === this._loadoutDraft.paintId)
+      || this.paints[0];
+    const avatar = this.avatars.find((candidate) => candidate.id === this._loadoutDraft.avatarId)
+      || this.avatars[0];
+    node.querySelector('[data-draft-racer]').textContent = character?.name || '';
+    node.querySelector('[data-draft-paint]').textContent = paint?.name || '';
+    node.querySelector('[data-draft-avatar]').textContent = avatar?.name || '';
+    node.querySelector('[data-loadout-avatar-glyph]').textContent = avatar?.glyph || '';
+
+    for (const tab of node.querySelectorAll('[data-loadout-tab]')) {
+      const active = tab.dataset.loadoutTab === this._loadoutTab;
+      tab.setAttribute('aria-selected', String(active));
+      tab.tabIndex = active ? 0 : -1;
+      tab.disabled = Boolean(this._pendingLoadout);
+    }
+    for (const panel of node.querySelectorAll('[data-loadout-panel]')) {
+      panel.hidden = panel.dataset.loadoutPanel !== this._loadoutTab;
+    }
+    for (const button of node.querySelectorAll('[data-loadout-character-id]')) {
+      const selected = button.dataset.loadoutCharacterId === this._loadoutDraft.characterId;
+      button.classList.toggle('is-selected', selected);
+      button.setAttribute('aria-pressed', String(selected));
+      button.disabled = Boolean(this._pendingLoadout);
+    }
+    for (const button of node.querySelectorAll('[data-loadout-paint-id]')) {
+      const selected = button.dataset.loadoutPaintId === this._loadoutDraft.paintId;
+      button.classList.toggle('is-selected', selected);
+      button.setAttribute('aria-pressed', String(selected));
+      button.disabled = Boolean(this._pendingLoadout);
+    }
+    for (const button of node.querySelectorAll('[data-loadout-avatar-id]')) {
+      const selected = button.dataset.loadoutAvatarId === this._loadoutDraft.avatarId;
+      button.classList.toggle('is-selected', selected);
+      button.setAttribute('aria-pressed', String(selected));
+      button.disabled = Boolean(this._pendingLoadout);
+    }
+    const unchanged = sameLoadout(this._loadoutDraft, this._memberLoadout());
+    node.querySelector('[data-action="save-loadout"]').disabled = Boolean(this._pendingLoadout) || unchanged;
+    node.querySelector('[data-action="cancel-loadout"]').disabled = Boolean(this._pendingLoadout);
+    node.querySelector('[data-action="close-loadout"]').disabled = Boolean(this._pendingLoadout);
+    node.setAttribute('aria-busy', String(Boolean(this._pendingLoadout)));
+  }
+
+  _submitLoadout() {
+    if (this._activeDialog?.name !== 'loadout' || this._pendingLoadout) return;
+    if (sameLoadout(this._loadoutDraft, this._memberLoadout())) {
+      this._closeDialog();
+      return;
+    }
+    this._pendingLoadout = { ...this._loadoutDraft };
+    this._pendingAction = { kind: 'loadout' };
+    this._syncLoadoutDialog();
+    const sent = this._emit('onSetLoadout', { ...this._pendingLoadout });
+    if (sent === false) {
+      this._pendingLoadout = null;
+      this._pendingAction = null;
+      this._syncLoadoutDialog();
+      this.presentError(UI_COPY.online.errors.generic, { action: 'loadout' });
+    }
+  }
+
+  _syncRoomLoadoutSummary(loadout) {
+    const root = this.roots.room;
+    if (!root) return;
+    const character = this.characters.find((candidate) => candidate.id === loadout.characterId)
+      || this.characters[0];
+    const paint = this.paints.find((candidate) => candidate.id === loadout.paintId)
+      || this.paints[0];
+    const avatar = this.avatars.find((candidate) => candidate.id === loadout.avatarId)
+      || this.avatars[0];
+    root.querySelector('[data-loadout-racer]').textContent = character?.name || '';
+    root.querySelector('[data-loadout-paint]').textContent = paint?.name || '';
+    root.querySelector('[data-loadout-avatar]').textContent = avatar?.name || '';
+    root.querySelector('[data-loadout-preview-host="room"] [data-loadout-avatar-glyph]').textContent = avatar?.glyph || '';
+    const swatch = root.querySelector('[data-loadout-paint-swatch]');
+    if (swatch && paint) {
+      swatch.style.background = `linear-gradient(135deg, ${cssColor(paint.color)} 52%, ${cssColor(paint.accentColor)} 52%)`;
+    }
+  }
+
   _buildResults() {
     const root = this.roots.results;
     if (!root) return;
@@ -1069,6 +1366,21 @@ export class OnlineScreens {
       return;
     }
     if (!this._activeDialog) return;
+    if (this._activeDialog.name === 'loadout'
+      && event.target?.matches?.('[data-loadout-tab]')
+      && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+      const tabs = [...this._activeDialog.node.querySelectorAll('[data-loadout-tab]:not(:disabled)')];
+      const current = tabs.indexOf(event.target);
+      if (current >= 0 && tabs.length > 0) {
+        const next = event.key === 'Home' ? 0
+          : event.key === 'End' ? tabs.length - 1
+            : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+        event.preventDefault();
+        this._setLoadoutTab(tabs[next].dataset.loadoutTab);
+        tabs[next].focus();
+        return;
+      }
+    }
     if (event.key === 'Escape') {
       event.preventDefault();
       this._closeDialog();
@@ -1190,7 +1502,8 @@ export class OnlineScreens {
 
   _openDialog(name, opener, room = null) {
     this._closeDialog(false);
-    const node = this.roots.lobby?.querySelector(`[data-dialog="${name}"]`);
+    const node = this.roots.lobby?.querySelector(`[data-dialog="${name}"]`)
+      || this.roots.room?.querySelector(`[data-dialog="${name}"]`);
     if (!node) return;
     node.hidden = false;
     this._activeDialog = { name, node, opener, room };
@@ -1201,12 +1514,26 @@ export class OnlineScreens {
 
   _closeDialog(restoreFocus = true) {
     if (!this._activeDialog) return;
-    const { node, opener } = this._activeDialog;
+    const { name, node, opener } = this._activeDialog;
+    if (name === 'loadout' && this._pendingLoadout && restoreFocus) return;
     for (const password of node.querySelectorAll('input[type="password"]')) password.value = '';
-    this._clearDialogFieldErrors(this._activeDialog.name);
+    this._clearDialogFieldErrors(name);
     node.hidden = true;
     this._activeDialog = null;
-    if (restoreFocus && opener?.isConnected && !this.roots.lobby?.hidden) opener.focus();
+    if (name === 'loadout') {
+      if (!restoreFocus) this._pendingLoadout = null;
+      this._loadoutDraft = this._memberLoadout();
+      if (this._screen === 'room' && !this.roots.room?.hidden) {
+        this._mountLoadoutPreview(
+          this.roots.room.querySelector('[data-loadout-preview-host="room"]'),
+          this._loadoutDraft,
+        );
+      } else {
+        this._detachLoadoutPreview();
+      }
+    }
+    const rootVisible = name === 'loadout' ? !this.roots.room?.hidden : !this.roots.lobby?.hidden;
+    if (restoreFocus && opener?.isConnected && rootVisible) opener.focus();
   }
 
   _refreshLobbyView() {
@@ -1336,6 +1663,7 @@ export class OnlineScreens {
 
   _show(name) {
     this._closeDialog(false);
+    if (name !== 'room') this._detachLoadoutPreview();
     for (const [key, root] of Object.entries(this.roots)) {
       if (root) root.hidden = key !== name;
     }
@@ -1414,6 +1742,27 @@ export class OnlineScreens {
     const root = this.roots.room;
     if (!root) return view;
     const copy = UI_COPY.online.room;
+    const authoritativeLoadout = this._memberLoadout(view.localMember);
+    if (this._pendingLoadout && sameLoadout(authoritativeLoadout, this._pendingLoadout)) {
+      const committed = { ...this._pendingLoadout };
+      this._pendingLoadout = null;
+      this._pendingAction = null;
+      this._loadoutDraft = committed;
+      this._emit('onLoadoutCommitted', committed);
+      if (this._activeDialog?.name === 'loadout') this._closeDialog();
+    } else if (this._activeDialog?.name === 'loadout' && !view.canManageRoom) {
+      this._closeDialog(false);
+    }
+    this._syncRoomLoadoutSummary(authoritativeLoadout);
+    if (this._activeDialog?.name === 'loadout') {
+      this._syncLoadoutDialog();
+      this._updateLoadoutPreview(this._loadoutDraft);
+    } else if (this._screen === 'room') {
+      this._mountLoadoutPreview(
+        root.querySelector('[data-loadout-preview-host="room"]'),
+        authoritativeLoadout,
+      );
+    }
     root.querySelector('[data-room-name]').textContent = view.roomName;
     const type = root.querySelector('[data-room-type]');
     type.textContent = view.roomType === 'private' ? copy.privateRoom : copy.publicRoom;
@@ -1424,7 +1773,6 @@ export class OnlineScreens {
     root.querySelector('[data-room-code]').textContent = view.roomCode || '------';
     root.querySelector('[data-action="copy"]').disabled = !view.roomCode;
 
-    const characterById = new Map(this.characters.map((character) => [character.id, character]));
     const memberList = root.querySelector('[data-member-list]');
     memberList.innerHTML = '';
     const sortedMembers = view.members.slice().sort((a, b) => a.joinOrder - b.joinOrder);
@@ -1446,14 +1794,15 @@ export class OnlineScreens {
       const name = createNode(this.doc, 'span', 'online-member-name', identity, member.displayName);
       if (member.isLocal) createNode(this.doc, 'span', 'online-mini-chip', name, copy.you);
       if (member.isHost) createNode(this.doc, 'span', 'online-mini-chip is-host', name, copy.host);
-      const character = characterById.get(member.characterId);
-      createNode(
-        this.doc,
-        'span',
-        'online-member-character',
-        identity,
-        character?.name || copy.choosing,
-      );
+      const character = this.characterById.get(member.characterId);
+      const loadout = createNode(this.doc, 'span', 'online-member-loadout', identity);
+      const memberLoadout = this._sanitizeLoadout(member);
+      const avatar = this.avatarById.get(memberLoadout.avatarId);
+      const paint = this.paintById.get(memberLoadout.paintId);
+      createNode(this.doc, 'span', 'online-member-avatar', loadout, avatar?.glyph || '\u{1F3CE}\u{FE0F}');
+      const paintDot = createNode(this.doc, 'span', 'online-member-paint', loadout);
+      paintDot.style.background = paint ? cssColor(paint.color) : 'currentColor';
+      createNode(this.doc, 'span', 'online-member-character', loadout, character?.name || copy.choosing);
       const badges = createNode(this.doc, 'span', 'online-member-badges', item);
       const inGame = member.activityState === 'in_game';
       const ready = createNode(
@@ -1479,16 +1828,8 @@ export class OnlineScreens {
       }
     }
 
-    for (const button of root.querySelectorAll('[data-character-id]')) {
-      const id = button.dataset.characterId;
-      const selected = view.localMember?.characterId === id;
-      const occupiedByOther = view.members.some((member) => (
-        member.characterId === id && member.participantId !== view.localMember?.participantId
-      ));
-      button.classList.toggle('is-selected', selected);
-      button.classList.toggle('is-locked', occupiedByOther);
-      button.disabled = this._busy || !view.canManageRoom || occupiedByOther;
-      button.setAttribute('aria-pressed', String(selected));
+    for (const button of root.querySelectorAll('[data-action="open-loadout"]')) {
+      button.disabled = this._busy || Boolean(this._pendingLoadout) || !view.canManageRoom;
     }
 
     const trackSelect = root.querySelector('[data-room-setting="trackId"]');
@@ -1508,12 +1849,13 @@ export class OnlineScreens {
     ready.textContent = view.localMember?.ready ? copy.cancelReady : copy.readyUp;
     ready.classList.toggle('is-active', Boolean(view.localMember?.ready));
     ready.disabled = this._busy
+      || Boolean(this._pendingLoadout)
       || !view.canManageRoom
       || !view.localMember?.connected
       || !view.localMember?.characterId;
     const start = root.querySelector('[data-action="start"]');
     start.hidden = !view.isHost;
-    start.disabled = this._busy || !view.canStart;
+    start.disabled = this._busy || Boolean(this._pendingLoadout) || !view.canStart;
     root.querySelector('[data-action="leave"]').disabled = this._busy;
 
     const status = roomStatusMessage(view, copy);
@@ -1543,15 +1885,20 @@ export class OnlineScreens {
     root.querySelector('[data-results-track]').textContent = view.trackName;
     const body = root.querySelector('tbody');
     body.innerHTML = '';
-    const characterById = new Map(this.characters.map((character) => [character.id, character]));
     view.standings.forEach((result, index) => {
       const row = createNode(this.doc, 'tr', result.isLocal ? 'is-local' : '', body);
       row.style.setProperty('--row-i', index);
       const place = createNode(this.doc, 'td', 'online-result-rank', row);
       place.textContent = result.rank <= 3 ? MEDALS[result.rank - 1] : ordinal(result.rank);
       const racer = createNode(this.doc, 'td', 'online-result-racer', row);
+      const resultLoadout = this._sanitizeLoadout(result);
+      const avatar = this.avatarById.get(resultLoadout.avatarId);
+      const paint = this.paintById.get(resultLoadout.paintId);
+      createNode(this.doc, 'span', 'online-result-avatar', racer, avatar?.glyph || '\u{1F3CE}\u{FE0F}');
+      const paintDot = createNode(this.doc, 'span', 'online-result-paint', racer);
+      paintDot.style.background = paint ? cssColor(paint.color) : 'currentColor';
       createNode(this.doc, 'span', 'online-result-name', racer, result.displayName);
-      const character = characterById.get(result.characterId);
+      const character = this.characterById.get(result.characterId);
       if (character) createNode(this.doc, 'span', 'online-result-character', racer, character.name);
       if (result.isLocal) createNode(this.doc, 'span', 'online-mini-chip', racer, UI_COPY.online.room.you);
       createNode(this.doc, 'td', 'online-result-time', row, result.finished ? formatOnlineTime(result.finishTime) : 'DNF');
@@ -1642,6 +1989,7 @@ export class OnlineScreens {
 
   hideAll() {
     this._closeDialog(false);
+    this._detachLoadoutPreview();
     this.dismissAlert(false);
     this.setRoomReconnecting(false, { restoreFocus: false });
     if (this._toastTimer) clearTimeout(this._toastTimer);

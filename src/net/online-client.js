@@ -151,6 +151,8 @@ export class OnlineClient {
       message.password = String(value.password);
     }
     if (value.characterId) message.characterId = String(value.characterId);
+    if (value.paintId) message.paintId = String(value.paintId);
+    if (value.avatarId) message.avatarId = String(value.avatarId);
     return this._sendLobbyCommand(message);
   }
 
@@ -168,6 +170,8 @@ export class OnlineClient {
       message.password = String(value.password);
     }
     if (value.characterId) message.characterId = String(value.characterId);
+    if (value.paintId) message.paintId = String(value.paintId);
+    if (value.avatarId) message.avatarId = String(value.avatarId);
     return this._sendLobbyCommand(message);
   }
 
@@ -181,6 +185,8 @@ export class OnlineClient {
       displayName: displayNameOf(value.displayName),
     };
     if (value.characterId) message.characterId = String(value.characterId);
+    if (value.paintId) message.paintId = String(value.paintId);
+    if (value.avatarId) message.avatarId = String(value.avatarId);
     return this._sendLobbyCommand(message);
   }
 
@@ -193,6 +199,15 @@ export class OnlineClient {
 
   selectCharacter(characterId) {
     return this.send({ type: CLIENT_MESSAGE_TYPES.SELECT_CHARACTER, characterId });
+  }
+
+  setLoadout({ characterId, paintId, avatarId }) {
+    return this.send({
+      type: CLIENT_MESSAGE_TYPES.SET_LOADOUT,
+      characterId,
+      paintId,
+      avatarId,
+    });
   }
 
   setRoom(settings) {

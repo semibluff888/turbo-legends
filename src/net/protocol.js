@@ -4,6 +4,8 @@
 // native browser WebSocket client import the same message names and input
 // validator, preventing the two sides from silently drifting apart.
 
+import { isAvatarId, isPaintId } from '../game/appearance.js';
+
 export const PROTOCOL_VERSION = 2;
 export const MAX_CLIENT_MESSAGE_BYTES = 16 * 1024;
 export const MAX_CLIENT_MESSAGES_PER_SECOND = 120;
@@ -16,6 +18,7 @@ export const CLIENT_MESSAGE_TYPES = Object.freeze({
   QUICK_MATCH: 'quick_match',
   RESUME: 'resume',
   SELECT_CHARACTER: 'select_character',
+  SET_LOADOUT: 'set_loadout',
   SET_ROOM: 'set_room',
   SET_READY: 'set_ready',
   KICK_PLAYER: 'kick_player',
@@ -85,6 +88,8 @@ export const ERROR_CODES = Object.freeze({
   NAME_INVALID: 'name_invalid',
   CHARACTER_INVALID: 'character_invalid',
   CHARACTER_TAKEN: 'character_taken',
+  PAINT_INVALID: 'paint_invalid',
+  AVATAR_INVALID: 'avatar_invalid',
   FORBIDDEN: 'forbidden',
   INVALID_STATE: 'invalid_state',
   INVALID_SETTING: 'invalid_setting',
@@ -231,6 +236,12 @@ export function validateClientMessage(message) {
       if (!optionalId(message.characterId)) {
         return fail(ERROR_CODES.CHARACTER_INVALID, 'Invalid character id.');
       }
+      if (message.paintId !== undefined && !isPaintId(message.paintId)) {
+        return fail(ERROR_CODES.PAINT_INVALID, 'Invalid paint id.');
+      }
+      if (message.avatarId !== undefined && !isAvatarId(message.avatarId)) {
+        return fail(ERROR_CODES.AVATAR_INVALID, 'Invalid avatar id.');
+      }
       if (message.type === CLIENT_MESSAGE_TYPES.CREATE_ROOM) {
         const roomName = validateRoomName(message.roomName);
         if (!roomName.ok) return roomName;
@@ -258,6 +269,8 @@ export function validateClientMessage(message) {
       }
       base.displayName = name.value;
       if (message.characterId !== undefined) base.characterId = message.characterId;
+      if (message.paintId !== undefined) base.paintId = message.paintId;
+      if (message.avatarId !== undefined) base.avatarId = message.avatarId;
       return { ok: true, value: base };
     }
 
@@ -281,6 +294,26 @@ export function validateClientMessage(message) {
         return fail(ERROR_CODES.CHARACTER_INVALID, 'Invalid character id.');
       }
       return { ok: true, value: { ...base, characterId: message.characterId } };
+
+    case CLIENT_MESSAGE_TYPES.SET_LOADOUT:
+      if (typeof message.characterId !== 'string' || !ID_PATTERN.test(message.characterId)) {
+        return fail(ERROR_CODES.CHARACTER_INVALID, 'Invalid character id.');
+      }
+      if (!isPaintId(message.paintId)) {
+        return fail(ERROR_CODES.PAINT_INVALID, 'Invalid paint id.');
+      }
+      if (!isAvatarId(message.avatarId)) {
+        return fail(ERROR_CODES.AVATAR_INVALID, 'Invalid avatar id.');
+      }
+      return {
+        ok: true,
+        value: {
+          ...base,
+          characterId: message.characterId,
+          paintId: message.paintId,
+          avatarId: message.avatarId,
+        },
+      };
 
     case CLIENT_MESSAGE_TYPES.SET_ROOM: {
       if (message.trackId === undefined

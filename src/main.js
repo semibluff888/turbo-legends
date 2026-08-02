@@ -26,6 +26,7 @@ import { makeControls, resetControls } from './game/kart.js';
 import { createRenderer, buildScene } from './render/scene.js';
 import { buildTrackMesh } from './render/trackMesh.js';
 import { KartVisual } from './render/kartMesh.js';
+import { KartShowroom } from './render/kart-showroom.js';
 import { Effects } from './render/effects.js';
 import { ChaseCamera } from './render/camera.js';
 import { Hud } from './ui/hud.js';
@@ -37,6 +38,7 @@ import {
   loadOnlineDisplayName,
   saveOnlineDisplayName,
 } from './ui/online-nickname.js';
+import { loadOnlineLoadout, saveOnlineLoadout } from './ui/online-loadout-store.js';
 import { loadSettings, resetSettings, saveSettings } from './ui/settings-store.js';
 import { AudioManager } from './audio/audio.js';
 import { InputManager } from './input/input.js?v=20260731-standings';
@@ -52,6 +54,7 @@ const camera = new THREE.PerspectiveCamera(
 
 const input = new InputManager(window);
 const audio = new AudioManager();
+const loadoutShowroom = new KartShowroom();
 let gameSettings = loadSettings();
 audio.applySettings(gameSettings);
 
@@ -79,6 +82,7 @@ let onlineRoomState = null;
 let onlineResultsState = null;
 let pendingOnlineError = null;
 let onlineDisplayName = '';
+let onlineLoadout = loadOnlineLoadout();
 let handledInviteRoomCode = '';
 let pendingInviteJoinCode = '';
 let localRoomReconnecting = false;
@@ -188,6 +192,7 @@ const onlineScreens = new OnlineScreens({
       roomName,
       roomType,
       maxPlayers,
+      ...onlineLoadout,
       ...(password !== undefined ? { password } : {}),
     });
   },
@@ -205,6 +210,7 @@ const onlineScreens = new OnlineScreens({
     onlineClient.joinRoom({
       roomCode,
       displayName: savedName,
+      ...onlineLoadout,
       ...(password !== undefined ? { password } : {}),
     });
   },
@@ -214,10 +220,26 @@ const onlineScreens = new OnlineScreens({
     clearOnlineRoomUrl();
     pendingOnlineError = null;
     onlineScreens.setBusy(true);
-    onlineClient.quickMatch({ displayName: savedName });
+    onlineClient.quickMatch({ displayName: savedName, ...onlineLoadout });
   },
   onSelectCharacter({ characterId }) {
     onlineClient.selectCharacter(characterId);
+  },
+  onSetLoadout(loadout) {
+    return onlineClient.setLoadout(loadout);
+  },
+  onLoadoutCommitted(loadout) {
+    onlineLoadout = saveOnlineLoadout(loadout);
+  },
+  onLoadoutPreviewMount({ host, loadout }) {
+    loadoutShowroom.attach(host);
+    loadoutShowroom.setLoadout(loadout);
+  },
+  onLoadoutPreviewChange({ loadout }) {
+    loadoutShowroom.setLoadout(loadout);
+  },
+  onLoadoutPreviewDetach() {
+    loadoutShowroom.detach();
   },
   onSetRoom(settings) {
     onlineClient.setRoom(settings);
@@ -383,6 +405,8 @@ function showOnlineRoom(message, { preservePanel = false } = {}) {
     race?.session.kind === 'online',
     onlineClient.selfId,
   )) return;
+
+  if (!race) destroyAttract();
 
   networkStatus.showDetails();
   hud.hide();
@@ -1011,6 +1035,11 @@ function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min((now - lastTime) / 1000, MAX_FRAME_TIME);
   lastTime = now;
+
+  if (mode === 'online-room'
+    || ((mode === 'settings' || mode === 'help') && panelReturn === 'online-room')) {
+    loadoutShowroom.update(dt);
+  }
 
   input.setStandingsContext(mode === 'race' && !paused);
   input.update();

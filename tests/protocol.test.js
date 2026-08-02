@@ -17,6 +17,7 @@ test('protocol v2 exports Lobby, Room, and matchmaking message names', () => {
   assert.equal(CLIENT_MESSAGE_TYPES.ENTER_LOBBY, 'enter_lobby');
   assert.equal(CLIENT_MESSAGE_TYPES.CREATE_ROOM, 'create_room');
   assert.equal(CLIENT_MESSAGE_TYPES.QUICK_MATCH, 'quick_match');
+  assert.equal(CLIENT_MESSAGE_TYPES.SET_LOADOUT, 'set_loadout');
   assert.equal(CLIENT_MESSAGE_TYPES.RETURN_ROOM, 'return_room');
   assert.equal(CLIENT_MESSAGE_TYPES.LEAVE_ROOM, 'leave_room');
   assert.equal(CLIENT_MESSAGE_TYPES.KICK_PLAYER, 'kick_player');
@@ -27,6 +28,37 @@ test('protocol v2 exports Lobby, Room, and matchmaking message names', () => {
   assert.equal(ROOM_STATES.WAITING, 'waiting');
   assert.equal(ROOM_TYPES.PUBLIC, 'public');
   assert.equal(ROOM_TYPES.PRIVATE, 'private');
+});
+
+test('online loadouts validate atomically and can accompany room entry', () => {
+  assert.deepEqual(validateClientMessage({
+    type: 'set_loadout', v: 2,
+    characterId: 'kit', paintId: 'turbo-blue', avatarId: 'cat', ignored: true,
+  }), {
+    ok: true,
+    value: {
+      type: 'set_loadout', v: 2,
+      characterId: 'kit', paintId: 'turbo-blue', avatarId: 'cat',
+    },
+  });
+  assert.equal(validateClientMessage({
+    type: 'set_loadout', v: 2,
+    characterId: 'kit', paintId: 'unknown', avatarId: 'cat',
+  }).error.code, ERROR_CODES.PAINT_INVALID);
+  assert.equal(validateClientMessage({
+    type: 'set_loadout', v: 2,
+    characterId: 'kit', paintId: 'turbo-blue', avatarId: 'unknown',
+  }).error.code, ERROR_CODES.AVATAR_INVALID);
+
+  const join = validateClientMessage({
+    type: 'join_room', v: 2, roomCode: 'ABC234', displayName: 'Kit',
+    characterId: 'kit', paintId: 'pearl-flash', avatarId: 'rabbit',
+  });
+  assert.equal(join.ok, true);
+  assert.deepEqual(join.value, {
+    type: 'join_room', v: 2, roomCode: 'ABC234', displayName: 'Kit',
+    characterId: 'kit', paintId: 'pearl-flash', avatarId: 'rabbit',
+  });
 });
 
 test('room settings accept AI auto-fill and kick-player validates its target id', () => {

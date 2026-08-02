@@ -3,6 +3,12 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 
 import { CHARACTERS } from '../src/game/characters.js';
+import {
+  AVATARS,
+  DEFAULT_ONLINE_LOADOUT,
+  PAINT_THEMES,
+  defaultLoadoutForCharacter,
+} from '../src/game/appearance.js';
 import { shuffleRosterForGrid } from '../src/game/race-simulation.js';
 import { TRACKS } from '../src/track/tracks.js';
 import {
@@ -153,6 +159,8 @@ function defaultRaceResults(room) {
       participantId: entry?.participantId ?? null,
       displayName: entry?.displayName ?? kart.name,
       characterId: entry?.characterId ?? kart.character?.id ?? null,
+      paintId: entry?.paintId ?? null,
+      avatarId: entry?.avatarId ?? null,
       finishTime: finiteOrNull(kart.finishTime),
       bestLap: finiteOrNull(kart.bestLap),
       lapTimes: Array.isArray(kart.lapTimes) ? kart.lapTimes.slice() : [],
@@ -162,10 +170,14 @@ function defaultRaceResults(room) {
 }
 
 function publicRoster(roster) {
-  return roster.map(({ participantId, displayName, characterId, controllerKind, kartIndex }) => ({
+  return roster.map(({
+    participantId, displayName, characterId, paintId, avatarId, controllerKind, kartIndex,
+  }) => ({
     participantId,
     displayName,
     characterId,
+    paintId,
+    avatarId,
     controllerKind,
     kartIndex,
   }));
@@ -177,6 +189,8 @@ export class RoomManager extends EventEmitter {
     raceFactory = null,
     tracks = TRACKS,
     characters = CHARACTERS,
+    paints = PAINT_THEMES,
+    avatars = AVATARS,
     difficulties = ['easy', 'normal', 'hard'],
     maxPlayers = 8,
     loadTimeoutMs = 10_000,
@@ -201,8 +215,10 @@ export class RoomManager extends EventEmitter {
     this.tracks = new Map(tracks.map((track) => [track.id, track]));
     this.characters = characters.slice();
     this.characterIds = new Set(characters.map((character) => character.id));
+    this.paintIds = new Set(paints.map((paint) => paint.id));
+    this.avatarIds = new Set(avatars.map((avatar) => avatar.id));
     this.difficulties = new Set(difficulties);
-    this.maxPlayers = Math.min(8, maxPlayers, characters.length);
+    this.maxPlayers = Math.min(8, maxPlayers);
     this.loadTimeoutMs = loadTimeoutMs;
     this.resumeTimeoutMs = resumeTimeoutMs;
     this.emptyRoomTtlMs = emptyRoomTtlMs;
@@ -263,6 +279,8 @@ export class RoomManager extends EventEmitter {
   createRoom(options = {}) {
     const displayName = requireValid(validateDisplayName(options.displayName));
     const characterId = options.characterId;
+    const paintId = options.paintId;
+    const avatarId = options.avatarId;
     const roomName = requireValid(validateRoomName(
       options.roomName ?? `${displayName}'s Room`,
     ));
@@ -305,7 +323,9 @@ export class RoomManager extends EventEmitter {
     this.rooms.set(roomCode, room);
     let session;
     try {
-      session = this._addParticipant(room, { displayName, characterId }, now);
+      session = this._addParticipant(room, {
+        displayName, characterId, paintId, avatarId,
+      }, now);
     } catch (error) {
       this.rooms.delete(roomCode);
       throw error;
@@ -315,7 +335,9 @@ export class RoomManager extends EventEmitter {
     return { ...session, roomCode, roomState: this.getRoomState(roomCode) };
   }
 
-  joinRoom(roomCode, { displayName, characterId, password } = {}) {
+  joinRoom(roomCode, {
+    displayName, characterId, paintId, avatarId, password,
+  } = {}) {
     const room = this._requireRoom(roomCode);
     if (room.state !== ROOM_STATES.WAITING) {
       throw new GameError(ERROR_CODES.ROOM_LOCKED, 'This race has already started.');
@@ -324,21 +346,22 @@ export class RoomManager extends EventEmitter {
       throw new GameError(ERROR_CODES.ROOM_FULL, 'This room is full.');
     }
     this._verifyPassword(room, password);
-    const session = this._addParticipant(room, { displayName, characterId }, this.now());
+    const session = this._addParticipant(room, {
+      displayName, characterId, paintId, avatarId,
+    }, this.now());
     if (!room.hostParticipantId) this._migrateHost(room);
     this._broadcastRoomState(room);
     return { ...session, roomCode: room.code, roomState: this.getRoomState(room.code) };
   }
 
-  quickMatch({ displayName, characterId } = {}) {
+  quickMatch({ displayName, characterId, paintId, avatarId } = {}) {
     displayName = requireValid(validateDisplayName(displayName));
     const candidates = [...this.rooms.values()].filter((room) => {
       if (room.roomType !== ROOM_TYPES.PUBLIC
         || room.state !== ROOM_STATES.WAITING
         || !hasOnlineMember(room)
         || occupiedMembers(room).length >= room.maxPlayers) return false;
-      if (characterId === undefined) return true;
-      return !occupiedMembers(room).some((member) => member.characterId === characterId);
+      return true;
     });
     if (candidates.length === 0) {
       throw new GameError(
@@ -350,7 +373,9 @@ export class RoomManager extends EventEmitter {
       candidates.length - 1,
       Math.max(0, Math.floor(this.random() * candidates.length)),
     );
-    return this.joinRoom(candidates[index].code, { displayName, characterId });
+    return this.joinRoom(candidates[index].code, {
+      displayName, characterId, paintId, avatarId,
+    });
   }
 
   resume(roomCode, participantId, resumeToken) {
@@ -424,18 +449,30 @@ export class RoomManager extends EventEmitter {
   }
 
   selectCharacter(participantId, characterId) {
+    return this.setLoadout(participantId, { characterId });
+  }
+
+  setLoadout(participantId, { characterId, paintId, avatarId } = {}) {
     const { room, member } = this._findParticipant(participantId);
     this._requireMemberRoom(room, member);
-    if (!this.characterIds.has(characterId)) {
+    const nextCharacterId = characterId ?? member.characterId;
+    const nextPaintId = paintId ?? member.paintId;
+    const nextAvatarId = avatarId ?? member.avatarId;
+    if (!this.characterIds.has(nextCharacterId)) {
       throw new GameError(ERROR_CODES.CHARACTER_INVALID, 'That character does not exist.');
     }
-    for (const other of room.members.values()) {
-      if (other.participantId !== participantId && other.characterId === characterId) {
-        throw new GameError(ERROR_CODES.CHARACTER_TAKEN, 'That character is already selected.');
-      }
+    if (!this.paintIds.has(nextPaintId)) {
+      throw new GameError(ERROR_CODES.PAINT_INVALID, 'That paint does not exist.');
     }
-    if (member.characterId !== characterId) {
-      member.characterId = characterId;
+    if (!this.avatarIds.has(nextAvatarId)) {
+      throw new GameError(ERROR_CODES.AVATAR_INVALID, 'That avatar does not exist.');
+    }
+    if (member.characterId !== nextCharacterId
+      || member.paintId !== nextPaintId
+      || member.avatarId !== nextAvatarId) {
+      member.characterId = nextCharacterId;
+      member.paintId = nextPaintId;
+      member.avatarId = nextAvatarId;
       member.ready = false;
       this._broadcastRoomState(room);
     }
@@ -654,6 +691,8 @@ export class RoomManager extends EventEmitter {
         participantId: member.participantId,
         displayName: member.displayName,
         characterId: member.characterId,
+        paintId: member.paintId,
+        avatarId: member.avatarId,
         isHost: member.participantId === room.hostParticipantId,
         ready: member.ready,
         connected: member.connected,
@@ -749,19 +788,26 @@ export class RoomManager extends EventEmitter {
     this.removeAllListeners();
   }
 
-  _addParticipant(room, { displayName, characterId }, now) {
+  _addParticipant(room, {
+    displayName, characterId, paintId, avatarId,
+  }, now) {
     const validatedName = validateDisplayName(displayName);
     if (!validatedName.ok) {
       throw new GameError(validatedName.error.code, validatedName.error.message);
     }
     displayName = validatedName.value;
-    const usedCharacters = new Set([...room.members.values()].map((member) => member.characterId));
-    const selectedCharacter = characterId ?? this.characters.find((character) => !usedCharacters.has(character.id))?.id;
+    const selectedCharacter = characterId
+      ?? (this.characterIds.has('kit') ? 'kit' : this.characters[0]?.id);
     if (!this.characterIds.has(selectedCharacter)) {
       throw new GameError(ERROR_CODES.CHARACTER_INVALID, 'That character does not exist.');
     }
-    if (usedCharacters.has(selectedCharacter)) {
-      throw new GameError(ERROR_CODES.CHARACTER_TAKEN, 'That character is already selected.');
+    const selectedPaint = paintId ?? DEFAULT_ONLINE_LOADOUT.paintId;
+    const selectedAvatar = avatarId ?? DEFAULT_ONLINE_LOADOUT.avatarId;
+    if (!this.paintIds.has(selectedPaint)) {
+      throw new GameError(ERROR_CODES.PAINT_INVALID, 'That paint does not exist.');
+    }
+    if (!this.avatarIds.has(selectedAvatar)) {
+      throw new GameError(ERROR_CODES.AVATAR_INVALID, 'That avatar does not exist.');
     }
     const participantId = this.participantIdFactory();
     const resumeToken = this.resumeTokenFactory();
@@ -770,6 +816,8 @@ export class RoomManager extends EventEmitter {
       resumeToken,
       displayName,
       characterId: selectedCharacter,
+      paintId: selectedPaint,
+      avatarId: selectedAvatar,
       ready: false,
       connected: true,
       abandoned: false,
@@ -801,19 +849,30 @@ export class RoomManager extends EventEmitter {
         participantId: member.participantId,
         displayName: member.displayName,
         characterId: member.characterId,
+        paintId: member.paintId,
+        avatarId: member.avatarId,
         controllerKind: CONTROLLER_KINDS.HUMAN,
       }));
     if (room.settings.autoFillAi) {
       const used = new Set(roster.map((entry) => entry.characterId));
-      for (const character of this.characters) {
-        if (roster.length >= room.maxPlayers || roster.length >= this.characters.length) break;
-        if (used.has(character.id)) continue;
+      const orderedCharacters = [
+        ...this.characters.filter((character) => !used.has(character.id)),
+        ...this.characters.filter((character) => used.has(character.id)),
+      ];
+      let aiIndex = 0;
+      while (roster.length < room.maxPlayers && orderedCharacters.length > 0) {
+        const character = orderedCharacters[aiIndex % orderedCharacters.length];
+        const defaults = defaultLoadoutForCharacter(character.id);
         roster.push({
-          participantId: `ai-${character.id}`,
+          participantId: `ai-${roster.length}-${character.id}`,
           displayName: character.name,
           characterId: character.id,
+          paintId: defaults.paintId,
+          avatarId: defaults.avatarId,
           controllerKind: CONTROLLER_KINDS.AI,
         });
+        used.add(character.id);
+        aiIndex += 1;
       }
     }
     const ordered = shuffleRosterForGrid(roster, seed);

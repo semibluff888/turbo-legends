@@ -498,7 +498,7 @@ test('WebSocket message limiting allows its burst budget and closes sustained ex
   }
 });
 
-test('two WebSocket clients can ready, race, receive results, and return to their room', {
+test('two WebSocket clients can share a Racer with distinct loadouts through results', {
   skip: wsModule ? false : 'ws dependency is not installed in this workspace',
 }, async () => {
   const { WebSocket } = wsModule;
@@ -522,7 +522,8 @@ test('two WebSocket clients can ready, race, receive results, and return to thei
   try {
     host = await connectClient(WebSocket, url, origin);
     host.send({
-      type: 'create_room', displayName: 'Host', characterId: 'pip',
+      type: 'create_room', displayName: 'Host', characterId: 'kit',
+      paintId: 'turbo-blue', avatarId: 'cat',
       roomName: 'Race Night', roomType: 'public', maxPlayers: 8,
     });
     const hostWelcome = await host.next(message => message.type === 'welcome' && message.session);
@@ -532,22 +533,45 @@ test('two WebSocket clients can ready, race, receive results, and return to thei
       type: 'join_room',
       roomCode: hostWelcome.roomCode,
       displayName: 'Guest',
-      characterId: 'nova',
+      characterId: 'kit',
+      paintId: 'sunset-pop',
+      avatarId: 'fox',
     });
     const guestWelcome = await guest.next(message => message.type === 'welcome' && message.session);
 
-    host.send({ type: 'select_character', characterId: 'kit' });
-    await host.next(message => (
+    const hostLoadoutMark = host.mark();
+    const guestLoadoutMark = guest.mark();
+    host.send({
+      type: 'set_loadout',
+      characterId: 'kit',
+      paintId: 'pearl-flash',
+      avatarId: 'panda',
+    });
+    const hostLoadoutRoom = await host.next(message => (
       message.type === 'room_state'
       && message.members.some(member => member.participantId === hostWelcome.participantId
-        && member.characterId === 'kit')
-    ));
-    guest.send({ type: 'select_character', characterId: 'gearbox' });
-    await guest.next(message => (
+        && member.paintId === 'pearl-flash'
+        && member.avatarId === 'panda')
+    ), hostLoadoutMark);
+    const guestLoadoutRoom = await guest.next(message => (
       message.type === 'room_state'
-      && message.members.some(member => member.participantId === guestWelcome.participantId
-        && member.characterId === 'gearbox')
-    ));
+      && message.members.some(member => member.participantId === hostWelcome.participantId
+        && member.paintId === 'pearl-flash'
+        && member.avatarId === 'panda')
+    ), guestLoadoutMark);
+    assert.deepEqual(
+      {
+        characterId: hostLoadoutRoom.self.characterId,
+        paintId: hostLoadoutRoom.self.paintId,
+        avatarId: hostLoadoutRoom.self.avatarId,
+      },
+      { characterId: 'kit', paintId: 'pearl-flash', avatarId: 'panda' },
+    );
+    assert.equal(
+      guestLoadoutRoom.members.find(member => member.participantId === guestWelcome.participantId)
+        ?.paintId,
+      'sunset-pop',
+    );
 
     host.send({ type: 'set_ready', ready: true });
     await host.next(message => (
@@ -562,9 +586,16 @@ test('two WebSocket clients can ready, race, receive results, and return to thei
     const guestPrepare = await guest.next(message => message.type === 'prepare_race');
     assert.equal(hostPrepare.raceId, guestPrepare.raceId);
     assert.equal(hostPrepare.roster.length, 8);
+    const humanRoster = hostPrepare.roster.filter(entry => entry.controllerKind === 'human');
+    assert.deepEqual(humanRoster.map(entry => entry.characterId), ['kit', 'kit']);
     assert.deepEqual(
-      hostPrepare.roster.filter(entry => entry.controllerKind === 'human').map(entry => entry.characterId).sort(),
-      ['gearbox', 'kit'],
+      humanRoster.map(({ participantId, paintId, avatarId }) => ({
+        participantId, paintId, avatarId,
+      })).sort((a, b) => a.participantId.localeCompare(b.participantId)),
+      [
+        { participantId: hostWelcome.participantId, paintId: 'pearl-flash', avatarId: 'panda' },
+        { participantId: guestWelcome.participantId, paintId: 'sunset-pop', avatarId: 'fox' },
+      ].sort((a, b) => a.participantId.localeCompare(b.participantId)),
     );
 
     host.send({ type: 'race_loaded', raceId: hostPrepare.raceId });
@@ -581,6 +612,29 @@ test('two WebSocket clients can ready, race, receive results, and return to thei
     assert.equal(hostResults.raceId, hostPrepare.raceId);
     assert.deepEqual(hostResults.results, guestResults.results);
     assert.equal(hostResults.results.length, 8);
+    assert.deepEqual(
+      hostResults.results
+        .filter(result => result.participantId === hostWelcome.participantId
+          || result.participantId === guestWelcome.participantId)
+        .map(({ participantId, characterId, paintId, avatarId }) => ({
+          participantId, characterId, paintId, avatarId,
+        }))
+        .sort((a, b) => a.participantId.localeCompare(b.participantId)),
+      [
+        {
+          participantId: hostWelcome.participantId,
+          characterId: 'kit',
+          paintId: 'pearl-flash',
+          avatarId: 'panda',
+        },
+        {
+          participantId: guestWelcome.participantId,
+          characterId: 'kit',
+          paintId: 'sunset-pop',
+          avatarId: 'fox',
+        },
+      ].sort((a, b) => a.participantId.localeCompare(b.participantId)),
+    );
 
     const hostMark = host.mark();
     const guestMark = guest.mark();

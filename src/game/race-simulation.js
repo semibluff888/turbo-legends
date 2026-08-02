@@ -62,7 +62,6 @@ function normalizeRoster(roster) {
   }
 
   const participantIds = new Set();
-  const characterIds = new Set();
   return roster.map((entry, index) => {
     if (!entry || typeof entry !== 'object') {
       throw new TypeError(`roster[${index}] must be an object`);
@@ -78,10 +77,6 @@ function normalizeRoster(roster) {
     const characterId = String(entry.characterId || '');
     const character = CHARACTERS_BY_ID[characterId];
     if (!character) throw new TypeError(`unknown characterId: ${characterId}`);
-    if (characterIds.has(characterId)) {
-      throw new TypeError(`duplicate characterId: ${characterId}`);
-    }
-    characterIds.add(characterId);
 
     const controllerKind = entry.controllerKind;
     if (!CONTROLLER_KINDS.has(controllerKind)) {
@@ -165,6 +160,8 @@ export class RaceSimulation {
       participantId: entry.participantId,
       displayName: entry.displayName,
       controllerKind: entry.controllerKind,
+      paintId: entry.paintId ?? null,
+      avatarId: entry.avatarId ?? null,
     }));
 
     this._aiRngs = this._roster.map((entry) => (

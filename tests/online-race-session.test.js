@@ -33,6 +33,8 @@ function roster() {
       participantId: 'local',
       displayName: 'Local',
       characterId: 'kit',
+      paintId: 'turbo-blue',
+      avatarId: 'cat',
       controllerKind: 'human',
       connected: true,
     },
@@ -40,7 +42,9 @@ function roster() {
       kartIndex: 1,
       participantId: 'remote',
       displayName: 'Remote',
-      characterId: 'nova',
+      characterId: 'kit',
+      paintId: 'crimson-heat',
+      avatarId: 'dog',
       controllerKind: 'human',
       connected: true,
     },
@@ -77,6 +81,12 @@ test('online snapshot populates Kart-shaped state and item views', () => {
     localParticipantId: 'local',
   });
   const firstBox = track.itemBoxes[0];
+
+  assert.equal(session.karts[0].character.id, 'kit');
+  assert.equal(session.karts[1].character.id, 'kit');
+  assert.equal(session.karts[0].paintId, 'turbo-blue');
+  assert.equal(session.karts[1].paintId, 'crimson-heat');
+  assert.equal(session.karts[1].avatarId, 'dog');
 
   assert.equal(session.applySnapshot({
     raceId: 'race-1',

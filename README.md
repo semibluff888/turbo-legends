@@ -49,9 +49,11 @@ counts.
   ready before the host can start.
 - Nicknames are display-only and may repeat. A racing-themed nickname is chosen
   on first use and can be edited in the lobby; participant IDs remain the sole
-  identity for permissions, reconnects, input, and results. Character selections
-  remain unique within a room.
-- Changing a character clears that player's ready state; changing track or
+  identity for permissions, reconnects, input, and results. Players may select
+  the same Racer and independently choose one of 12 paints and 8 animal avatars.
+- The Room shows the local choice as a rotating 3D kart; the customization dialog
+  previews Racer stats, paint, and avatar before saving the complete loadout.
+- Changing any loadout field clears that player's ready state; changing track or
   difficulty clears everyone's ready state.
 - Starting a race creates a seeded grid and a 10-second loading phase. If fewer
   than two connected players finish loading, the race is cancelled.

@@ -186,13 +186,17 @@ simulation.update(dt, controlsByKartIndex);
 simulation.setController(kartIndex, controllerKind);
 ```
 
-The roster must contain exactly eight unique characters. Each entry contains:
+The roster contains two to eight unique participant identities. Multiple human
+or AI seats may use the same racer; `characterId` selects stats, while paint and
+avatar fields are cosmetic:
 
 ```js
 {
   participantId,
   displayName,
   characterId,
+  paintId,
+  avatarId,
   controllerKind, // 'human' | 'ai' | 'takeover-ai'
 }
 ```
@@ -271,12 +275,12 @@ waiting → loading → countdown → racing → results → waiting
 - Nicknames are 1–20 visible characters, may repeat, and reject control or
   bidirectional formatting characters. `participantId` is the only identity
   used for host permissions, reconnects, input ownership, and results.
-- Human character selections are unique. AI fills unused characters until the
-  race has eight karts.
+- Human racer, paint, and avatar selections may repeat. AI prefers unused racers
+  for visual variety, then cycles the catalog if more seats are needed.
 - The first member is host. If the host disconnects or leaves, ownership moves
   to the earliest joined connected, non-abandoned member.
-- Only the host can change track/difficulty or start the room. A character change
-  clears that member's ready flag; a room-setting change clears all ready flags.
+- Only the host can change track/difficulty or start the room. Any player loadout
+  change clears that member's ready flag; a room-setting change clears all ready flags.
 - Starting requires at least two members, with every member connected and ready.
   The room then locks against new joins and sends `prepare_race`.
 - Clients build the track/roster and answer `race_loaded`. The loading deadline
@@ -317,7 +321,7 @@ Client → server:
 
 ```text
 enter_lobby, create_room, join_room, quick_match, resume,
-select_character, set_room, set_ready,
+select_character, set_loadout, set_room, set_ready,
 start_race, race_loaded, input,
 return_room, leave_room, ping
 ```

@@ -108,17 +108,42 @@ async function startTwoPlayerRace(harness) {
   return { ...players, race };
 }
 
-test('waiting room allows duplicate names while enforcing characters, host settings, and ready resets', () => {
+test('waiting room allows duplicate names and racers while loadout changes reset only that racer', () => {
   const harness = createHarness();
   const { host, guest } = addTwoPlayers(harness);
+  const initialMembers = harness.manager.getRoomState(host.roomCode).members;
+  assert.deepEqual(
+    initialMembers.map(({ paintId, avatarId }) => ({ paintId, avatarId })),
+    [
+      { paintId: 'turbo-blue', avatarId: 'cat' },
+      { paintId: 'turbo-blue', avatarId: 'cat' },
+    ],
+  );
+  assert.throws(
+    () => harness.manager.setLoadout(guest.participantId, {
+      characterId: 'kit', paintId: 'missing-paint', avatarId: 'dog',
+    }),
+    (error) => error.code === ERROR_CODES.PAINT_INVALID,
+  );
+  assert.throws(
+    () => harness.manager.setLoadout(guest.participantId, {
+      characterId: 'kit', paintId: 'crimson-heat', avatarId: 'missing-avatar',
+    }),
+    (error) => error.code === ERROR_CODES.AVATAR_INVALID,
+  );
+  assert.deepEqual(
+    harness.manager.getRoomState(host.roomCode).members[1],
+    initialMembers[1],
+  );
 
   const duplicateName = harness.manager.joinRoom(host.roomCode, {
     displayName: 'host', characterId: 'kit',
   });
   assert.notEqual(duplicateName.participantId, host.participantId);
-  assert.throws(
-    () => harness.manager.selectCharacter(guest.participantId, 'pip'),
-    (error) => error.code === ERROR_CODES.CHARACTER_TAKEN,
+  harness.manager.selectCharacter(guest.participantId, 'pip');
+  assert.deepEqual(
+    harness.manager.getRoomState(host.roomCode).members.map((member) => member.characterId),
+    ['pip', 'pip', 'kit'],
   );
   assert.throws(
     () => harness.manager.setRoom(guest.participantId, { difficulty: 'hard' }),
@@ -129,6 +154,14 @@ test('waiting room allows duplicate names while enforcing characters, host setti
   harness.manager.setReady(guest.participantId, true);
   harness.manager.setReady(duplicateName.participantId, true);
   assert.equal(harness.manager.getRoomState(host.roomCode).canStart, true);
+  harness.manager.setLoadout(guest.participantId, {
+    characterId: 'pip', paintId: 'pearl-flash', avatarId: 'rabbit',
+  });
+  const changed = harness.manager.getRoomState(host.roomCode).members;
+  assert.deepEqual(changed.map((member) => member.ready), [true, false, true]);
+  assert.equal(changed[1].paintId, 'pearl-flash');
+  assert.equal(changed[1].avatarId, 'rabbit');
+  harness.manager.setReady(guest.participantId, true);
   assert.equal(harness.manager.getRoomState(host.roomCode).settings.autoFillAi, true);
   harness.manager.setRoom(host.participantId, { difficulty: 'hard', autoFillAi: false });
   assert.deepEqual(
@@ -136,6 +169,25 @@ test('waiting room allows duplicate names while enforcing characters, host setti
     [false, false, false],
   );
   assert.equal(harness.manager.getRoomState(host.roomCode).settings.autoFillAi, false);
+});
+
+test('duplicate human racers keep independent appearances in the announced roster', () => {
+  const harness = createHarness();
+  const host = harness.manager.createRoom({
+    displayName: 'Host', characterId: 'kit', paintId: 'turbo-blue', avatarId: 'cat',
+    roomName: 'Clone Cup', roomType: ROOM_TYPES.PUBLIC, maxPlayers: 2,
+  });
+  const guest = harness.manager.joinRoom(host.roomCode, {
+    displayName: 'Guest', characterId: 'kit', paintId: 'crimson-heat', avatarId: 'dog',
+  });
+  harness.manager.setReady(host.participantId, true);
+  harness.manager.setReady(guest.participantId, true);
+  const race = harness.manager.startRace(host.participantId);
+  const humans = race.roster.filter((entry) => entry.controllerKind === 'human');
+  assert.equal(humans.length, 2);
+  assert.deepEqual(humans.map((entry) => entry.characterId), ['kit', 'kit']);
+  assert.deepEqual(new Set(humans.map((entry) => entry.paintId)), new Set(['turbo-blue', 'crimson-heat']));
+  assert.deepEqual(new Set(humans.map((entry) => entry.avatarId)), new Set(['cat', 'dog']));
 });
 
 test('AI auto-fill uses room capacity and can be disabled by the host', () => {

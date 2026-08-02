@@ -221,7 +221,7 @@ test('a finished kart releases controls and coasts to a stop', () => {
   assert.equal(kart.speed, 0);
 });
 
-test('roster and controller validation rejects ambiguous multiplayer state', () => {
+test('roster validation allows duplicate racers but rejects duplicate participants', () => {
   const track = new Track(getTrackDef('sunset-circuit'));
   assert.throws(() => new RaceSimulation(track, { roster: makeRoster().slice(0, 1) }), /2 to 8/);
   assert.throws(() => new RaceSimulation(track, {
@@ -230,7 +230,12 @@ test('roster and controller validation rejects ambiguous multiplayer state', () 
 
   const duplicateCharacter = makeRoster();
   duplicateCharacter[1].characterId = duplicateCharacter[0].characterId;
-  assert.throws(() => new RaceSimulation(track, { roster: duplicateCharacter }), /duplicate characterId/);
+  const duplicateRacerSimulation = new RaceSimulation(track, { roster: duplicateCharacter });
+  assert.equal(duplicateRacerSimulation.karts[0].character.id, duplicateRacerSimulation.karts[1].character.id);
+
+  const duplicateParticipant = makeRoster();
+  duplicateParticipant[1].participantId = duplicateParticipant[0].participantId;
+  assert.throws(() => new RaceSimulation(track, { roster: duplicateParticipant }), /duplicate participantId/);
 
   const simulation = makeSimulation();
   assert.throws(() => simulation.setController(8, CONTROLLER_KIND.AI), /invalid kart index/);

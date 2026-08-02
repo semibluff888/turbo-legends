@@ -80,6 +80,8 @@ function addSelfState(message, participantId) {
       ready: member.ready,
       connected: member.connected,
       characterId: member.characterId,
+      paintId: member.paintId,
+      avatarId: member.avatarId,
     } : null,
   };
 }
@@ -281,6 +283,9 @@ export function attachGameWebSocket(httpServer, {
         break;
       case CLIENT_MESSAGE_TYPES.SELECT_CHARACTER:
         roomManager.selectCharacter(session.participantId, message.characterId);
+        break;
+      case CLIENT_MESSAGE_TYPES.SET_LOADOUT:
+        roomManager.setLoadout(session.participantId, message);
         break;
       case CLIENT_MESSAGE_TYPES.SET_ROOM:
         roomManager.setRoom(session.participantId, message);

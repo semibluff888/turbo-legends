@@ -206,7 +206,13 @@ export class OnlineRaceSession {
       const index = entry.kartIndex;
       const character = getCharacter(entry.characterId);
       const isLocal = entry.participantId === localParticipantId;
-      const kart = new Kart({ index, character, isPlayer: isLocal });
+      const kart = new Kart({
+        index,
+        character,
+        isPlayer: isLocal,
+        paintId: entry.paintId ?? null,
+        avatarId: entry.avatarId ?? null,
+      });
       kart.participantId = entry.participantId ?? null;
       kart.controllerKind = entry.controllerKind || (entry.isAi ? 'ai' : 'human');
       kart.connected = entry.connected !== false;
@@ -251,6 +257,8 @@ export class OnlineRaceSession {
       index: this._player.index,
       character: this._player.character,
       isPlayer: true,
+      paintId: this._player.paintId,
+      avatarId: this._player.avatarId,
     });
     this._predictionReady = false;
 

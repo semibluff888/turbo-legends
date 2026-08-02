@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { KART, ITEM_PHYSICS } from '../core/constants.js';
 import { TAU, clamp, damp, smoothstep } from '../core/mathx.js';
+import { resolveKartAppearance } from '../game/appearance.js';
 
 // --- Visual layout (design values, derived from the physics body dims) ------
 const BODY_L = KART.bodyLength;
@@ -46,6 +47,13 @@ function getShared() {
       head: new THREE.SphereGeometry(0.20, 14, 10),
       helmet: new THREE.SphereGeometry(0.245, 14, 10, 0, TAU, 0, Math.PI * 0.58),
       visor: new THREE.BoxGeometry(0.30, 0.11, 0.08),
+      avatarMuzzle: new THREE.SphereGeometry(0.12, 12, 8),
+      avatarEye: new THREE.SphereGeometry(0.035, 8, 6),
+      avatarNose: new THREE.SphereGeometry(0.045, 8, 6),
+      avatarEarRound: new THREE.SphereGeometry(0.09, 10, 8),
+      avatarEarPoint: new THREE.ConeGeometry(0.10, 0.25, 4),
+      avatarStripe: new THREE.BoxGeometry(0.025, 0.12, 0.025),
+      avatarWhisker: new THREE.CylinderGeometry(0.008, 0.008, 0.19, 5),
       torso: new THREE.BoxGeometry(0.44, 0.32, 0.30),
       exhaust: new THREE.CylinderGeometry(0.06, 0.085, 0.34, 8),
       flameOuter,
@@ -78,22 +86,121 @@ function addMesh(parent, geo, mat, x, y, z) {
   return m;
 }
 
+function addScaledMesh(parent, geo, mat, x, y, z, sx = 1, sy = sx, sz = sx) {
+  const mesh = addMesh(parent, geo, mat, x, y, z);
+  mesh.scale.set(sx, sy, sz);
+  return mesh;
+}
+
+function buildAnimalDriver(parent, S, avatar, headY, headZ) {
+  const headMat = new THREE.MeshStandardMaterial({
+    color: avatar.headColor, roughness: 0.72, metalness: 0,
+  });
+  const muzzleMat = new THREE.MeshStandardMaterial({
+    color: avatar.muzzleColor, roughness: 0.76, metalness: 0,
+  });
+  const detailMat = new THREE.MeshStandardMaterial({
+    color: avatar.detailColor, roughness: 0.68, metalness: 0,
+  });
+  const eyeMat = new THREE.MeshStandardMaterial({
+    color: 0x12131a, roughness: 0.42, metalness: 0.05,
+  });
+  const group = new THREE.Group();
+  group.position.set(0, headY, headZ);
+  parent.add(group);
+
+  const head = addScaledMesh(group, S.geo.head, headMat, 0, 0, 0, 1.12, 1.02, 1.02);
+  head.rotation.x = -0.03;
+
+  const pointEars = ['cat', 'fox', 'tiger'].includes(avatar.kind);
+  const roundEars = ['bear', 'panda', 'raccoon'].includes(avatar.kind);
+  if (pointEars) {
+    const spread = avatar.kind === 'fox' ? 0.155 : 0.14;
+    const scale = avatar.kind === 'fox' ? 1.16 : 1;
+    for (const side of [-1, 1]) {
+      const ear = addScaledMesh(
+        group, S.geo.avatarEarPoint, headMat,
+        side * spread, 0.205, -0.005, 0.9 * scale, scale, 0.82 * scale,
+      );
+      ear.rotation.y = Math.PI / 4;
+      ear.rotation.z = side * -0.08;
+      addScaledMesh(
+        group, S.geo.avatarEarPoint, muzzleMat,
+        side * spread, 0.195, 0.018, 0.48 * scale, 0.58 * scale, 0.4 * scale,
+      ).rotation.y = Math.PI / 4;
+    }
+  } else if (roundEars) {
+    const earMaterial = avatar.kind === 'panda' ? detailMat : headMat;
+    for (const side of [-1, 1]) {
+      addScaledMesh(group, S.geo.avatarEarRound, earMaterial, side * 0.175, 0.15, -0.005, 0.95, 1, 0.72);
+    }
+  } else if (avatar.kind === 'rabbit') {
+    for (const side of [-1, 1]) {
+      addScaledMesh(group, S.geo.avatarEarRound, headMat, side * 0.09, 0.30, -0.015, 0.62, 1.75, 0.52);
+      addScaledMesh(group, S.geo.avatarEarRound, detailMat, side * 0.09, 0.31, 0.035, 0.28, 1.25, 0.22);
+    }
+  } else if (avatar.kind === 'dog') {
+    for (const side of [-1, 1]) {
+      const ear = addScaledMesh(
+        group, S.geo.avatarEarRound, detailMat,
+        side * 0.205, 0.035, -0.015, 0.7, 1.45, 0.52,
+      );
+      ear.rotation.z = side * 0.32;
+    }
+  }
+
+  if (avatar.kind === 'panda' || avatar.kind === 'raccoon') {
+    for (const side of [-1, 1]) {
+      const patch = addScaledMesh(
+        group, S.geo.avatarMuzzle, detailMat,
+        side * 0.073, 0.035, 0.172, 0.52, avatar.kind === 'raccoon' ? 0.58 : 0.72, 0.22,
+      );
+      patch.rotation.z = side * 0.18;
+    }
+  }
+
+  addScaledMesh(group, S.geo.avatarMuzzle, muzzleMat, 0, -0.075, 0.17, 1.06, 0.72, 0.62);
+  for (const side of [-1, 1]) {
+    addMesh(group, S.geo.avatarEye, eyeMat, side * 0.073, 0.04, 0.202);
+  }
+  addScaledMesh(group, S.geo.avatarNose, detailMat, 0, -0.045, 0.247, 1, 0.72, 0.72);
+
+  if (avatar.kind === 'tiger') {
+    for (const [x, angle] of [[-0.075, -0.22], [0, 0], [0.075, 0.22]]) {
+      const stripe = addMesh(group, S.geo.avatarStripe, detailMat, x, 0.14, 0.196);
+      stripe.rotation.z = angle;
+    }
+  }
+
+  if (['cat', 'fox', 'tiger', 'raccoon'].includes(avatar.kind)) {
+    for (const side of [-1, 1]) {
+      for (const y of [-0.055, -0.095]) {
+        const whisker = addMesh(group, S.geo.avatarWhisker, detailMat, side * 0.13, y, 0.205);
+        whisker.rotation.z = Math.PI / 2 + side * (y < -0.07 ? -0.12 : 0.12);
+      }
+    }
+  }
+
+  return [headMat, muzzleMat, detailMat, eyeMat];
+}
+
 /**
  * Build the kart group for one character. Shared by the in-race visual and
  * the character-select preview.
  * @returns {{group: THREE.Group, refs: object}}
  */
-function buildKart(character) {
+function buildKart(character, loadout = {}) {
   const S = getShared();
   const group = new THREE.Group();
   group.rotation.order = 'YXZ';
+  const appearance = resolveKartAppearance(character, loadout);
 
   // Per-kart materials (star mode mutates these, so they cannot be shared).
   const bodyMat = new THREE.MeshStandardMaterial({
-    color: character.color, metalness: 0.25, roughness: 0.55,
+    color: appearance.color, metalness: 0.25, roughness: 0.55,
   });
   const accentMat = new THREE.MeshStandardMaterial({
-    color: character.accentColor, metalness: 0.25, roughness: 0.55,
+    color: appearance.accentColor, metalness: 0.25, roughness: 0.55,
   });
   const brakeMat = new THREE.MeshStandardMaterial({
     color: 0x3a0508, emissive: 0xff2a2a, emissiveIntensity: 0.15, roughness: 0.4,
@@ -136,12 +243,20 @@ function buildKart(character) {
     if (wz > 0) frontPivots.push(pivot);
   }
 
-  // Driver: torso, head, helmet (body colour) + visor.
+  // Driver: single-player keeps the classic helmet, while online loadouts can
+  // replace it with a procedural animal head.
   const headY = BODY_H * 0.72 + 0.34;
   addMesh(group, S.geo.torso, accentMat, 0, BODY_H * 0.72, -BODY_L * 0.10);
-  addMesh(group, S.geo.head, S.mat.skin, 0, headY, -BODY_L * 0.10);
-  addMesh(group, S.geo.helmet, bodyMat, 0, headY + 0.015, -BODY_L * 0.10);
-  addMesh(group, S.geo.visor, S.mat.visor, 0, headY + 0.02, -BODY_L * 0.10 + 0.17);
+  const avatarMats = [];
+  if (appearance.avatar) {
+    avatarMats.push(...buildAnimalDriver(
+      group, S, appearance.avatar, headY, -BODY_L * 0.10,
+    ));
+  } else {
+    addMesh(group, S.geo.head, S.mat.skin, 0, headY, -BODY_L * 0.10);
+    addMesh(group, S.geo.helmet, bodyMat, 0, headY + 0.015, -BODY_L * 0.10);
+    addMesh(group, S.geo.visor, S.mat.visor, 0, headY + 0.02, -BODY_L * 0.10 + 0.17);
+  }
 
   // Twin exhausts + boost flames (hidden until boosting).
   const flames = [];
@@ -171,7 +286,10 @@ function buildKart(character) {
 
   return {
     group,
-    refs: { bodyMat, accentMat, brakeMat, frontPivots, spinGroups, flames, anchorL, anchorR },
+    refs: {
+      bodyMat, accentMat, brakeMat, avatarMats, appearance,
+      frontPivots, spinGroups, flames, anchorL, anchorR,
+    },
   };
 }
 
@@ -244,7 +362,10 @@ export class KartVisual {
     this.kart = kart;
     this.scene = scene;
 
-    const { group, refs } = buildKart(kart.character);
+    const { group, refs } = buildKart(kart.character, {
+      paintId: kart.paintId,
+      avatarId: kart.avatarId,
+    });
     this.group = group;
     this._refs = refs;
 
@@ -259,7 +380,7 @@ export class KartVisual {
     // Floating name badge — every non-local kart, faded by camera distance.
     this.badge = null;
     if (!kart.isPlayer) {
-      this.badge = makeNameBadge(kart.name, kart.character.accentColor);
+      this.badge = makeNameBadge(kart.name, kart.accentColor);
       this.badge.position.y = BADGE_Y;
       group.add(this.badge);
     }
@@ -375,7 +496,7 @@ export class KartVisual {
 
     // Name badge distance fade.
     if (this.badge && cameraPos) {
-      syncNameBadge(this.badge, kart.name, kart.character.accentColor);
+      syncNameBadge(this.badge, kart.name, kart.accentColor);
       const dx = cameraPos.x - kart.x;
       const dy = cameraPos.y - kart.y;
       const dz = cameraPos.z - kart.z;
@@ -392,6 +513,7 @@ export class KartVisual {
     this._refs.bodyMat.dispose();
     this._refs.accentMat.dispose();
     this._refs.brakeMat.dispose();
+    for (const material of this._refs.avatarMats) material.dispose();
     if (this.badge) {
       this.badge.material.map?.dispose();
       this.badge.material.dispose();
@@ -404,11 +526,20 @@ export class KartVisual {
  * @param {object} character entry from characters.js
  * @returns {{group: THREE.Group}}
  */
-export function makeKartPreview(character) {
-  const { group, refs } = buildKart(character);
+export function makeKartPreview(character, loadout = {}) {
+  const { group, refs } = buildKart(character, loadout);
   // A little showroom personality: wheels turned, hidden flames.
   for (const pivot of refs.frontPivots) pivot.rotation.y = 0.30;
   for (const spin of refs.spinGroups) spin.rotation.x = 0.7;
   for (const flame of refs.flames) flame.visible = false;
-  return { group };
+  return {
+    group,
+    appearance: refs.appearance,
+    dispose() {
+      refs.bodyMat.dispose();
+      refs.accentMat.dispose();
+      refs.brakeMat.dispose();
+      for (const material of refs.avatarMats) material.dispose();
+    },
+  };
 }

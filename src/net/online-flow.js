@@ -28,6 +28,8 @@ const ERROR_COPY = Object.freeze({
   [ERROR_CODES.ROOM_FULL]: 'That room is full.',
   [ERROR_CODES.ROOM_LOCKED]: 'That room cannot be joined while a race is in progress.',
   [ERROR_CODES.CHARACTER_TAKEN]: 'That racer is already selected.',
+  [ERROR_CODES.PAINT_INVALID]: 'Choose a valid paint theme.',
+  [ERROR_CODES.AVATAR_INVALID]: 'Choose a valid avatar.',
   [ERROR_CODES.NOT_READY]: 'Every connected racer must be ready.',
   [ERROR_CODES.NOT_ENOUGH_PLAYERS]: 'At least two racers are required to start.',
   [ERROR_CODES.SESSION_EXPIRED]: 'The reconnect window expired. Join the room again.',

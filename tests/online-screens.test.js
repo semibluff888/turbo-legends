@@ -175,7 +175,8 @@ test('room view uses custom capacity and participant ids with duplicate nickname
   assert.equal(hostView.playerCount, 2);
   assert.equal(hostView.canStart, true);
   assert.equal(hostView.autoFillAi, false);
-  assert.deepEqual(hostView.occupiedCharacterIds, ['nova', 'pip']);
+  assert.equal(hostView.members[0].paintId, 'turbo-blue');
+  assert.equal(hostView.members[0].avatarId, 'cat');
   assert.equal(guestView.localMember.participantId, 'p2');
   assert.equal(guestView.localMember.displayName, 'Turbo');
   assert.equal(guestView.isHost, false);
@@ -336,8 +337,8 @@ test('authoritative results use participant ids and do not invent times', () => 
   const view = buildOnlineResultsView({
     trackName: 'Summit Raceway',
     standings: [
-      { participantId: 'p2', name: 'Turbo', rank: 2, finishTime: 72.5, bestLap: 34.25 },
-      { participantId: 'p1', name: 'Turbo', rank: 1, finishTime: 70, bestLap: 33 },
+      { participantId: 'p2', name: 'Turbo', rank: 2, finishTime: 72.5, bestLap: 34.25, paintId: 'crimson-heat', avatarId: 'dog' },
+      { participantId: 'p1', name: 'Turbo', rank: 1, finishTime: 70, bestLap: 33, paintId: 'turbo-blue', avatarId: 'cat' },
       { participantId: 'ai-1', name: 'Gearbox', rank: 3, finished: false, finishTime: null, bestLap: null },
     ],
   }, 'p2');
@@ -345,6 +346,8 @@ test('authoritative results use participant ids and do not invent times', () => 
   assert.equal(view.standings[0].displayName, 'Turbo');
   assert.equal(view.standings[0].isLocal, false);
   assert.equal(view.standings[1].isLocal, true);
+  assert.equal(view.standings[1].paintId, 'crimson-heat');
+  assert.equal(view.standings[1].avatarId, 'dog');
   assert.equal(view.standings[2].finished, false);
   assert.equal(formatOnlineTime(view.standings[0].finishTime), '1:10.00');
   assert.equal(formatOnlineTime(view.standings[2].bestLap), '—');
@@ -425,4 +428,15 @@ test('create and private-join submissions remain open until the server responds'
   assert.doesNotMatch(joinSource, /_closeDialog/);
   assert.match(createSource, /_pendingAction = \{ kind: 'create' \}/);
   assert.match(joinSource, /_pendingAction = \{ kind: 'join'/);
+});
+
+test('Room loadout UI uses a staged three-tab dialog and no taken-racer lock', () => {
+  assert.match(onlineScreensSource, /data-loadout-preview-host="room"/);
+  assert.match(onlineScreensSource, /data-dialog="loadout"/);
+  assert.match(onlineScreensSource, /data-loadout-tab="racer"/);
+  assert.match(onlineScreensSource, /data-loadout-tab="paint"/);
+  assert.match(onlineScreensSource, /data-loadout-tab="avatar"/);
+  assert.match(onlineScreensSource, /_pendingLoadout = \{ \.\.\.this\._loadoutDraft \}/);
+  assert.match(onlineScreensSource, /onSetLoadout/);
+  assert.doesNotMatch(onlineScreensSource, /occupiedByOther|online-character-lock/);
 });

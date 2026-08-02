@@ -6,6 +6,7 @@
 
 import { KART, KART_STATE, ITEM, ITEM_INFO, SURFACE, DRIFT_TIERS } from '../core/constants.js';
 import { clamp } from '../core/mathx.js';
+import { resolveKartAppearance } from './appearance.js';
 
 /**
  * Control inputs for one simulation step. AI and human input both produce this
@@ -42,6 +43,8 @@ export class Kart {
    * @param {string|null} [opts.participantId] stable race participant identity
    * @param {string|null} [opts.displayName] player-facing racer name
    * @param {string|null} [opts.controllerKind] 'human' | 'ai' | 'takeover-ai'
+   * @param {string|null} [opts.paintId] cosmetic paint theme
+   * @param {string|null} [opts.avatarId] cosmetic driver avatar
    */
   constructor({
     index,
@@ -50,6 +53,8 @@ export class Kart {
     participantId = null,
     displayName = null,
     controllerKind = null,
+    paintId = null,
+    avatarId = null,
   }) {
     this.index = index;
     this.id = `kart${index}`;
@@ -59,7 +64,12 @@ export class Kart {
     this.displayName = displayName || character.name;
     this.controllerKind = controllerKind;
     this.name = this.displayName;
-    this.color = character.color;
+    const appearance = resolveKartAppearance(character, { paintId, avatarId });
+    this.paintId = appearance.paintId;
+    this.avatarId = appearance.avatarId;
+    this.avatar = appearance.avatar;
+    this.color = appearance.color;
+    this.accentColor = appearance.accentColor;
 
     // --- Transform ---------------------------------------------------------
     this.x = 0; this.y = 0; this.z = 0;
