@@ -18,6 +18,9 @@ test('LocalRaceSession exposes the presentation-facing race contract', () => {
   assert.equal(session.track, track);
   assert.equal(session.karts.length, 8);
   assert.equal(session.player.character.id, 'kit');
+  assert.equal(session.player.paintId, 'turbo-blue');
+  assert.equal(session.player.avatarId, 'cat');
+  assert.equal(session.karts.every((kart) => kart.paintId && kart.avatarId), true);
   assert.equal(session.items, session.director.items);
   assert.equal(session.laps, track.laps);
   assert.equal(session.standings.length, 8);

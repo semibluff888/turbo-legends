@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { FIXED_DT, RACE, RACE_STATE } from '../src/core/constants.js';
+import { AVATARS_BY_ID, PAINT_THEMES_BY_ID } from '../src/game/appearance.js';
 import { Track } from '../src/track/track.js';
 import { getTrackDef } from '../src/track/tracks.js';
 import { RaceDirector } from '../src/game/race.js';
@@ -108,12 +109,39 @@ test('same seed twice: identical finish order and times', () => {
   }
 });
 
-test('roster: player is kit at the back of the grid, AI characters distinct', () => {
+test('roster: player uses the Racer default look while AI appearances are seeded random', () => {
   const { race } = runA;
   assert.equal(race.player.character.id, 'kit');
   assert.equal(race.player.index, RACE.totalKarts - 1);
+  assert.equal(race.player.paintId, 'turbo-blue');
+  assert.equal(race.player.avatarId, 'cat');
   const ids = new Set(race.karts.map((k) => k.character.id));
   assert.equal(ids.size, RACE.totalKarts, 'duplicate characters in the field');
+  for (const kart of race.karts.filter((candidate) => !candidate.isPlayer)) {
+    assert.ok(PAINT_THEMES_BY_ID[kart.paintId], `${kart.name} has an invalid paint`);
+    assert.ok(AVATARS_BY_ID[kart.avatarId], `${kart.name} has an invalid avatar`);
+  }
+  assert.deepEqual(
+    runA.race.karts.map(({ paintId, avatarId }) => ({ paintId, avatarId })),
+    runB.race.karts.map(({ paintId, avatarId }) => ({ paintId, avatarId })),
+    'the same race seed should reproduce AI appearances',
+  );
+
+  const alternateRace = new RaceDirector(
+    new Track(getTrackDef(TRACK_ID)),
+    { playerCharacterId: 'kit', difficulty: 'normal', seed: SEED + 1 },
+  );
+  const aiLooks = (director) => director.karts
+    .filter((kart) => !kart.isPlayer)
+    .map(({ character, paintId, avatarId }) => ({
+      characterId: character.id, paintId, avatarId,
+    }))
+    .sort((a, b) => a.characterId.localeCompare(b.characterId));
+  assert.notDeepEqual(
+    aiLooks(alternateRace),
+    aiLooks(race),
+    'a different race seed should produce a different set of AI appearances',
+  );
 });
 
 test('reset() rewinds to a countdown grid and replays identically', () => {

@@ -53,6 +53,8 @@ counts.
   the same Racer and independently choose one of 12 paints and 8 animal avatars.
 - The Room shows the local choice as a rotating 3D kart; the customization dialog
   previews Racer stats, paint, and avatar before saving the complete loadout.
+- Single-player keeps its Racer-only selection flow: the chosen Racer receives
+  its default appearance automatically, while AI paint and avatars are randomized.
 - Changing any loadout field clears that player's ready state; changing track or
   difficulty clears everyone's ready state.
 - Starting a race creates a seeded grid and a 10-second loading phase. If fewer

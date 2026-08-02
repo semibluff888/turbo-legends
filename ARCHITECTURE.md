@@ -241,7 +241,9 @@ director.update(dt, playerControls);
 ```
 
 It keeps the player in the final grid slot, fills the other seven slots with
-distinct AI characters, exposes `player`, and supports deterministic `reset()`.
+distinct AI characters, applies the selected Racer's default cosmetic loadout,
+and gives each AI a seeded-random paint/avatar pair. It exposes `player` and
+supports deterministic `reset()`.
 `autopilot: true` is used by headless full-race tests.
 
 Presentation code receives either `LocalRaceSession` or `OnlineRaceSession`

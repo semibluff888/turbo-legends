@@ -8,8 +8,21 @@
 
 import { RACE } from '../core/constants.js';
 import { deriveRng } from '../core/rng.js';
+import {
+  AVATARS,
+  PAINT_THEMES,
+  defaultLoadoutForCharacter,
+} from './appearance.js';
 import { CHARACTERS, getCharacter } from './characters.js';
 import { RaceSimulation, CONTROLLER_KIND } from './race-simulation.js';
+
+function randomAiAppearance(characterId, seed) {
+  const appearanceRng = deriveRng(seed, `local-appearance:${characterId}`);
+  return {
+    paintId: appearanceRng.pick(PAINT_THEMES)?.id,
+    avatarId: appearanceRng.pick(AVATARS)?.id,
+  };
+}
 
 function makeSinglePlayerRoster(playerCharacterId, seed, autopilot) {
   const playerCharacter = getCharacter(playerCharacterId);
@@ -21,6 +34,7 @@ function makeSinglePlayerRoster(playerCharacterId, seed, autopilot) {
     participantId: `ai:${character.id}`,
     displayName: character.name,
     characterId: character.id,
+    ...randomAiAppearance(character.id, seed),
     controllerKind: CONTROLLER_KIND.AI,
   }));
 
@@ -30,6 +44,7 @@ function makeSinglePlayerRoster(playerCharacterId, seed, autopilot) {
     participantId: 'local-player',
     displayName: playerCharacter.name,
     characterId: playerCharacter.id,
+    ...defaultLoadoutForCharacter(playerCharacter.id),
     controllerKind: autopilot ? CONTROLLER_KIND.AI : CONTROLLER_KIND.HUMAN,
     rubberBandEligible: false,
     aiBaseSpeedEligible: false,
