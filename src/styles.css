@@ -1402,8 +1402,6 @@ kbd {
   transform: translateY(-2px);
   outline: none;
 }
-  outline: none;
-}
 
 .online-lobby-panel { display: flex; flex-direction: column; gap: 16px; }
 .online-room-code {
@@ -3735,4 +3733,497 @@ body.touch #hud:not([hidden]) #minimap {
   #screen-online-room .online-setup-track-preview { min-height: 82px; }
   #screen-online-room .online-room-state { margin: 0 10px 8px; padding-top: 7px; padding-bottom: 7px; }
   #screen-online-room .online-room-actions { padding: 0 10px 10px; }
+}
+
+/* Phone portrait menu layout ---------------------------------------------
+   Keep this block after the lobby/room refresh so it can safely override the
+   large-screen presentation without changing desktop or in-race controls. */
+
+@media (orientation: portrait) and (max-width: 640px) {
+  #screen-title,
+  #screen-character,
+  #screen-track,
+  #screen-difficulty,
+  #screen-settings,
+  #screen-help,
+  #screen-online-lobby,
+  #screen-online-room {
+    height: 100vh;
+    height: 100dvh;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding:
+      max(10px, env(safe-area-inset-top, 0px))
+      max(10px, env(safe-area-inset-right, 0px))
+      max(10px, env(safe-area-inset-bottom, 0px))
+      max(10px, env(safe-area-inset-left, 0px));
+  }
+
+  /* Main menu */
+  #screen-title { justify-content: flex-start; }
+  #screen-title .title-layout {
+    width: min(430px, 100%);
+    margin: auto 0;
+    gap: 12px;
+  }
+  #screen-title .title-brand { gap: 0; }
+  #screen-title .logo {
+    line-height: 0.9;
+    filter: drop-shadow(0 6px 0 rgba(20, 8, 40, 0.46))
+            drop-shadow(0 0 28px rgba(255, 95, 162, 0.34));
+  }
+  #screen-title .logo-turbo { font-size: clamp(52px, 20vw, 78px); }
+  #screen-title .logo-legends { font-size: clamp(42px, 14.5vw, 58px); }
+  #screen-title .main-menu-panel {
+    padding: 12px;
+    border-width: 2px;
+    border-radius: 20px;
+  }
+  #screen-title .main-menu-heading {
+    margin-bottom: 9px;
+    font-size: 19px;
+  }
+  #screen-title .main-menu-list { gap: 6px; }
+  #screen-title .main-menu-option {
+    min-height: 48px;
+    grid-template-columns: 34px minmax(0, 1fr) 34px;
+    gap: 7px;
+    padding: 7px 9px;
+    border-width: 2px;
+    border-radius: 13px;
+  }
+  #screen-title .main-menu-option.is-focused { transform: scale(1.01); }
+  #screen-title .main-menu-icon { font-size: 21px; }
+  #screen-title .main-menu-label { font-size: clamp(14px, 4.4vw, 17px); }
+  #screen-title .main-menu-arrow { font-size: 27px; }
+  #screen-title .menu-status {
+    width: min(430px, calc(100vw - 24px));
+    padding: 9px 14px;
+    white-space: normal;
+  }
+
+  /* Character, track, and difficulty menus */
+  #screen-character,
+  #screen-track,
+  #screen-difficulty {
+    align-items: center;
+    justify-content: flex-start;
+    gap: 12px;
+  }
+  #screen-character .screen-heading,
+  #screen-track .screen-heading,
+  #screen-difficulty .screen-heading {
+    flex: 0 0 auto;
+    font-size: clamp(25px, 8vw, 32px);
+    line-height: 1.08;
+    text-align: center;
+  }
+  #screen-character .screen-hint,
+  #screen-track .screen-hint,
+  #screen-difficulty .screen-hint { display: none; }
+  #screen-character .card.is-focused,
+  #screen-track .card.is-focused,
+  #screen-difficulty .card.is-focused {
+    transform: translateY(-2px) scale(1.01);
+  }
+
+  #screen-character .char-grid {
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 4px;
+  }
+  #screen-character .char-swatch { height: 40px; font-size: 21px; }
+  #screen-character .char-body { gap: 5px; padding: 8px 9px 10px; }
+  #screen-character .char-name-row { align-items: flex-start; gap: 5px; }
+  #screen-character .char-name { font-size: 14px; }
+  #screen-character .chip { padding: 2px 5px; font-size: 7px; }
+  #screen-character .stat-row { grid-template-columns: 38px minmax(0, 1fr); gap: 5px; }
+  #screen-character .stat-label { font-size: 8px; }
+  #screen-character .stat-bar { height: 7px; }
+
+  #screen-track .track-row,
+  #screen-difficulty .diff-row {
+    width: min(430px, 100%);
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 10px;
+    padding: 4px;
+  }
+  #screen-track .track-card {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(105px, 0.75fr) minmax(0, 1.25fr);
+  }
+  #screen-track .track-map {
+    height: auto;
+    min-height: 104px;
+    padding: 6px;
+    border-right: 3px solid rgba(255, 255, 255, 0.25);
+    border-bottom: 0;
+  }
+  #screen-track .track-body { gap: 5px; padding: 10px; }
+  #screen-track .track-name { font-size: 17px; }
+  #screen-track .track-subtitle { min-height: 0; font-size: 11px; }
+  #screen-track .chip { padding: 2px 7px; font-size: 8px; }
+
+  #screen-difficulty .diff-card {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr);
+    align-items: center;
+    gap: 3px 10px;
+    padding: 11px 13px;
+    text-align: left;
+  }
+  #screen-difficulty .diff-icon {
+    grid-row: 1 / 3;
+    font-size: 32px;
+    text-align: center;
+  }
+  #screen-difficulty .diff-name { font-size: 19px; }
+  #screen-difficulty .diff-desc { grid-column: 2; font-size: 11px; line-height: 1.3; }
+
+  /* Settings and help panels */
+  #screen-settings,
+  #screen-help { justify-content: center; }
+  #screen-settings .settings-panel,
+  #screen-help .help-panel {
+    width: min(520px, 100%);
+    max-height: 100%;
+    gap: 10px;
+    padding: 12px;
+    border-width: 2px;
+    border-radius: 20px;
+  }
+  #screen-settings .panel-heading,
+  #screen-help .panel-heading { font-size: 26px; }
+  #screen-settings .panel-hint,
+  #screen-help .panel-hint { display: none; }
+  #screen-settings .settings-list { gap: 6px; padding: 2px; }
+  #screen-settings .setting-row {
+    grid-template-columns: minmax(0, 0.9fr) minmax(132px, 1.1fr);
+    gap: 8px;
+    padding: 8px 9px;
+    border-width: 2px;
+    border-radius: 12px;
+  }
+  #screen-settings .setting-label { font-size: 12px; line-height: 1.15; }
+  #screen-settings .setting-control { gap: 7px; }
+  #screen-settings .setting-control.setting-choice {
+    grid-template-columns: 30px minmax(0, 1fr) 30px;
+    gap: 5px;
+  }
+  #screen-settings .setting-choice-arrow { width: 30px; height: 28px; }
+  #screen-settings .setting-value { width: 44px; font-size: 12px; }
+  #screen-settings .panel-actions { flex-direction: row; gap: 8px; }
+  #screen-settings .panel-action {
+    width: auto;
+    min-width: 0;
+    min-height: 43px;
+    flex: 1;
+    padding: 8px 9px;
+    font-size: 11px;
+  }
+
+  #screen-help .help-tabs { gap: 4px; padding: 4px; }
+  #screen-help .help-tab { padding: 8px 3px; font-size: 10px; }
+  #screen-help .help-content {
+    height: auto;
+    min-height: 0;
+    flex: 1;
+    padding: 2px 5px 2px 2px;
+  }
+  #screen-help .help-section,
+  #screen-help .help-item-card,
+  #screen-help .help-gameplay-card { border-radius: 12px; }
+  #screen-help .help-section { padding: 11px; }
+  #screen-help .help-item-card,
+  #screen-help .help-gameplay-card { gap: 9px; padding: 10px; }
+  #screen-help .help-item-glyph,
+  #screen-help .help-gameplay-icon { width: 34px; font-size: 25px; }
+  #screen-help .help-footer { gap: 0; }
+  #screen-help .panel-action {
+    width: 100%;
+    min-width: 0;
+    min-height: 43px;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  /* Multiplayer lobby */
+  #screen-online-lobby,
+  #screen-online-room {
+    justify-content: flex-start;
+    overflow: hidden;
+    padding:
+      max(6px, env(safe-area-inset-top, 0px))
+      max(6px, env(safe-area-inset-right, 0px))
+      max(6px, env(safe-area-inset-bottom, 0px))
+      max(6px, env(safe-area-inset-left, 0px));
+  }
+  #screen-online-lobby .online-directory-panel,
+  #screen-online-room .online-room-panel {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    padding-bottom: 42px;
+    border-radius: 18px;
+  }
+  #screen-online-lobby .online-directory-header {
+    min-height: 0;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 7px;
+    padding: 9px 10px;
+  }
+  #screen-online-lobby .online-lobby-back {
+    grid-column: 1;
+    grid-row: 1;
+    padding: 7px 9px;
+  }
+  #screen-online-lobby .online-lobby-brand {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  #screen-online-lobby .online-lobby-brand h2 {
+    gap: 4px;
+    font-size: clamp(17px, 5.8vw, 22px);
+  }
+  #screen-online-lobby .online-lobby-account {
+    width: auto;
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 5px;
+  }
+  #screen-online-lobby .online-nickname-field {
+    width: 100%;
+    grid-template-columns: 30px minmax(0, 1fr) 22px;
+    gap: 5px;
+    padding: 4px 6px;
+  }
+  #screen-online-lobby .online-profile-mark { width: 28px; height: 28px; font-size: 9px; }
+  #screen-online-lobby .online-nickname-field .online-input {
+    min-height: 30px;
+    font-size: 12px;
+  }
+  #screen-online-lobby .online-page-action,
+  #screen-online-room .online-page-action {
+    min-width: 38px;
+    min-height: 40px;
+    padding: 4px 6px;
+  }
+  #screen-online-lobby .online-lobby-layout {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    overflow-x: hidden;
+    overflow-y: auto;
+    gap: 10px;
+    padding: 10px;
+    scrollbar-gutter: stable;
+  }
+  #screen-online-lobby .online-lobby-sidebar {
+    width: 100%;
+    min-height: auto;
+    flex: 0 0 auto;
+    overflow: visible;
+    gap: 10px;
+    padding: 0;
+  }
+  #screen-online-lobby .online-quick-start {
+    min-height: 54px;
+    margin: 0;
+    padding: 8px 12px;
+  }
+  #screen-online-lobby .online-quick-start-icon { font-size: 24px; }
+  #screen-online-lobby .online-quick-start strong { font-size: 16px; }
+  #screen-online-lobby .online-create-card {
+    width: 100%;
+    flex: 0 0 auto;
+    gap: 9px;
+    padding: 12px;
+  }
+  #screen-online-lobby .online-create-track-preview { height: 72px; }
+  #screen-online-lobby .online-create-submit { min-height: 48px; font-size: 15px; }
+  #screen-online-lobby .online-room-browser {
+    width: 100%;
+    min-height: 0;
+    flex: 0 0 auto;
+    overflow: visible;
+    gap: 9px;
+    padding: 10px;
+  }
+  #screen-online-lobby .online-room-browser-header { padding-right: 0; }
+  #screen-online-lobby .online-room-list {
+    min-height: 160px;
+    overflow: visible;
+    gap: 8px;
+  }
+  #screen-online-lobby .online-room-list-empty { min-height: 160px; padding: 16px; }
+  #screen-online-lobby .online-room-list-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 9px;
+    min-height: 0;
+    padding: 10px;
+  }
+  #screen-online-lobby .online-room-list-title,
+  #screen-online-lobby .online-room-list-track,
+  #screen-online-lobby .online-room-facts,
+  #screen-online-lobby .online-room-list-action {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  #screen-online-lobby .online-room-list-track {
+    grid-template-columns: 84px minmax(0, 1fr);
+    gap: 8px;
+  }
+  #screen-online-lobby .online-room-track-preview { width: 84px; height: 52px; }
+  #screen-online-lobby .online-room-list-action {
+    grid-template-columns: minmax(0, 1fr) minmax(96px, auto);
+  }
+  #screen-online-lobby .online-room-status { text-align: left; }
+
+  /* Multiplayer room */
+  #screen-online-room .online-room-header {
+    min-height: 0;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 7px;
+    padding: 9px 10px;
+  }
+  #screen-online-room .online-room-back {
+    grid-column: 1;
+    grid-row: 1;
+    padding: 7px 9px;
+  }
+  #screen-online-room .online-page-actions {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  #screen-online-room .online-room-heading {
+    width: 100%;
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  #screen-online-room .online-room-name {
+    font-size: clamp(21px, 7vw, 28px);
+    line-height: 1.05;
+  }
+  #screen-online-room .online-room-summary { gap: 6px; margin-top: 6px; font-size: 9px; }
+  #screen-online-room .online-room-summary .online-room-code { padding: 4px 6px; font-size: 12px; }
+  #screen-online-room .online-room-grid {
+    overflow-x: hidden;
+    overflow-y: auto;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px;
+    scrollbar-gutter: stable;
+  }
+  #screen-online-room .online-card { padding: 12px; }
+  #screen-online-room .online-card h3 { font-size: 15px; }
+  #screen-online-room .online-member { min-height: 42px; padding: 6px 40px 6px 8px; }
+  #screen-online-room .online-member-name { font-size: 13px; }
+  #screen-online-room .online-loadout-preview-host { height: 155px; }
+  #screen-online-room .online-loadout-customize { min-height: 42px; font-size: 12px; }
+  #screen-online-room .online-setup-card {
+    overflow: visible;
+    gap: 9px;
+  }
+  #screen-online-room .online-setup-track-preview { height: 96px; min-height: 96px; }
+  #screen-online-room .online-setup-track-copy > strong { font-size: 17px; }
+  #screen-online-room .online-room-state {
+    margin: 0 10px 8px;
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+  #screen-online-room .online-room-actions {
+    flex-direction: row;
+    gap: 8px;
+    padding: 0 10px 8px;
+  }
+  #screen-online-room .online-room-actions .online-action {
+    width: auto;
+    min-width: 0;
+    min-height: 44px;
+    flex: 1;
+    padding: 8px;
+    font-size: 12px;
+  }
+
+  /* Online dialogs opened from lobby/room */
+  .online-dialog-backdrop { padding: 8px; }
+  .online-dialog {
+    max-height: calc(100dvh - 16px);
+    gap: 11px;
+    padding: 15px;
+    border-radius: 18px;
+  }
+  .online-dialog-actions { flex-direction: row; gap: 8px; }
+  .online-dialog-actions .online-action { width: auto; min-width: 0; flex: 1; }
+  .online-loadout-dialog {
+    width: 100%;
+    max-height: calc(100dvh - 16px);
+    gap: 10px;
+    padding: 12px;
+    border-radius: 18px;
+  }
+  .online-loadout-dialog-header { padding: 0 42px; }
+  .online-loadout-dialog-header h3 { font-size: 20px; }
+  .online-loadout-dialog-grid { gap: 12px; }
+  .online-loadout-dialog-preview .online-loadout-preview-host { height: 145px; }
+  .online-loadout-dialog-selection strong { font-size: 20px; }
+  .online-loadout-actions { flex-direction: row; gap: 8px; }
+  .online-loadout-actions .online-action { width: auto; min-width: 0; flex: 1; }
+  .online-alert-backdrop { padding: 10px; }
+  .online-alert { gap: 12px; padding: 20px 16px; border-radius: 18px; }
+
+  /* Network telemetry must not cover the bottom controls on full-height menus. */
+  #screen-title:not([hidden]) ~ #network-status-overlay[data-context='details'] .network-summary,
+  #screen-character:not([hidden]) ~ #network-status-overlay[data-context='details'] .network-summary,
+  #screen-track:not([hidden]) ~ #network-status-overlay[data-context='details'] .network-summary,
+  #screen-difficulty:not([hidden]) ~ #network-status-overlay[data-context='details'] .network-summary {
+    left: max(10px, env(safe-area-inset-left, 0px) + 8px);
+    bottom: max(10px, env(safe-area-inset-bottom, 0px) + 8px);
+  }
+  #screen-settings:not([hidden]) ~ #network-status-overlay[data-context='details'],
+  #screen-help:not([hidden]) ~ #network-status-overlay[data-context='details'] { display: none; }
+  #screen-online-lobby:not([hidden]) ~ #network-status-overlay[data-context='details'] .game-version,
+  #screen-online-room:not([hidden]) ~ #network-status-overlay[data-context='details'] .game-version { display: none; }
+  #screen-online-lobby:not([hidden]) ~ #network-status-overlay[data-context='details'] .network-summary,
+  #screen-online-room:not([hidden]) ~ #network-status-overlay[data-context='details'] .network-summary {
+    left: 50%;
+    bottom: max(9px, env(safe-area-inset-bottom, 0px) + 5px);
+    max-width: calc(100vw - 24px);
+    overflow: hidden;
+    border: 1px solid rgba(127, 227, 255, 0.28);
+    background: rgba(16, 12, 38, 0.94);
+    box-shadow: 0 5px 18px rgba(5, 3, 18, 0.38);
+    transform: translateX(-50%);
+  }
+}
+
+/* Keep the nickname control compact but leave enough room for its edit affordance. */
+#screen-online-lobby .online-nickname-field {
+  width: min(180px, 48vw);
+  grid-template-columns: 28px minmax(0, 1fr) 20px;
+  gap: 4px;
+  padding: 4px 6px;
+}
+#screen-online-lobby .online-profile-mark {
+  width: 28px;
+  height: 28px;
+  font-size: 9px;
+}
+#screen-online-lobby .online-nickname-field .online-input {
+  min-width: 0;
+  min-height: 30px;
+  font-size: 12px;
+}
+#screen-online-lobby .online-nickname-edit {
+  display: grid;
+  font-size: 14px;
 }
