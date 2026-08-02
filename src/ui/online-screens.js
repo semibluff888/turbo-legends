@@ -854,7 +854,7 @@ export class OnlineScreens {
             <button type="button" class="online-action online-action-secondary online-quick-start"
               data-action="quick" data-busy-action>
               <span class="online-quick-start-icon" aria-hidden="true">&#9889;</span>
-              <span><strong>${copy.quickMatch}</strong></span>
+              <strong>${copy.quickMatch}</strong>
             </button>
 
             <form class="online-create-card" data-form="create" aria-labelledby="online-create-heading">
@@ -1024,13 +1024,20 @@ export class OnlineScreens {
     root.innerHTML = `
       <div class="online-panel online-room-panel" data-room-content>
         <header class="online-room-header">
+          <button type="button" class="online-back online-room-back" data-action="leave" aria-label="${copy.back}">
+            <span aria-hidden="true">&#8592;</span><span>${copy.back}</span>
+          </button>
           <div class="online-room-heading">
             <h2 class="online-room-name" data-room-name data-screen-heading tabindex="-1">${copy.unnamedRoom}</h2>
             <div class="online-room-summary">
               <span class="online-room-type" data-room-type></span>
               <span data-room-players></span>
-              <button type="button" class="online-room-code" data-action="copy" title="${copy.copyInvite}">
-                <span data-room-code>------</span><span aria-hidden="true"> \u2398</span>
+              <button type="button" class="online-room-code" data-action="copy"
+                aria-label="${copy.copyInvite}" title="${copy.copyInvite}">
+                <span data-room-code>------</span>
+                <svg class="online-room-share-icon" aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+                  <path d="M14 5l5 5-5 5M19 10H9a5 5 0 0 0-5 5v4" />
+                </svg>
               </button>
             </div>
           </div>
@@ -1060,6 +1067,12 @@ export class OnlineScreens {
           </section>
           <section class="online-card online-setup-card">
             <h3>${copy.raceSetup}</h3>
+            <div class="online-setup-track-preview" data-room-track-preview aria-hidden="true"></div>
+            <div class="online-setup-track-copy">
+              <strong data-room-track-name></strong>
+              <span class="chip chip-laps" data-room-track-laps></span>
+              <p data-room-track-description></p>
+            </div>
             <label class="online-field">
               <span class="online-field-label">${copy.track}</span>
               <select class="online-select" data-room-setting="trackId"></select>
@@ -1081,7 +1094,6 @@ export class OnlineScreens {
         </div>
         <p class="online-room-state" data-room-status role="status" aria-live="polite"></p>
         <footer class="online-room-actions">
-          <button type="button" class="online-action online-action-quiet" data-action="leave">${copy.leave}</button>
           <button type="button" class="online-action online-action-secondary" data-action="ready">${copy.readyUp}</button>
           <button type="button" class="online-action online-action-primary" data-action="start">${copy.start}</button>
         </footer>
@@ -1089,11 +1101,8 @@ export class OnlineScreens {
       <div class="online-dialog-backdrop online-loadout-backdrop" data-dialog="loadout" hidden>
         <form class="online-loadout-dialog" data-form="loadout" role="dialog" aria-modal="true"
           aria-labelledby="online-loadout-heading">
-          <header class="online-dialog-header">
-            <div>
-              <p class="online-eyebrow">${copy.loadoutEyebrow}</p>
-              <h3 id="online-loadout-heading">${copy.customizeRacer}</h3>
-            </div>
+          <header class="online-dialog-header online-loadout-dialog-header">
+            <h3 id="online-loadout-heading">${copy.customizeRacer}</h3>
             <button type="button" class="online-dialog-close" data-action="close-loadout"
               aria-label="${copy.close}">\u00d7</button>
           </header>
@@ -1221,6 +1230,7 @@ export class OnlineScreens {
     }
 
     this._listen(trackSelect, 'change', () => {
+      this._syncRoomTrackPreview(trackSelect.value);
       this._pendingAction = { kind: 'settings' };
       this._emit('onSetRoom', { trackId: trackSelect.value });
     });
@@ -1514,6 +1524,22 @@ export class OnlineScreens {
     preview.innerHTML = trackPreviewMarkup(track);
     preview.style.background = trackPreviewBackground(track);
     preview.title = track?.name || '';
+  }
+
+  _syncRoomTrackPreview(trackId) {
+    const root = this.roots.room;
+    const preview = root?.querySelector('[data-room-track-preview]');
+    if (!preview) return;
+    const track = this.trackById.get(trackId) || this.tracks[0] || null;
+    preview.innerHTML = trackPreviewMarkup(track);
+    preview.style.background = trackPreviewBackground(track);
+    preview.title = track?.name || '';
+    const name = root.querySelector('[data-room-track-name]');
+    const description = root.querySelector('[data-room-track-description]');
+    const laps = root.querySelector('[data-room-track-laps]');
+    if (name) name.textContent = track?.name || '';
+    if (description) description.textContent = track?.subtitle || '';
+    if (laps) laps.textContent = `${track?.laps ?? 3} LAPS`;
   }
 
   _submitCreateRoom() {
@@ -1949,6 +1975,7 @@ export class OnlineScreens {
     const difficultySelect = root.querySelector('[data-room-setting="difficulty"]');
     const autoFillAi = root.querySelector('[data-room-setting="autoFillAi"]');
     trackSelect.value = view.trackId;
+    this._syncRoomTrackPreview(view.trackId);
     difficultySelect.value = view.difficulty;
     autoFillAi.checked = view.autoFillAi;
     trackSelect.disabled = this._busy || !view.isHost || !view.canManageRoom;

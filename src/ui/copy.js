@@ -157,6 +157,7 @@ export const UI_COPY = Object.freeze({
     },
     room: {
       unnamedRoom: 'ONLINE ROOM',
+      back: 'BACK',
       copyInvite: 'Copy invite link',
       copied: 'INVITE LINK COPIED',
       copyFallback: 'INVITE LINK COPIED',

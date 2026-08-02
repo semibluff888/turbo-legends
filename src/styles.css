@@ -211,7 +211,7 @@ kbd {
 .main-menu-option {
   width: 100%;
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) auto;
+  grid-template-columns: 48px minmax(0, 1fr) 48px;
   align-items: center;
   gap: 14px;
   padding: 13px 16px;
@@ -241,6 +241,7 @@ kbd {
 
 .main-menu-copy {
   min-width: 0;
+  text-align: center;
 }
 
 .main-menu-label {
@@ -251,6 +252,8 @@ kbd {
 }
 
 .main-menu-arrow {
+  display: grid;
+  place-items: center;
   font-size: 34px;
   font-weight: 900;
   line-height: 1;
@@ -258,6 +261,7 @@ kbd {
 }
 
 .main-menu-badge {
+  justify-self: center;
   padding: 5px 8px;
   border-radius: 999px;
   background: rgba(74, 168, 255, 0.2);
@@ -1277,10 +1281,15 @@ kbd {
 .online-divider::after { content: ''; height: 1px; flex: 1; background: rgba(255, 255, 255, 0.16); }
 
 .online-action {
+  appearance: none;
+  -webkit-appearance: none;
+  --online-action-fill: linear-gradient(rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.09));
+  --online-action-edge: linear-gradient(#596078, #596078);
   min-height: 48px;
   padding: 11px 20px;
   border: 3px solid transparent;
   border-radius: 14px;
+  background: var(--online-action-fill) padding-box, var(--online-action-edge) border-box;
   font-size: 15px;
   font-weight: 900;
   letter-spacing: 0.07em;
@@ -1288,10 +1297,10 @@ kbd {
   text-shadow: var(--ink-shadow);
   transition: transform 0.12s, border-color 0.12s, filter 0.12s, opacity 0.12s;
 }
-.online-action-primary { background: linear-gradient(100deg, #ff9d2e, #ff5fa2); }
-.online-action-secondary { background: linear-gradient(100deg, #4aa8ff, #b45fe9); }
-.online-action-quiet { background: rgba(255, 255, 255, 0.09); }
-.online-action.is-active { background: linear-gradient(100deg, #21bd82, #4aa8ff); }
+.online-action-primary { --online-action-fill: linear-gradient(100deg, #ff9d2e, #ff5fa2); }
+.online-action-secondary { --online-action-fill: linear-gradient(100deg, #4aa8ff, #b45fe9); }
+.online-action-quiet { --online-action-fill: linear-gradient(rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.09)); }
+.online-action.is-active { --online-action-fill: linear-gradient(100deg, #21bd82, #4aa8ff); }
 .online-action:hover:not(:disabled) { transform: translateY(-2px); filter: brightness(1.1); }
 .online-action:focus-visible {
   border-color: #fff;
@@ -1354,6 +1363,16 @@ kbd {
   line-height: 1;
   text-shadow: var(--ink-shadow), 0 0 16px rgba(255, 210, 63, 0.35);
 }
+.online-room-share-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .online-room-code:hover:not(:disabled),
 .online-room-code:focus-visible { background: rgba(255, 210, 63, 0.12); outline: 2px solid rgba(255, 210, 63, 0.66); }
 .online-room-code:disabled { cursor: default; opacity: 0.55; }
@@ -1391,7 +1410,6 @@ kbd {
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.045);
 }
-.online-member.can-kick { padding-right: 34px; }
 .online-member-kick {
   position: absolute;
   top: 5px;
@@ -1473,8 +1491,8 @@ kbd {
 .online-loadout-canvas:active { cursor: grabbing; }
 .online-loadout-preview-fallback { position: absolute; inset: 0; display: grid; place-items: center; font-size: 72px; filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.42)); }
 .online-loadout-preview-host.has-showroom:not(.is-fallback) .online-loadout-preview-fallback { display: none; }
-.online-loadout-summary { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 5px 10px; }
-.online-loadout-summary > strong { grid-column: 1 / -1; font-size: 21px; font-weight: 900; }
+.online-loadout-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 12px; }
+.online-loadout-summary > strong { width: 100%; font-size: 21px; font-weight: 900; }
 .online-loadout-detail { min-width: 0; display: flex; align-items: center; gap: 6px; color: rgba(255, 255, 255, 0.62); font-size: 10px; font-weight: 800; }
 .online-loadout-detail i { width: 16px; height: 16px; flex: 0 0 auto; border: 2px solid rgba(255, 255, 255, 0.5); border-radius: 50%; }
 .online-loadout-customize { width: 100%; min-height: 40px; margin-top: auto; padding: 7px 12px; font-size: 11px; }
@@ -1707,7 +1725,7 @@ kbd {
 .online-room-status.is-waiting { color: #77f0be; }
 .online-room-status.is-full { color: #ffd56a; }
 .online-room-status.is-in_game { color: #9dc9ff; }
-.online-room-join { min-height: 38px; padding: 7px 12px; border-width: 2px; font-size: 11px; background: linear-gradient(100deg, #4aa8ff, #b45fe9); }
+.online-room-join { min-height: 38px; padding: 7px 12px; border-width: 2px; font-size: 11px; --online-action-fill: linear-gradient(100deg, #4aa8ff, #b45fe9); }
 
 .online-room-list-empty {
   min-height: 210px;
@@ -1779,8 +1797,9 @@ kbd {
 .online-loadout-backdrop { z-index: 34; }
 .online-loadout-dialog {
   width: min(1050px, 100%);
+  height: min(820px, calc(100vh - 36px));
   max-height: calc(100vh - 36px);
-  overflow: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -1791,8 +1810,18 @@ kbd {
   box-shadow: 0 25px 80px rgba(4, 2, 14, 0.78), 0 0 38px rgba(74, 168, 255, 0.15);
   animation: pop 0.18s ease-out both;
 }
-.online-loadout-dialog-grid { min-height: 0; display: grid; grid-template-columns: minmax(280px, 0.82fr) minmax(480px, 1.5fr); gap: 18px; }
-.online-loadout-dialog-preview { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.online-loadout-dialog-header {
+  position: relative;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  text-align: center;
+}
+.online-loadout-dialog-header h3 { margin: 0; font-size: 25px; letter-spacing: 0.06em; }
+.online-loadout-dialog-header .online-dialog-close { position: absolute; top: 0; right: 0; }
+.online-loadout-dialog-grid { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(280px, 0.82fr) minmax(480px, 1.5fr); gap: 18px; }
+.online-loadout-dialog-preview { min-width: 0; min-height: 0; display: flex; flex-direction: column; justify-content: center; gap: 10px; }
 .online-loadout-dialog-preview .online-loadout-preview-host {
   height: clamp(300px, 48vh, 470px);
   border: 2px solid rgba(127, 227, 255, 0.24);
@@ -1809,7 +1838,7 @@ kbd {
 .online-loadout-tabs button { padding: 9px 8px; border: 2px solid transparent; border-radius: 10px; color: rgba(255, 255, 255, 0.58); font-size: 11px; font-weight: 900; letter-spacing: 0.08em; text-align: center; }
 .online-loadout-tabs button[aria-selected='true'] { color: #17202e; background: linear-gradient(100deg, #7fe3ff, #77f0be); }
 .online-loadout-tabs button:focus-visible { border-color: #fff; outline: none; }
-.online-loadout-panel { min-height: 0; overflow: auto; padding: 2px; }
+.online-loadout-panel { min-height: 0; flex: 1; overflow: auto; padding: 2px; }
 .online-loadout-racer-grid { display: grid; grid-template-columns: repeat(2, minmax(230px, 1fr)); gap: 8px; }
 .online-loadout-racer-option {
   min-width: 0;
@@ -2877,7 +2906,7 @@ body.touch #hud:not([hidden]) #minimap {
   .title-layout { gap: 15px; }
   .title-tagline { display: none; }
   .main-menu-heading { margin-bottom: 12px; font-size: 22px; }
-  .main-menu-option { grid-template-columns: 38px minmax(0, 1fr) auto; gap: 9px; }
+  .main-menu-option { grid-template-columns: 38px minmax(0, 1fr) 38px; gap: 9px; }
   .main-menu-icon { font-size: 23px; }
   .main-menu-badge { padding: 4px 6px; font-size: 8px; }
   .settings-panel,
@@ -2950,7 +2979,9 @@ body.touch #hud:not([hidden]) #minimap {
   .online-room-name { max-width: 78vw; }
   .online-room-grid { grid-template-columns: 1fr; }
   .online-loadout-dialog { padding: 16px; }
+  .online-loadout-dialog { height: auto; overflow: auto; }
   .online-loadout-dialog-grid { grid-template-columns: 1fr; }
+  .online-loadout-dialog-preview { justify-content: flex-start; }
   .online-loadout-dialog-preview .online-loadout-preview-host { height: 220px; }
   .online-loadout-racer-grid { grid-template-columns: 1fr; }
   .online-loadout-paint-grid,
@@ -3178,15 +3209,14 @@ body.touch #hud:not([hidden]) #minimap {
 
 .online-quick-start {
   min-height: 68px;
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr);
+  display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 9px;
   padding: 9px 15px;
   text-align: center;
 }
 .online-quick-start-icon { font-size: 29px; filter: drop-shadow(0 0 10px rgba(127, 227, 255, 0.55)); }
-.online-quick-start > span:last-child { min-width: 0; display: flex; align-items: center; justify-content: center; }
 .online-quick-start strong { font-size: 18px; letter-spacing: 0.04em; text-align: center; }
 
 .online-create-card {
@@ -3236,10 +3266,20 @@ body.touch #hud:not([hidden]) #minimap {
   background: rgba(8, 9, 31, 0.34);
 }
 
+#screen-online-lobby .online-room-browser-header {
+  padding-right: 12px;
+}
+
 #screen-online-lobby .online-room-list {
+  --online-room-list-scrollbar: 8px;
   min-height: 0;
   max-height: none;
   flex: 1;
+  scrollbar-width: thin;
+}
+
+#screen-online-lobby .online-room-list::-webkit-scrollbar {
+  width: var(--online-room-list-scrollbar);
 }
 
 #screen-online-lobby .online-room-list-item {
@@ -3333,4 +3373,212 @@ body.touch #hud:not([hidden]) #minimap {
   .online-create-track-preview { height: 58px; }
   #screen-online-lobby .online-create-card .online-input,
   #screen-online-lobby .online-create-card .online-select { min-height: 36px; padding-top: 5px; padding-bottom: 5px; }
+}
+
+/* Multiplayer Room layout refresh --------------------------------------- */
+
+#screen-online-room {
+  justify-content: center;
+  padding: clamp(12px, 1.7vw, 28px);
+}
+
+#screen-online-room .online-room-panel {
+  width: min(1500px, 100%);
+  height: min(880px, calc(100vh - clamp(24px, 3.4vw, 56px)));
+  max-height: none;
+  overflow: hidden;
+  gap: 0;
+  padding: 0;
+  border-radius: 25px;
+}
+
+#screen-online-room .online-room-header {
+  min-height: 88px;
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(280px, auto) minmax(160px, 1fr);
+  align-items: center;
+  gap: 20px;
+  padding: 12px 22px;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.13);
+  background: linear-gradient(100deg, rgba(74, 168, 255, 0.08), rgba(180, 95, 233, 0.05));
+}
+
+.online-room-back {
+  width: max-content;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 13px;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.055);
+  font-size: 12px;
+}
+
+.online-room-back > span:first-child { font-size: 25px; line-height: 0.8; }
+
+#screen-online-room .online-room-heading {
+  width: min(720px, 56vw);
+  min-width: 0;
+  justify-self: center;
+  text-align: center;
+}
+
+#screen-online-room .online-room-name {
+  max-width: 100%;
+  margin-top: 0;
+  font-size: clamp(30px, 3.2vw, 46px);
+}
+
+#screen-online-room .online-room-summary {
+  justify-content: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 11px;
+}
+
+#screen-online-room .online-room-summary .online-room-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  font-size: 14px;
+}
+
+#screen-online-room .online-page-actions { justify-self: end; }
+#screen-online-room .online-page-action {
+  min-width: 60px;
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 5px 8px;
+  font-size: 8px;
+}
+
+#screen-online-room .online-room-grid {
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(280px, 1fr) minmax(390px, 1.35fr) minmax(270px, 0.95fr);
+  gap: 15px;
+  padding: 15px;
+}
+
+#screen-online-room .online-card { padding: 18px; }
+#screen-online-room .online-card h3 { font-size: 17px; }
+#screen-online-room .online-member { min-height: 49px; padding: 7px 42px 7px 9px; }
+#screen-online-room .online-member-name { font-size: 14px; }
+#screen-online-room .online-member-character { font-size: 11px; }
+#screen-online-room .online-loadout-preview-host { height: clamp(220px, 31vh, 330px); }
+#screen-online-room .online-loadout-customize { min-height: 46px; font-size: 13px; }
+#screen-online-room .online-setup-card { overflow: auto; gap: 12px; }
+.online-setup-track-preview {
+  min-height: 145px;
+  display: block;
+  overflow: hidden;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 28px rgba(8, 4, 22, 0.22);
+}
+.online-setup-track-preview svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  padding: 10px;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.35));
+}
+.online-setup-track-copy {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 10px;
+}
+.online-setup-track-copy > strong {
+  overflow: hidden;
+  font-size: 19px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.online-setup-track-copy .chip-laps { align-self: center; }
+.online-setup-track-copy p {
+  grid-column: 1 / -1;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+#screen-online-room .online-room-state { margin: 0 15px 12px; font-size: 13px; }
+#screen-online-room .online-room-actions { padding: 0 15px 15px; }
+#screen-online-room .online-room-actions .online-action { min-width: 190px; }
+
+@media (max-width: 1120px) {
+  #screen-online-room .online-room-header {
+    grid-template-columns: minmax(120px, 0.8fr) minmax(260px, auto) minmax(120px, 0.8fr);
+    gap: 12px;
+  }
+  #screen-online-room .online-room-grid {
+    grid-template-columns: minmax(230px, 0.85fr) minmax(340px, 1.25fr);
+    overflow: auto;
+  }
+  #screen-online-room .online-setup-card {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: end;
+  }
+  #screen-online-room .online-setup-card h3,
+  #screen-online-room .online-setup-card .online-host-note,
+  #screen-online-room .online-setup-track-preview,
+  #screen-online-room .online-setup-track-copy { grid-column: 1 / -1; }
+}
+
+@media (max-width: 840px) {
+  #screen-online-room { justify-content: flex-start; padding: 10px; }
+  #screen-online-room .online-room-panel { height: calc(100vh - 20px); }
+  #screen-online-room .online-room-header {
+    min-height: 78px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    padding: 11px 13px;
+  }
+  .online-room-back > span:last-child,
+  #screen-online-room .online-page-action > span:last-child { display: none; }
+  .online-room-back { padding: 8px 10px; }
+  #screen-online-room .online-room-heading { width: auto; }
+  #screen-online-room .online-room-name { font-size: clamp(24px, 5vw, 36px); }
+  #screen-online-room .online-page-action { min-width: 39px; min-height: 45px; }
+}
+
+@media (max-width: 640px) {
+  #screen-online-room .online-room-header {
+    min-height: 112px;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  #screen-online-room .online-room-heading {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+  }
+  #screen-online-room .online-page-actions { grid-column: 2; grid-row: 1; }
+  #screen-online-room .online-room-grid { grid-template-columns: 1fr; }
+  #screen-online-room .online-setup-card { grid-column: auto; display: flex; }
+  #screen-online-room .online-setup-card h3,
+  #screen-online-room .online-setup-card .online-host-note { grid-column: auto; }
+  #screen-online-room .online-room-actions { flex-direction: column-reverse; }
+  #screen-online-room .online-room-actions .online-action { width: 100%; min-width: 0; }
+}
+
+@media (max-height: 720px) and (min-width: 841px) {
+  #screen-online-room .online-room-header { min-height: 70px; padding-top: 7px; padding-bottom: 7px; }
+  #screen-online-room .online-room-grid { gap: 10px; padding: 10px; }
+  #screen-online-room .online-card { padding: 12px; }
+  #screen-online-room .online-member { min-height: 42px; padding-top: 5px; padding-bottom: 5px; }
+  #screen-online-room .online-loadout-preview-host { height: 170px; }
+  #screen-online-room .online-setup-track-preview { min-height: 82px; }
+  #screen-online-room .online-room-state { margin: 0 10px 8px; padding-top: 7px; padding-bottom: 7px; }
+  #screen-online-room .online-room-actions { padding: 0 10px 10px; }
 }

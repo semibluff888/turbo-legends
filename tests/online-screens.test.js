@@ -19,6 +19,7 @@ import {
 } from '../src/ui/online-screens.js';
 
 const onlineScreensSource = readFileSync(new URL('../src/ui/online-screens.js', import.meta.url), 'utf8');
+const onlineStylesSource = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
 
 test('online input helpers normalize display fields and room codes', () => {
   assert.equal(normalizeDisplayName('  Turbo\n  Racer  '), 'Turbo Racer');
@@ -392,6 +393,36 @@ test('Lobby and Room use field feedback, direct page actions, and persistent roo
   assert.match(onlineScreensSource, /viewBox="0 0 100 60" preserveAspectRatio="xMidYMid meet"/);
   assert.match(onlineScreensSource, /<polygon points=/);
   assert.doesNotMatch(onlineScreensSource, /preserveAspectRatio="xMidYMid slice"/);
+});
+
+test('Lobby and Room refreshed layouts keep aligned controls and consistent button edges', () => {
+  const roomStart = onlineScreensSource.indexOf('  _buildRoom() {');
+  const resultsStart = onlineScreensSource.indexOf('  _buildResults() {');
+  const roomSource = onlineScreensSource.slice(roomStart, resultsStart);
+
+  assert.match(roomSource, /class="online-back online-room-back" data-action="leave"/);
+  assert.match(roomSource, /class="online-room-share-icon"/);
+  assert.match(roomSource, /data-room-track-preview/);
+  assert.match(roomSource, /data-room-track-description/);
+  assert.match(roomSource, /data-room-track-laps/);
+  assert.match(onlineScreensSource, /_syncRoomTrackPreview\(view\.trackId\)/);
+  assert.doesNotMatch(roomSource, /copy\.loadoutEyebrow/);
+  assert.match(roomSource, /online-dialog-header online-loadout-dialog-header/);
+  assert.doesNotMatch(roomSource, /\\u2398/);
+  assert.doesNotMatch(roomSource, /online-action online-action-quiet" data-action="leave"/);
+  assert.match(onlineStylesSource, /#screen-online-room \.online-room-panel \{[\s\S]*?width: min\(1500px, 100%\);[\s\S]*?height: min\(880px,/);
+  assert.match(onlineStylesSource, /#screen-online-room \.online-room-header \{[\s\S]*?grid-template-columns:/);
+  assert.match(onlineStylesSource, /#screen-online-lobby \.online-room-browser-header \{\s*padding-right: 12px;/);
+  assert.match(onlineStylesSource, /\.online-action \{[\s\S]*?border: 3px solid transparent;[\s\S]*?var\(--online-action-fill\) padding-box, var\(--online-action-edge\) border-box;/);
+  assert.match(onlineStylesSource, /\.online-quick-start \{[\s\S]*?display: flex;[\s\S]*?justify-content: center;/);
+  assert.match(onlineStylesSource, /\.online-setup-track-preview \{[\s\S]*?min-height: 145px;/);
+  assert.match(onlineStylesSource, /\.online-loadout-dialog \{[\s\S]*?height: min\(820px, calc\(100vh - 36px\)\);[\s\S]*?overflow: hidden;/);
+  assert.match(onlineStylesSource, /#screen-online-room \.online-setup-card \{ overflow: auto; gap: 12px; \}/);
+  assert.match(onlineStylesSource, /\.online-loadout-dialog-preview \{[\s\S]*?justify-content: center;/);
+  assert.match(onlineStylesSource, /\.online-loadout-dialog-header \{[\s\S]*?justify-content: center;/);
+  assert.match(onlineStylesSource, /#screen-online-room \.online-member \{ min-height: 49px; padding: 7px 42px 7px 9px; \}/);
+  assert.doesNotMatch(onlineStylesSource, /\.online-member\.can-kick \.online-member-badges \{ margin-right:/);
+  assert.match(onlineStylesSource, /\.online-loadout-summary \{ display: flex;[\s\S]*?gap: 5px 12px; \}/);
 });
 
 test('password failures stay inline while quick-match failures use the shared alert', () => {
