@@ -60,15 +60,9 @@ export function shouldResumeOnlineRoomSession({
   return invitationMatchesRoom && Boolean(sessionCode && participantId && resumeToken);
 }
 
-/**
- * A fresh prepare always needs a load acknowledgement. Catch-up prepares only
- * need one when the authoritative room is still loading; countdown/racing/
- * results resumes must not send race_loaded into a non-loading room.
- */
-export function shouldAcknowledgeRaceLoaded(prepareMessage, roomState) {
-  if (!prepareMessage?.raceId) return false;
-  if (!prepareMessage.resumed) return true;
-  return onlineRoomPhase(roomState) === 'loading';
+/** A warmed scene submits race_loaded unless this race already has an ACK. */
+export function shouldAcknowledgeRaceLoaded(prepareMessage, acknowledged = false) {
+  return Boolean(prepareMessage?.raceId) && !acknowledged;
 }
 
 export function hasReturnedToOnlineRoom(roomState, participantId) {

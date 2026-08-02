@@ -17,6 +17,7 @@ import {
   ROOM_STATES,
   ROOM_TYPES,
   SERVER_MESSAGE_TYPES,
+  encodeKartSnapshot,
   serverMessage,
   validateDisplayName,
   validateRoomCapacity,
@@ -80,69 +81,46 @@ function copyEntity(entity, keys) {
   return out;
 }
 
-function serializeKart(kart, rosterEntry, member) {
-  return {
-    index: kart.index,
-    id: kart.id,
-    participantId: rosterEntry?.participantId ?? null,
-    displayName: rosterEntry?.displayName ?? kart.name,
-    characterId: rosterEntry?.characterId ?? kart.character?.id ?? null,
-    connected: rosterEntry?.controllerKind === CONTROLLER_KINDS.AI ? true : Boolean(member?.connected),
-    controllerKind: member?.controllerKind ?? rosterEntry?.controllerKind ?? CONTROLLER_KINDS.AI,
-    ...copyEntity(kart, [
-      'x', 'y', 'z', 'yaw', 'vx', 'vy', 'vz', 'speed', 'airborne',
-      'visualYawOffset', 'visualRoll', 'visualPitch', 'visualScale', 'wheelSpin',
-      'steerAngle', 'drifting', 'driftDirection', 'driftCharge', 'driftTier', 'hopTimer',
-      'boostTimer', 'boostPower', 'boostSource', 'speedMul', 'draftCharge',
-      'state', 'stateTimer', 'aiSpeedMul', 'startPenaltyTimer', 'invulnTimer',
-      'starTimer', 'shrinkTimer', 'spinDirection',
-      'item', 'itemUses', 'rouletteTimer', 'rouletteFace', 'pendingItem', 'heldCount',
-      's', 'lateral', 'surface', 'offTrackDepth', 'progress', 'lap', 'rank',
-      'finished', 'finishTime', 'currentLapStart', 'wrongWay', 'prevX', 'prevZ',
-    ]),
-    controls: copyEntity(kart.controls, [
-      'throttle', 'brake', 'steer', 'drift', 'lookBack',
-    ]),
-    bestLap: finiteOrNull(kart.bestLap),
-    lapTimes: Array.isArray(kart.lapTimes) ? kart.lapTimes.slice() : [],
-  };
-}
-
 function serializeSimulation(room) {
   const simulation = room.race.simulation;
   const supplied = simulation.getSnapshot?.() ?? simulation.serializeSnapshot?.();
-  if (supplied && typeof supplied === 'object') return supplied;
-
+  const source = supplied && typeof supplied === 'object' ? supplied : simulation;
   const rosterByIndex = new Map(room.race.roster.map((entry) => [entry.kartIndex, entry]));
   const membersById = room.members;
-  const karts = Array.isArray(simulation.karts)
-    ? simulation.karts.map((kart) => {
+  const sourceKarts = Array.isArray(source.karts) ? source.karts : simulation.karts;
+  const karts = Array.isArray(sourceKarts)
+    ? sourceKarts.map((kart) => {
+      if (Array.isArray(kart)) return kart;
       const rosterEntry = rosterByIndex.get(kart.index);
-      return serializeKart(kart, rosterEntry, membersById.get(rosterEntry?.participantId));
+      const member = membersById.get(rosterEntry?.participantId);
+      return encodeKartSnapshot(
+        kart,
+        member?.controllerKind ?? rosterEntry?.controllerKind ?? CONTROLLER_KINDS.AI,
+      );
     })
     : [];
   const items = simulation.items;
   const track = simulation.track ?? items?.track;
+  const sourceItemBoxes = Array.isArray(source.itemBoxes) ? source.itemBoxes : track?.itemBoxes;
   return {
-    state: simulation.state,
-    countdown: finiteOrNull(simulation.countdown),
-    elapsed: finiteOrNull(simulation.elapsed),
-    laps: simulation.laps,
-    standings: Array.isArray(simulation.standings)
-      ? simulation.standings.map((kart) => kart.index)
-      : karts.slice().sort((a, b) => a.rank - b.rank).map((kart) => kart.index),
+    state: source.state ?? simulation.state,
+    countdown: finiteOrNull(source.countdown ?? simulation.countdown),
+    elapsed: finiteOrNull(source.elapsed ?? simulation.elapsed),
+    laps: source.laps ?? simulation.laps,
     karts,
-    projectiles: (items?.projectiles ?? []).map((entity) => copyEntity(entity, [
+    projectiles: (source.projectiles ?? items?.projectiles ?? []).map((entity) => copyEntity(entity, [
       'id', 'kind', 'x', 'y', 'z', 'yaw', 'vx', 'vy', 'vz', 'ownerIndex',
       'age', 's', 'bounces', 'targetIndex', 'straight', 'diving', 'armed',
     ])),
-    hazards: (items?.hazards ?? []).map((entity) => copyEntity(entity, [
+    hazards: (source.hazards ?? items?.hazards ?? []).map((entity) => copyEntity(entity, [
       'id', 'kind', 'x', 'y', 'z', 'yaw', 'ownerIndex', 'age', 's',
       'lateral', 'armed', 'fuse', 'dead',
     ])),
-    itemBoxes: (track?.itemBoxes ?? []).map((box) => copyEntity(box, [
-      'id', 'x', 'y', 'z', 's', 'lateral', 'active', 'respawnAt',
-    ])),
+    itemBoxes: (sourceItemBoxes ?? []).map((box) => (
+      Array.isArray(box)
+        ? [Boolean(box[0]), finiteOrNull(box[1])]
+        : [Boolean(box?.active), finiteOrNull(box?.respawnAt)]
+    )),
   };
 }
 
@@ -400,6 +378,7 @@ export class RoomManager extends EventEmitter {
     if (room.race?.simulation && member.kartIndex !== null) {
       // A resumed transport is not proof that the driver has fresh control.
       // Keep takeover AI active until a newer movement sequence arrives.
+      member.awaitingFreshInput = true;
       this._setController(room, member, CONTROLLER_KINDS.TAKEOVER_AI, true);
     }
     if (!room.hostParticipantId) this._migrateHost(room);
@@ -423,6 +402,7 @@ export class RoomManager extends EventEmitter {
     member.disconnectedAt = now;
     member.resumeExpiresAt = now + this.resumeTimeoutMs;
     if (room.race?.simulation && member.kartIndex !== null) {
+      member.awaitingFreshInput = true;
       this._setController(room, member, CONTROLLER_KINDS.TAKEOVER_AI);
     }
     if (room.hostParticipantId === participantId) this._migrateHost(room);
@@ -573,6 +553,7 @@ export class RoomManager extends EventEmitter {
       member.raceLoaded = false;
       member.kartIndex = roster.find((entry) => entry.participantId === member.participantId)?.kartIndex ?? null;
       member.controllerKind = CONTROLLER_KINDS.TAKEOVER_AI;
+      member.awaitingFreshInput = true;
       member.lastInputSeq = -1;
       member.lastUseItemSeq = 0;
       member.lastAppliedSeq = -1;
@@ -614,11 +595,22 @@ export class RoomManager extends EventEmitter {
 
   async markRaceLoaded(participantId, raceId) {
     const { room, member } = this._findParticipant(participantId);
-    if (room.state !== ROOM_STATES.LOADING || room.race?.raceId !== raceId) {
-      throw new GameError(ERROR_CODES.RACE_MISMATCH, 'That race is not loading.');
+    const phase = room.state;
+    if (!room.race
+      || room.race.raceId !== raceId
+      || ![ROOM_STATES.LOADING, ROOM_STATES.COUNTDOWN, ROOM_STATES.RACING].includes(phase)) {
+      throw new GameError(ERROR_CODES.RACE_MISMATCH, 'That race cannot accept loading now.');
     }
+    const wasLoaded = member.raceLoaded;
     member.raceLoaded = true;
+    const late = phase !== ROOM_STATES.LOADING;
+    if (!wasLoaded && late) {
+      member.awaitingFreshInput = true;
+      this._setController(room, member, CONTROLLER_KINDS.TAKEOVER_AI, true);
+    }
+    this._emitToParticipant(member.participantId, this._raceLoadedAck(room, late));
     this._broadcastRoomState(room);
+    if (phase !== ROOM_STATES.LOADING) return;
     const active = [...room.members.values()].filter((candidate) => candidate.connected && !candidate.abandoned);
     if (active.length >= 2 && active.every((candidate) => candidate.raceLoaded)) {
       await this._beginRace(room, this.now());
@@ -665,6 +657,7 @@ export class RoomManager extends EventEmitter {
     }
     if (movementAccepted) {
       member.lastInputAt = this.now();
+      member.awaitingFreshInput = false;
       this._setController(room, member, CONTROLLER_KINDS.HUMAN);
     }
     return accepted;
@@ -704,7 +697,9 @@ export class RoomManager extends EventEmitter {
           && member.postRaceState !== POST_RACE_STATES.ROOM
           ? 'in_game'
           : 'room',
-        loaded: room.state === ROOM_STATES.LOADING ? member.raceLoaded : undefined,
+        loaded: [ROOM_STATES.LOADING, ROOM_STATES.COUNTDOWN, ROOM_STATES.RACING].includes(room.state)
+          ? member.raceLoaded
+          : undefined,
         controllerKind: member.controllerKind,
       }));
     return serverMessage(SERVER_MESSAGE_TYPES.ROOM_STATE, {
@@ -741,7 +736,11 @@ export class RoomManager extends EventEmitter {
         roster: publicRoster(room.race.roster),
         resumed: true,
       }));
-      if (room.race.simulation) messages.push(this._snapshotFor(room, member));
+      if (member.raceLoaded) messages.push(this._raceLoadedAck(
+        room,
+        room.state !== ROOM_STATES.LOADING,
+      ));
+      if (room.race.simulation) messages.push(this._snapshotFor(room));
       if (room.state === ROOM_STATES.RESULTS && room.race.results) {
         messages.push(serverMessage(SERVER_MESSAGE_TYPES.RACE_RESULTS, {
           raceId: room.race.raceId,
@@ -833,6 +832,7 @@ export class RoomManager extends EventEmitter {
       lastInputSeq: -1,
       lastUseItemSeq: 0,
       lastAppliedSeq: -1,
+      awaitingFreshInput: false,
       pendingUseItems: 0,
       lastInput: { ...DEFAULT_ZERO_INPUT },
       lastInputAt: now,
@@ -929,6 +929,8 @@ export class RoomManager extends EventEmitter {
         const kind = member.connected && member.raceLoaded && !member.abandoned
           ? CONTROLLER_KINDS.HUMAN
           : CONTROLLER_KINDS.TAKEOVER_AI;
+        member.awaitingFreshInput = kind !== CONTROLLER_KINDS.HUMAN;
+        if (kind === CONTROLLER_KINDS.HUMAN) member.lastInputAt = now;
         this._setController(room, member, kind, true);
       }
       this._broadcastRoomState(room);
@@ -973,7 +975,12 @@ export class RoomManager extends EventEmitter {
     for (const member of room.members.values()) {
       if (member.kartIndex === null) continue;
       const timedOut = now - member.lastInputAt > this.inputTimeoutMs;
-      const human = member.connected && member.raceLoaded && !member.abandoned && !timedOut;
+      if (timedOut) member.awaitingFreshInput = true;
+      const human = member.connected
+        && member.raceLoaded
+        && !member.abandoned
+        && !member.awaitingFreshInput
+        && !timedOut;
       this._setController(room, member, human ? CONTROLLER_KINDS.HUMAN : CONTROLLER_KINDS.TAKEOVER_AI);
       if (!human) continue;
       const useItem = member.pendingUseItems > 0;
@@ -987,7 +994,6 @@ export class RoomManager extends EventEmitter {
     race.simulation.update(1 / 120, secondInputs);
     race.tick++;
     this._drainRaceEvents(room);
-    if (race.tick % this.snapshotEveryTicks === 0) this._broadcastSnapshots(room);
 
     const simulationState = race.simulation.state;
     if (simulationState === ROOM_STATES.RACING && room.state === ROOM_STATES.COUNTDOWN) {
@@ -996,7 +1002,9 @@ export class RoomManager extends EventEmitter {
     }
     if (simulationState === ROOM_STATES.RESULTS || race.simulation.isRaceOver) {
       this._finishRace(room, now);
+      return;
     }
+    if (race.tick % this.snapshotEveryTicks === 0) this._broadcastSnapshots(room);
   }
 
   _drainRaceEvents(room) {
@@ -1022,22 +1030,36 @@ export class RoomManager extends EventEmitter {
   }
 
   _broadcastSnapshots(room) {
-    for (const member of room.members.values()) {
-      if (!member.connected || member.abandoned) continue;
-      this._emitToParticipant(member.participantId, this._snapshotFor(room, member));
-    }
+    this._emitToRoom(room, this._snapshotFor(room));
   }
 
-  _snapshotFor(room, member) {
+  _snapshotFor(room) {
     const snapshot = serializeSimulation(room);
+    const acks = room.race.roster
+      .slice()
+      .sort((a, b) => a.kartIndex - b.kartIndex)
+      .map((entry) => {
+        const member = room.members.get(entry.participantId);
+        return [
+          entry.kartIndex,
+          member?.lastAppliedSeq ?? -1,
+          member?.lastUseItemSeq ?? 0,
+        ];
+      });
     return serverMessage(SERVER_MESSAGE_TYPES.SNAPSHOT, {
       ...snapshot,
       raceId: room.race.raceId,
       tick: room.race.tick,
       serverTime: this.now(),
-      ack: member.lastAppliedSeq,
-      inputAck: member.lastAppliedSeq,
-      useItemAck: member.lastUseItemSeq,
+      acks,
+    });
+  }
+
+  _raceLoadedAck(room, late = room.state !== ROOM_STATES.LOADING) {
+    return serverMessage(SERVER_MESSAGE_TYPES.RACE_LOADED_ACK, {
+      raceId: room.race.raceId,
+      phase: room.state,
+      late: Boolean(late),
     });
   }
 
@@ -1082,6 +1104,7 @@ export class RoomManager extends EventEmitter {
       member.raceLoaded = false;
       member.kartIndex = null;
       member.controllerKind = CONTROLLER_KINDS.HUMAN;
+      member.awaitingFreshInput = false;
       member.pendingUseItems = 0;
       member.postRaceState = null;
     }

@@ -1,4 +1,4 @@
-// Turbo Legends multiplayer protocol v2.
+// Turbo Legends multiplayer protocol v3.
 //
 // This module is intentionally browser-safe: both the Node server and the
 // native browser WebSocket client import the same message names and input
@@ -6,7 +6,7 @@
 
 import { isAvatarId, isPaintId } from '../game/appearance.js';
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 export const MAX_CLIENT_MESSAGE_BYTES = 16 * 1024;
 export const MAX_CLIENT_MESSAGES_PER_SECOND = 120;
 export const MAX_CLIENT_MESSAGE_BURST = 180;
@@ -36,6 +36,7 @@ export const SERVER_MESSAGE_TYPES = Object.freeze({
   ROOM_STATE: 'room_state',
   KICKED: 'kicked',
   PREPARE_RACE: 'prepare_race',
+  RACE_LOADED_ACK: 'race_loaded_ack',
   SNAPSHOT: 'snapshot',
   RACE_EVENTS: 'race_events',
   RACE_RESULTS: 'race_results',
@@ -67,6 +68,64 @@ export const CONTROLLER_KINDS = Object.freeze({
   AI: 'ai',
   TAKEOVER_AI: 'takeover-ai',
 });
+
+// Protocol v3 uses a shared compact array for every Kart in a race snapshot.
+// The announced prepare_race roster remains the source of static identity and
+// appearance data; snapshots only carry fields that can change during a race.
+export const SNAPSHOT_KART_FIELDS = Object.freeze([
+  'x', 'y', 'z', 'yaw', 'vx', 'vy', 'vz', 'speed', 'airborne',
+  'visualYawOffset', 'visualRoll', 'visualPitch', 'visualScale', 'wheelSpin',
+  'steerAngle', 'drifting', 'driftDirection', 'driftCharge', 'driftTier', 'hopTimer',
+  'boostTimer', 'boostPower', 'boostSource', 'speedMul', 'draftCharge',
+  'state', 'stateTimer', 'aiSpeedMul', 'startPenaltyTimer', 'invulnTimer',
+  'starTimer', 'shrinkTimer', 'spinDirection',
+  'item', 'itemUses', 'rouletteTimer', 'rouletteFace', 'pendingItem', 'heldCount',
+  's', 'lateral', 'surface', 'offTrackDepth', 'progress', 'lap', 'rank',
+  'finished', 'finishTime', 'currentLapStart', 'bestLap', 'wrongWay', 'prevX', 'prevZ',
+]);
+
+export const SNAPSHOT_CONTROL_FIELDS = Object.freeze([
+  'throttle', 'brake', 'steer', 'drift', 'lookBack',
+]);
+
+function snapshotValue(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  return value === undefined ? null : value;
+}
+
+/** Encode one authoritative Kart into the protocol-v3 compact wire shape. */
+export function encodeKartSnapshot(kart, controllerKind = kart?.controllerKind) {
+  const controls = kart?.controls || {};
+  return [
+    Number.isInteger(kart?.index) ? kart.index : null,
+    controllerKind ?? null,
+    SNAPSHOT_KART_FIELDS.map((field) => snapshotValue(kart?.[field])),
+    SNAPSHOT_CONTROL_FIELDS.map((field) => snapshotValue(controls[field])),
+  ];
+}
+
+/** Decode one compact Kart snapshot for the existing Kart-shaped client view. */
+export function decodeKartSnapshot(encoded) {
+  if (!Array.isArray(encoded)) {
+    return encoded && typeof encoded === 'object' ? encoded : null;
+  }
+  const [index, controllerKind, fields, controls] = encoded;
+  if (!Number.isInteger(index) || !Array.isArray(fields)) return null;
+  const decoded = { index };
+  if (controllerKind !== null && controllerKind !== undefined) {
+    decoded.controllerKind = controllerKind;
+  }
+  for (let i = 0; i < SNAPSHOT_KART_FIELDS.length; i++) {
+    if (i < fields.length) decoded[SNAPSHOT_KART_FIELDS[i]] = fields[i];
+  }
+  if (Array.isArray(controls)) {
+    decoded.controls = {};
+    for (let i = 0; i < SNAPSHOT_CONTROL_FIELDS.length; i++) {
+      if (i < controls.length) decoded.controls[SNAPSHOT_CONTROL_FIELDS[i]] = controls[i];
+    }
+  }
+  return decoded;
+}
 
 export const ERROR_CODES = Object.freeze({
   INVALID_JSON: 'invalid_json',

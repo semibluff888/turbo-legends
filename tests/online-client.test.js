@@ -405,7 +405,7 @@ test('kickPlayer sends the target id and kicked clears the resumable Room sessio
   assert.equal(kicked.length, 1);
 });
 
-test('race input is suppressed while the browser WebSocket send buffer is congested', () => {
+test('race input waits for load ACK and is suppressed while the WebSocket buffer is congested', () => {
   FakeWebSocket.instances.length = 0;
   const client = makeClient();
   client.enterLobby();
@@ -414,6 +414,21 @@ test('race input is suppressed while the browser WebSocket send buffer is conges
   boundWelcome(socket);
   socket.receive({ v: PROTOCOL_VERSION, type: 'prepare_race', raceId: 'race_identifier_123' });
   const before = socket.sent.length;
+
+  assert.equal(client.sendInput({
+    seq: 1, useItemSeq: 0, throttle: 0.5, brake: 0, steer: 0.25,
+    drift: false, lookBack: false,
+  }), false);
+  assert.equal(socket.sent.length, before);
+
+  socket.receive({
+    v: PROTOCOL_VERSION,
+    type: 'race_loaded_ack',
+    raceId: 'race_identifier_123',
+    phase: 'countdown',
+    late: false,
+  });
+  assert.equal(client.hasRaceLoadedAck('race_identifier_123'), true);
 
   socket.bufferedAmount = MAX_RACE_INPUT_BUFFERED_BYTES + 1;
   assert.equal(client.sendInput({ seq: 1, useItemSeq: 0, throttle: 1, brake: 0, steer: 0, drift: false, lookBack: false }), false);
@@ -424,6 +439,45 @@ test('race input is suppressed while the browser WebSocket send buffer is conges
   assert.equal(socket.sent.at(-1).type, 'input');
   assert.equal(socket.sent.at(-1).seq, 1);
   assert.equal(socket.sent.at(-1).throttle, 0.5);
+});
+
+test('load ACK is cached before scene listeners attach and reset for the next race', () => {
+  FakeWebSocket.instances.length = 0;
+  const client = makeClient();
+  const acks = [];
+  client.enterLobby();
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  boundWelcome(socket);
+  socket.receive({ v: PROTOCOL_VERSION, type: 'prepare_race', raceId: 'race_identifier_123' });
+  socket.receive({
+    v: PROTOCOL_VERSION,
+    type: 'race_loaded_ack',
+    raceId: 'race_identifier_123',
+    phase: 'racing',
+    late: true,
+  });
+  client.on('race_loaded_ack', (message) => acks.push(message));
+
+  assert.deepEqual(client.getRaceLoadedAck('race_identifier_123'), {
+    v: PROTOCOL_VERSION,
+    type: 'race_loaded_ack',
+    raceId: 'race_identifier_123',
+    phase: 'racing',
+    late: true,
+  });
+  assert.deepEqual(acks, []);
+
+  socket.receive({ v: PROTOCOL_VERSION, type: 'prepare_race', raceId: 'race_identifier_456' });
+  assert.equal(client.hasRaceLoadedAck('race_identifier_123'), false);
+  socket.receive({
+    v: PROTOCOL_VERSION,
+    type: 'room_state',
+    roomCode: 'ROOM22',
+    state: 'waiting',
+    members: [],
+  });
+  assert.equal(client.hasRaceLoadedAck('race_identifier_456'), false);
 });
 
 test('unexpected Room close schedules a resume attempt', () => {

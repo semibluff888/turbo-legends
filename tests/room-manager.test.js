@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ERROR_CODES, ROOM_STATES, ROOM_TYPES } from '../src/net/protocol.js';
+import { ERROR_CODES, PROTOCOL_VERSION, ROOM_STATES, ROOM_TYPES } from '../src/net/protocol.js';
 import { GameError } from '../server/game-error.js';
 import { createDefaultRaceFactory } from '../server/race-factory.js';
 import { RoomManager } from '../server/room-manager.js';
@@ -434,6 +434,42 @@ test('start prepares one deterministic eight-kart roster and launches after all 
   assert.deepEqual(prepare.roster, simulation.args.roster);
   assert.deepEqual(prepare.roster.map((entry) => entry.kartIndex), [0, 1, 2, 3, 4, 5, 6, 7]);
   assert.equal(race.seed, 424242);
+  const protocolMessages = harness.messages.map((event) => event.message.type);
+  const lastAckIndex = protocolMessages.lastIndexOf('race_loaded_ack');
+  const firstSnapshotIndex = protocolMessages.indexOf('snapshot');
+  assert.notEqual(lastAckIndex, -1);
+  assert.equal(firstSnapshotIndex === -1 || lastAckIndex < firstSnapshotIndex, true);
+});
+
+test('race_loaded ACK is emitted before simulation launch and duplicate loads are idempotent', async () => {
+  const harness = createHarness();
+  const { host, guest } = addTwoPlayers(harness);
+  harness.manager.setReady(host.participantId, true);
+  harness.manager.setReady(guest.participantId, true);
+  const race = harness.manager.startRace(host.participantId);
+
+  await harness.manager.markRaceLoaded(host.participantId, race.raceId);
+  const hostAck = harness.messages.find((event) => (
+    event.participantId === host.participantId
+    && event.message.type === 'race_loaded_ack'
+  ));
+  assert.deepEqual(hostAck.message, {
+    v: PROTOCOL_VERSION,
+    type: 'race_loaded_ack',
+    raceId: race.raceId,
+    phase: ROOM_STATES.LOADING,
+    late: false,
+  });
+  assert.equal(harness.simulations.length, 0);
+
+  await harness.manager.markRaceLoaded(guest.participantId, race.raceId);
+  assert.equal(harness.simulations.length, 1);
+  await harness.manager.markRaceLoaded(guest.participantId, race.raceId);
+  assert.equal(harness.simulations.length, 1);
+  assert.equal(harness.messages.filter((event) => (
+    event.participantId === guest.participantId
+    && event.message.type === 'race_loaded_ack'
+  )).length, 2);
 });
 
 test('new useItemSeq survives a stale movement seq and fires for exactly one physics step', async () => {
@@ -463,11 +499,98 @@ test('new useItemSeq survives a stale movement seq and fires for exactly one phy
   assert.equal(simulation.updates.slice(2).some((inputs) => inputs[hostIndex].useItem), false);
 
   const snapshot = harness.messages.find((event) => (
-    event.participantId === host.participantId && event.message.type === 'snapshot'
+    event.roomCode === host.roomCode && event.message.type === 'snapshot'
   ))?.message;
-  assert.equal(snapshot.ack, 2);
-  assert.equal(snapshot.inputAck, 2);
-  assert.equal(snapshot.useItemAck, 1);
+  const hostAck = snapshot.acks.find((entry) => entry[0] === hostIndex);
+  assert.deepEqual(hostAck, [hostIndex, 2, 1]);
+  assert.equal(Object.hasOwn(snapshot, 'ack'), false);
+  assert.equal(Object.hasOwn(snapshot, 'inputAck'), false);
+  assert.equal(Object.hasOwn(snapshot, 'useItemAck'), false);
+});
+
+test('one public compact snapshot is built per room tick for every connected client', async () => {
+  const harness = createHarness();
+  const { host } = await startTwoPlayerRace(harness);
+  const simulation = harness.simulations[0];
+  let builds = 0;
+  simulation.getSnapshot = () => {
+    builds++;
+    return {
+      state: simulation.state,
+      countdown: simulation.countdown,
+      elapsed: simulation.elapsed,
+      laps: simulation.laps,
+      karts: simulation.karts,
+      projectiles: [],
+      hazards: [],
+      itemBoxes: [],
+    };
+  };
+
+  harness.advance(51);
+  await harness.manager.tick();
+  const snapshots = harness.messages.filter((event) => event.message.type === 'snapshot');
+  assert.equal(builds, 1);
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0].roomCode, host.roomCode);
+  assert.equal(snapshots[0].participantId, null);
+  assert.equal(Array.isArray(snapshots[0].message.karts[0]), true);
+  assert.equal(Object.hasOwn(snapshots[0].message, 'standings'), false);
+});
+
+test('a race ending on a scheduled snapshot tick emits only the final shared snapshot', async () => {
+  const harness = createHarness();
+  await startTwoPlayerRace(harness);
+  const simulation = harness.simulations[0];
+  const update = simulation.update.bind(simulation);
+  let builds = 0;
+  simulation.update = (dt, controls) => {
+    update(dt, controls);
+    if (simulation.updates.length >= 6) simulation.state = ROOM_STATES.RESULTS;
+  };
+  simulation.getSnapshot = () => {
+    builds++;
+    return {
+      state: simulation.state,
+      countdown: simulation.countdown,
+      elapsed: simulation.elapsed,
+      laps: simulation.laps,
+      karts: simulation.karts,
+      projectiles: [],
+      hazards: [],
+      itemBoxes: [],
+    };
+  };
+
+  harness.advance(51);
+  await harness.manager.tick();
+  assert.equal(builds, 1);
+  assert.equal(harness.messages.filter((event) => event.message.type === 'snapshot').length, 1);
+  assert.equal(harness.messages.filter((event) => event.message.type === 'race_results').length, 1);
+});
+
+test('production eight-kart baseline snapshot stays below 7 KB without static roster data', async () => {
+  const harness = createHarness({ raceFactory: createDefaultRaceFactory() });
+  const { host } = await startTwoPlayerRace(harness);
+  harness.advance(51);
+  await harness.manager.tick();
+  const snapshot = harness.messages.find((event) => (
+    event.roomCode === host.roomCode && event.message.type === 'snapshot'
+  ))?.message;
+  const bytes = Buffer.byteLength(JSON.stringify(snapshot));
+
+  assert.ok(bytes <= 7 * 1024, `expected <= 7168 bytes, received ${bytes}`);
+  assert.equal(snapshot.karts.length, 8);
+  assert.equal(snapshot.acks.length, 8);
+  assert.equal(Object.hasOwn(snapshot, 'standings'), false);
+  assert.equal(snapshot.karts.every((kart) => Array.isArray(kart)), true);
+  assert.equal(snapshot.itemBoxes.every((box) => (
+    Array.isArray(box) && box.length === 2
+  )), true);
+  const wire = JSON.stringify(snapshot);
+  for (const staticField of ['displayName', 'participantId', 'characterId', 'paintId', 'avatarId', 'lapTimes']) {
+    assert.equal(wire.includes(`\"${staticField}\"`), false, `${staticField} leaked into snapshot`);
+  }
 });
 
 test('disconnect immediately transfers host and takeover AI can be reclaimed within 30 seconds', async () => {
@@ -483,6 +606,10 @@ test('disconnect immediately transfers host and takeover AI can be reclaimed wit
   harness.advance(29_000);
   const resumed = harness.manager.resume(host.roomCode, host.participantId, host.resumeToken);
   assert.equal(resumed.resumed, true);
+  assert.deepEqual(
+    resumed.messages.map((message) => message.type),
+    ['room_state', 'prepare_race', 'race_loaded_ack', 'snapshot'],
+  );
   assert.equal(simulation.controllers[hostIndex], 'takeover-ai');
   harness.manager.handleInput(host.participantId, {
     raceId: race.raceId,
@@ -609,6 +736,75 @@ test('loading timeout cancels a race when fewer than two clients finish loading'
   assert.deepEqual(roomState.members.map((member) => member.ready), [false, false]);
   assert.deepEqual(roomState.members.map((member) => member.controllerKind), ['human', 'human']);
   assert.deepEqual(harness.managerErrors, []);
+});
+
+test('two loaded players start at timeout while a late third player keeps AI until fresh movement', async () => {
+  const harness = createHarness({ loadTimeoutMs: 10_000 });
+  const { host, guest } = addTwoPlayers(harness);
+  const late = harness.manager.joinRoom(host.roomCode, {
+    displayName: 'Late', characterId: 'kit',
+  });
+  for (const player of [host, guest, late]) {
+    harness.manager.setReady(player.participantId, true);
+  }
+  const race = harness.manager.startRace(host.participantId);
+  await harness.manager.markRaceLoaded(host.participantId, race.raceId);
+  await harness.manager.markRaceLoaded(guest.participantId, race.raceId);
+  assert.equal(harness.simulations.length, 0);
+
+  harness.advance(10_001);
+  await harness.manager.tick();
+  const simulation = harness.simulations[0];
+  const lateIndex = race.roster.find((entry) => entry.participantId === late.participantId).kartIndex;
+  assert.equal(harness.manager.getRoomState(host.roomCode).state, ROOM_STATES.COUNTDOWN);
+  assert.equal(simulation.controllers[lateIndex], 'takeover-ai');
+
+  const beforeLateLoad = harness.messages.length;
+  await harness.manager.markRaceLoaded(late.participantId, race.raceId);
+  const lateMessages = harness.messages.slice(beforeLateLoad);
+  assert.deepEqual(lateMessages[0], {
+    roomCode: null,
+    participantId: late.participantId,
+    message: {
+      v: PROTOCOL_VERSION,
+      type: 'race_loaded_ack',
+      raceId: race.raceId,
+      phase: ROOM_STATES.COUNTDOWN,
+      late: true,
+    },
+  });
+  assert.equal(simulation.controllers[lateIndex], 'takeover-ai');
+
+  await harness.manager.markRaceLoaded(late.participantId, race.raceId);
+  assert.equal(harness.simulations.length, 1);
+  assert.equal(simulation.controllers[lateIndex], 'takeover-ai');
+
+  harness.manager.handleInput(late.participantId, {
+    raceId: race.raceId,
+    seq: 0,
+    useItemSeq: 0,
+    throttle: 0,
+    brake: 0,
+    steer: 0,
+    drift: false,
+    lookBack: false,
+  });
+  assert.equal(simulation.controllers[lateIndex], 'human');
+});
+
+test('race_loaded rejects a wrong race and the results phase', async () => {
+  const harness = createHarness();
+  const { host, race } = await startTwoPlayerRace(harness);
+  await assert.rejects(
+    harness.manager.markRaceLoaded(host.participantId, 'another_race_123'),
+    (error) => error.code === ERROR_CODES.RACE_MISMATCH,
+  );
+  const room = harness.manager.rooms.get(host.roomCode);
+  harness.manager._finishRace(room, harness.now());
+  await assert.rejects(
+    harness.manager.markRaceLoaded(host.participantId, race.raceId),
+    (error) => error.code === ERROR_CODES.RACE_MISMATCH,
+  );
 });
 
 test('loading waits for the reconnect window instead of cancelling immediately at one player', async () => {

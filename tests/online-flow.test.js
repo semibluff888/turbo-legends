@@ -71,13 +71,13 @@ test('a participant who returned from results is routed to the Room independentl
   assert.equal(shouldPresentOnlineRoom(room, true, 'guest'), false);
 });
 
-test('resumed catch-up only acknowledges loading races', () => {
-  const resumed = { raceId: 'race-id-1234', resumed: true };
-  assert.equal(shouldAcknowledgeRaceLoaded(resumed, { state: 'loading' }), true);
-  assert.equal(shouldAcknowledgeRaceLoaded(resumed, { state: 'countdown' }), false);
-  assert.equal(shouldAcknowledgeRaceLoaded(resumed, { state: 'racing' }), false);
-  assert.equal(shouldAcknowledgeRaceLoaded(resumed, { state: 'results' }), false);
-  assert.equal(shouldAcknowledgeRaceLoaded({ raceId: 'race-id-1234' }, { state: 'waiting' }), true);
+test('a warmed scene submits race_loaded unless the v3 ACK is already cached', () => {
+  const prepare = { raceId: 'race-id-1234', resumed: true };
+  assert.equal(shouldAcknowledgeRaceLoaded(prepare, false), true);
+  assert.equal(shouldAcknowledgeRaceLoaded(prepare, null), true);
+  assert.equal(shouldAcknowledgeRaceLoaded(prepare, true), false);
+  assert.equal(shouldAcknowledgeRaceLoaded(prepare, { raceId: prepare.raceId }), false);
+  assert.equal(shouldAcknowledgeRaceLoaded({}, false), false);
 });
 
 test('online races keep updating behind paused settings and help panels', () => {

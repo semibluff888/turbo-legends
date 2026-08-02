@@ -2331,6 +2331,35 @@ kbd {
   text-align: center;
 }
 
+.hud-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  background: radial-gradient(circle at center, rgba(26, 18, 58, 0.72), rgba(8, 5, 24, 0.94));
+  backdrop-filter: blur(5px);
+}
+.hud-loading[hidden] { display: none; }
+.hud-loading-stage {
+  color: var(--accent);
+  font-size: clamp(30px, 5vw, 58px);
+  letter-spacing: 0.08em;
+  -webkit-text-stroke: 2px #fff;
+  paint-order: stroke fill;
+  text-shadow: 0 5px 0 rgba(20, 8, 40, 0.55);
+}
+.hud-loading-detail {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: clamp(14px, 1.8vw, 21px);
+  letter-spacing: 0.08em;
+  text-shadow: 0 3px 0 rgba(20, 8, 40, 0.55);
+}
+
 .hud-countdown {
   position: absolute;
   font-size: clamp(110px, 19vw, 220px);

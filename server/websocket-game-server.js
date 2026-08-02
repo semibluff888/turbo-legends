@@ -27,6 +27,30 @@ const AUTH_ACTIONS = new Set([
 // roughly 3-6 seconds instead of allowing false/true room states to bunch up
 // around the eventual resume attempt.
 export const ROOM_PRESENCE_HEARTBEAT_INTERVAL_MS = 3_000;
+export const SNAPSHOT_BACKPRESSURE_FLOOR_BYTES = 16 * 1024;
+export const SLOW_CLIENT_BACKPRESSURE_BYTES = 512 * 1024;
+
+export function snapshotBackpressureThreshold(serializedBytes) {
+  return Math.max(
+    SNAPSHOT_BACKPRESSURE_FLOOR_BYTES,
+    Math.max(0, Number(serializedBytes) || 0) * 2,
+  );
+}
+
+export function outgoingMessageAction({
+  bufferedAmount = 0,
+  messageType,
+  serializedBytes = 0,
+  snapshotFloorBytes = SNAPSHOT_BACKPRESSURE_FLOOR_BYTES,
+  slowClientBytes = SLOW_CLIENT_BACKPRESSURE_BYTES,
+} = {}) {
+  if (bufferedAmount > slowClientBytes) return 'close';
+  if (messageType === SERVER_MESSAGE_TYPES.SNAPSHOT
+    && bufferedAmount > Math.max(snapshotFloorBytes, Math.max(0, serializedBytes) * 2)) {
+    return 'skip';
+  }
+  return 'send';
+}
 
 function connectionId() {
   return randomBytes(9).toString('base64url');
@@ -96,8 +120,9 @@ export function attachGameWebSocket(httpServer, {
   authAttemptWindowMs = 60_000,
   messageRatePerSecond = MAX_CLIENT_MESSAGES_PER_SECOND,
   messageBurst = MAX_CLIENT_MESSAGE_BURST,
-  snapshotBackpressureBytes = 256 * 1024,
-  slowClientBytes = 1024 * 1024,
+  snapshotBackpressureFloorBytes = SNAPSHOT_BACKPRESSURE_FLOOR_BYTES,
+  slowClientBytes = SLOW_CLIENT_BACKPRESSURE_BYTES,
+  stringify = JSON.stringify,
 } = {}) {
   if (!httpServer || !roomManager) throw new TypeError('httpServer and roomManager are required.');
 
@@ -113,17 +138,34 @@ export function attachGameWebSocket(httpServer, {
   const authAttempts = new Map();
   let closed = false;
 
-  function send(session, message) {
+  function sendSerialized(session, serialized, messageType, serializedBytes) {
     if (!session || session.socket.readyState !== 1) return false;
-    if (session.socket.bufferedAmount > slowClientBytes) {
+    const action = outgoingMessageAction({
+      bufferedAmount: session.socket.bufferedAmount,
+      messageType,
+      serializedBytes,
+      snapshotFloorBytes: snapshotBackpressureFloorBytes,
+      slowClientBytes,
+    });
+    if (action === 'close') {
       session.socket.close(1013, 'Client is too slow');
       return false;
     }
-    if (message.type === SERVER_MESSAGE_TYPES.SNAPSHOT
-      && session.socket.bufferedAmount > snapshotBackpressureBytes) return false;
-    const personalized = addSelfState(message, session.participantId);
-    session.socket.send(JSON.stringify(personalized));
+    if (action === 'skip') return false;
+    session.socket.send(serialized);
     return true;
+  }
+
+  function send(session, message) {
+    if (!session || session.socket.readyState !== 1) return false;
+    const personalized = addSelfState(message, session.participantId);
+    const serialized = stringify(personalized);
+    return sendSerialized(
+      session,
+      serialized,
+      personalized.type,
+      Buffer.byteLength(serialized),
+    );
   }
 
   function sendError(session, error) {
@@ -334,6 +376,16 @@ export function attachGameWebSocket(httpServer, {
   function onManagerMessage({ roomCode, participantId, message }) {
     if (participantId) {
       send(participantSessions.get(participantId), message);
+      return;
+    }
+    if (message.type === SERVER_MESSAGE_TYPES.SNAPSHOT) {
+      const serialized = stringify(message);
+      const serializedBytes = Buffer.byteLength(serialized);
+      for (const session of sessions) {
+        if (session.roomCode === roomCode) {
+          sendSerialized(session, serialized, message.type, serializedBytes);
+        }
+      }
       return;
     }
     for (const session of sessions) {

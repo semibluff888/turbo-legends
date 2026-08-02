@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+const loaderSource = readFileSync(new URL('../src/net/online-race-loader.js', import.meta.url), 'utf8');
 const onlineScreensSource = readFileSync(new URL('../src/ui/online-screens.js', import.meta.url), 'utf8');
 
 test('main maps every online screen action to the transport client', () => {
@@ -27,8 +28,8 @@ test('main maps every online screen action to the transport client', () => {
 
 test('main subscribes to the room, race, result and reconnect event stream', () => {
   for (const event of [
-    'connection', 'telemetry', 'lobby_state', 'room_state', 'prepare_race', 'race_results', 'error',
-    'reconnect_expired',
+    'connection', 'telemetry', 'lobby_state', 'room_state', 'prepare_race', 'race_loaded_ack',
+    'snapshot', 'race_results', 'error', 'reconnect_expired',
   ]) {
     assert.match(source, new RegExp(`onlineClient\\.on\\('${event}'`));
   }
@@ -106,18 +107,28 @@ test('online screens do not render duplicate connection badges', () => {
   assert.doesNotMatch(onlineScreensSource, /data-online-connection/);
 });
 
-test('main protects prepare/loading ordering and resumed load acknowledgements', () => {
+test('main protects prepare/loading ordering with cancellable GPU warmup and ACK caching', () => {
   assert.match(source, /shouldPresentOnlineRoom\([\s\S]*roomState,[\s\S]*race\?\.session\.kind === 'online',[\s\S]*onlineClient\.selfId/);
   assert.match(source, /hasReturnedToOnlineRoom\(roomState, onlineClient\.selfId\)/);
   assert.match(
     source,
-    /if \(shouldAcknowledgeRaceLoaded\(message, onlineRoomState\)\) \{\s*onlineClient\.markRaceLoaded\(message\.raceId\);/,
+    /async function prewarmOnlineRace[\s\S]*await prewarmRaceRenderer\([\s\S]*if \(!ready\) return false;[\s\S]*submitOnlineRaceLoaded/,
+  );
+  assert.match(loaderSource, /await renderer\.compileAsync\([\s\S]*renderer\.compile\?\.\([\s\S]*renderer\.render\([\s\S]*await nextFrame\(\)/);
+  assert.match(
+    source,
+    /function submitOnlineRaceLoaded[\s\S]*shouldAcknowledgeRaceLoaded\([\s\S]*onlineClient\.markRaceLoaded\(raceId\)[\s\S]*startOnlineRaceMusic/,
+  );
+  assert.match(
+    source,
+    /function activateOnlineRaceIfReady[\s\S]*loadReady[\s\S]*loadAcknowledged[\s\S]*hasAuthoritativeSnapshot[\s\S]*hud\.hideLoading\(\)[\s\S]*audio\.startEngine\(\)/,
   );
   assert.match(
     source,
     /mountedSession\?\.kind === 'online'[\s\S]*mountedSession\.raceId === message\?\.raceId[\s\S]*resumeFromPrepare/,
   );
   assert.match(source, /new OnlineRaceSession\(\{[\s\S]*roomState: onlineRoomState/);
+  assert.match(source, /function endRace\(\)[\s\S]*onlineLoadGeneration\+\+[\s\S]*disposeSceneDeep\(race\.world\.scene\)/);
 });
 
 test('main persists v2 nicknames and routes Room exits back to the Lobby', () => {

@@ -5,7 +5,13 @@ import { request } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 import { createGameServer } from '../server.mjs';
-import { ROOM_PRESENCE_HEARTBEAT_INTERVAL_MS } from '../server/websocket-game-server.js';
+import {
+  ROOM_PRESENCE_HEARTBEAT_INTERVAL_MS,
+  SLOW_CLIENT_BACKPRESSURE_BYTES,
+  outgoingMessageAction,
+  snapshotBackpressureThreshold,
+} from '../server/websocket-game-server.js';
+import { PROTOCOL_VERSION } from '../src/net/protocol.js';
 
 const PROJECT_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const wsModule = await import('ws').catch(() => null);
@@ -58,7 +64,7 @@ async function connectClient(WebSocket, url, origin, options = {}) {
     },
     mark() { return messages.length; },
     messagesAfter(mark = 0) { return messages.slice(mark); },
-    send(message) { socket.send(JSON.stringify({ v: 2, ...message })); },
+    send(message) { socket.send(JSON.stringify({ v: PROTOCOL_VERSION, ...message })); },
     close() {
       if (socket.readyState === WebSocket.CLOSED) return Promise.resolve();
       return new Promise(resolve => {
@@ -71,6 +77,33 @@ async function connectClient(WebSocket, url, origin, options = {}) {
 
 test('Room presence heartbeat is shorter than the reconnect window', () => {
   assert.equal(ROOM_PRESENCE_HEARTBEAT_INTERVAL_MS, 3_000);
+});
+
+test('snapshot backpressure skips only stale snapshots and closes at the total output cap', () => {
+  assert.equal(snapshotBackpressureThreshold(4 * 1024), 16 * 1024);
+  assert.equal(snapshotBackpressureThreshold(20 * 1024), 40 * 1024);
+  assert.equal(outgoingMessageAction({
+    bufferedAmount: 17 * 1024,
+    messageType: 'snapshot',
+    serializedBytes: 4 * 1024,
+  }), 'skip');
+  assert.equal(outgoingMessageAction({
+    bufferedAmount: 8 * 1024,
+    messageType: 'snapshot',
+    serializedBytes: 4 * 1024,
+  }), 'send');
+  for (const messageType of ['race_events', 'race_results', 'room_state']) {
+    assert.equal(outgoingMessageAction({
+      bufferedAmount: 256 * 1024,
+      messageType,
+      serializedBytes: 2 * 1024,
+    }), 'send');
+  }
+  assert.equal(outgoingMessageAction({
+    bufferedAmount: SLOW_CLIENT_BACKPRESSURE_BYTES + 1,
+    messageType: 'room_state',
+    serializedBytes: 2 * 1024,
+  }), 'close');
 });
 
 test('a silent Room connection is broadcast as reconnecting before it resumes', {
@@ -507,11 +540,18 @@ test('two WebSocket clients can share a Racer with distinct loadouts through res
 }, async () => {
   const { WebSocket } = wsModule;
   const logger = { info() {}, warn() {}, error() {} };
+  let snapshotStringifies = 0;
   const server = await createGameServer({
     root: PROJECT_ROOT,
     logger,
     roomManagerOptions: {
       raceFactory: async args => new QuickRaceSimulation(args),
+    },
+    webSocketOptions: {
+      stringify(value) {
+        if (value?.type === 'snapshot') snapshotStringifies++;
+        return JSON.stringify(value);
+      },
     },
   });
   await new Promise((resolve, reject) => {
@@ -604,11 +644,19 @@ test('two WebSocket clients can share a Racer with distinct loadouts through res
 
     host.send({ type: 'race_loaded', raceId: hostPrepare.raceId });
     guest.send({ type: 'race_loaded', raceId: guestPrepare.raceId });
+    const hostLoadedAck = await host.next(message => message.type === 'race_loaded_ack');
+    const guestLoadedAck = await guest.next(message => message.type === 'race_loaded_ack');
+    assert.equal(hostLoadedAck.raceId, hostPrepare.raceId);
+    assert.equal(guestLoadedAck.raceId, guestPrepare.raceId);
+    assert.equal(hostLoadedAck.late, false);
     const hostSnapshot = await host.next(message => message.type === 'snapshot');
     const guestSnapshot = await guest.next(message => message.type === 'snapshot');
     assert.equal(hostSnapshot.raceId, hostPrepare.raceId);
     assert.equal(hostSnapshot.tick, guestSnapshot.tick);
     assert.equal(hostSnapshot.karts.length, 8);
+    assert.equal(Array.isArray(hostSnapshot.karts[0]), true);
+    assert.equal(Array.isArray(hostSnapshot.acks), true);
+    assert.equal(Object.hasOwn(hostSnapshot, 'standings'), false);
     assert.equal(hostSnapshot.state, 'racing');
 
     const hostResults = await host.next(message => message.type === 'race_results');
@@ -616,6 +664,11 @@ test('two WebSocket clients can share a Racer with distinct loadouts through res
     assert.equal(hostResults.raceId, hostPrepare.raceId);
     assert.deepEqual(hostResults.results, guestResults.results);
     assert.equal(hostResults.results.length, 8);
+    const snapshotTicks = new Set([
+      ...host.messagesAfter().filter(message => message.type === 'snapshot'),
+      ...guest.messagesAfter().filter(message => message.type === 'snapshot'),
+    ].map(message => message.tick));
+    assert.equal(snapshotStringifies, snapshotTicks.size);
     assert.deepEqual(
       hostResults.results
         .filter(result => result.participantId === hostWelcome.participantId

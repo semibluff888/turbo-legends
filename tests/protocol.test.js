@@ -8,12 +8,14 @@ import {
   ROOM_STATES,
   ROOM_TYPES,
   SERVER_MESSAGE_TYPES,
+  decodeKartSnapshot,
+  encodeKartSnapshot,
   normalizeRoomCode,
   validateClientMessage,
 } from '../src/net/protocol.js';
 
-test('protocol v2 exports Lobby, Room, and matchmaking message names', () => {
-  assert.equal(PROTOCOL_VERSION, 2);
+test('protocol v3 exports Lobby, Room, loading ACK, and matchmaking message names', () => {
+  assert.equal(PROTOCOL_VERSION, 3);
   assert.equal(CLIENT_MESSAGE_TYPES.ENTER_LOBBY, 'enter_lobby');
   assert.equal(CLIENT_MESSAGE_TYPES.CREATE_ROOM, 'create_room');
   assert.equal(CLIENT_MESSAGE_TYPES.QUICK_MATCH, 'quick_match');
@@ -24,6 +26,7 @@ test('protocol v2 exports Lobby, Room, and matchmaking message names', () => {
   assert.equal(SERVER_MESSAGE_TYPES.LOBBY_STATE, 'lobby_state');
   assert.equal(SERVER_MESSAGE_TYPES.KICKED, 'kicked');
   assert.equal(SERVER_MESSAGE_TYPES.PREPARE_RACE, 'prepare_race');
+  assert.equal(SERVER_MESSAGE_TYPES.RACE_LOADED_ACK, 'race_loaded_ack');
   assert.equal(SERVER_MESSAGE_TYPES.SERVER_STATS, 'server_stats');
   assert.equal(ROOM_STATES.WAITING, 'waiting');
   assert.equal(ROOM_TYPES.PUBLIC, 'public');
@@ -32,54 +35,54 @@ test('protocol v2 exports Lobby, Room, and matchmaking message names', () => {
 
 test('online loadouts validate atomically and can accompany room entry', () => {
   assert.deepEqual(validateClientMessage({
-    type: 'set_loadout', v: 2,
+    type: 'set_loadout', v: PROTOCOL_VERSION,
     characterId: 'kit', paintId: 'turbo-blue', avatarId: 'cat', ignored: true,
   }), {
     ok: true,
     value: {
-      type: 'set_loadout', v: 2,
+      type: 'set_loadout', v: PROTOCOL_VERSION,
       characterId: 'kit', paintId: 'turbo-blue', avatarId: 'cat',
     },
   });
   assert.equal(validateClientMessage({
-    type: 'set_loadout', v: 2,
+    type: 'set_loadout', v: PROTOCOL_VERSION,
     characterId: 'kit', paintId: 'unknown', avatarId: 'cat',
   }).error.code, ERROR_CODES.PAINT_INVALID);
   assert.equal(validateClientMessage({
-    type: 'set_loadout', v: 2,
+    type: 'set_loadout', v: PROTOCOL_VERSION,
     characterId: 'kit', paintId: 'turbo-blue', avatarId: 'unknown',
   }).error.code, ERROR_CODES.AVATAR_INVALID);
 
   const join = validateClientMessage({
-    type: 'join_room', v: 2, roomCode: 'ABC234', displayName: 'Kit',
+    type: 'join_room', v: PROTOCOL_VERSION, roomCode: 'ABC234', displayName: 'Kit',
     characterId: 'kit', paintId: 'pearl-flash', avatarId: 'rabbit',
   });
   assert.equal(join.ok, true);
   assert.deepEqual(join.value, {
-    type: 'join_room', v: 2, roomCode: 'ABC234', displayName: 'Kit',
+    type: 'join_room', v: PROTOCOL_VERSION, roomCode: 'ABC234', displayName: 'Kit',
     characterId: 'kit', paintId: 'pearl-flash', avatarId: 'rabbit',
   });
 });
 
 test('room settings accept AI auto-fill and kick-player validates its target id', () => {
   assert.deepEqual(validateClientMessage({
-    type: 'set_room', v: 2, autoFillAi: false,
+    type: 'set_room', v: PROTOCOL_VERSION, autoFillAi: false,
   }), {
     ok: true,
-    value: { type: 'set_room', v: 2, autoFillAi: false },
+    value: { type: 'set_room', v: PROTOCOL_VERSION, autoFillAi: false },
   });
   assert.equal(
-    validateClientMessage({ type: 'set_room', v: 2, autoFillAi: 'yes' }).error.code,
+    validateClientMessage({ type: 'set_room', v: PROTOCOL_VERSION, autoFillAi: 'yes' }).error.code,
     ERROR_CODES.INVALID_SETTING,
   );
   assert.deepEqual(validateClientMessage({
-    type: 'kick_player', v: 2, participantId: 'participant_002', ignored: true,
+    type: 'kick_player', v: PROTOCOL_VERSION, participantId: 'participant_002', ignored: true,
   }), {
     ok: true,
-    value: { type: 'kick_player', v: 2, participantId: 'participant_002' },
+    value: { type: 'kick_player', v: PROTOCOL_VERSION, participantId: 'participant_002' },
   });
   assert.equal(
-    validateClientMessage({ type: 'kick_player', v: 2, participantId: 'short' }).error.code,
+    validateClientMessage({ type: 'kick_player', v: PROTOCOL_VERSION, participantId: 'short' }).error.code,
     ERROR_CODES.INVALID_MESSAGE,
   );
 });
@@ -87,7 +90,7 @@ test('room settings accept AI auto-fill and kick-player validates its target id'
 test('create-room validation normalizes metadata and keeps a private password case-sensitive', () => {
   const result = validateClientMessage({
     type: 'create_room',
-    v: 2,
+    v: PROTOCOL_VERSION,
     displayName: '  Nova  ',
     roomName: '  Nova   Night  ',
     roomType: 'PRIVATE',
@@ -101,7 +104,7 @@ test('create-room validation normalizes metadata and keeps a private password ca
     ok: true,
     value: {
       type: 'create_room',
-      v: 2,
+      v: PROTOCOL_VERSION,
       displayName: 'Nova',
       roomName: 'Nova Night',
       roomType: 'private',
@@ -114,7 +117,7 @@ test('create-room validation normalizes metadata and keeps a private password ca
 
 test('create-room validation rejects invalid names, types, capacities, and private passwords', () => {
   const base = {
-    type: 'create_room', v: 2, displayName: 'Pip', roomName: 'Sprint',
+    type: 'create_room', v: PROTOCOL_VERSION, displayName: 'Pip', roomName: 'Sprint',
     roomType: 'public', maxPlayers: 8,
   };
   assert.equal(
@@ -150,7 +153,7 @@ test('create-room validation rejects invalid names, types, capacities, and priva
 test('input validation clamps finite axes and preserves independent sequences', () => {
   const result = validateClientMessage({
     type: 'input',
-    v: 2,
+    v: PROTOCOL_VERSION,
     raceId: 'race_identifier_123',
     seq: 9,
     useItemSeq: 4,
@@ -165,7 +168,7 @@ test('input validation clamps finite axes and preserves independent sequences', 
   assert.equal(result.ok, true);
   assert.deepEqual(result.value, {
     type: 'input',
-    v: 2,
+    v: PROTOCOL_VERSION,
     raceId: 'race_identifier_123',
     seq: 9,
     useItemSeq: 4,
@@ -180,7 +183,7 @@ test('input validation clamps finite axes and preserves independent sequences', 
 test('input validation rejects non-boolean button fields', () => {
   const result = validateClientMessage({
     type: 'input',
-    v: 2,
+    v: PROTOCOL_VERSION,
     raceId: 'race_identifier_123',
     seq: 1,
     useItemSeq: 0,
@@ -203,13 +206,13 @@ test('protocol rejects old versions, invalid names, and ambiguous room codes', (
   assert.equal(badVersion.error.code, ERROR_CODES.UNSUPPORTED_VERSION);
 
   const badName = validateClientMessage({
-    type: 'quick_match', v: 2, displayName: 'A\u202eB',
+    type: 'quick_match', v: PROTOCOL_VERSION, displayName: 'A\u202eB',
   });
   assert.equal(badName.ok, false);
   assert.equal(badName.error.code, ERROR_CODES.NAME_INVALID);
 
   const badCode = validateClientMessage({
-    type: 'join_room', v: 2, roomCode: 'OI10LL', displayName: 'Pip',
+    type: 'join_room', v: PROTOCOL_VERSION, roomCode: 'OI10LL', displayName: 'Pip',
   });
   assert.equal(badCode.ok, false);
   assert.equal(badCode.error.code, ERROR_CODES.ROOM_NOT_FOUND);
@@ -217,16 +220,54 @@ test('protocol rejects old versions, invalid names, and ambiguous room codes', (
 
 test('join validation accepts nickname/code aliases and an optional password', () => {
   const result = validateClientMessage({
-    type: 'join_room', v: 2, code: 'abc234', nickname: '  Nova  ', password: 'PitLane9',
+    type: 'join_room', v: PROTOCOL_VERSION, code: 'abc234', nickname: '  Nova  ', password: 'PitLane9',
   });
   assert.deepEqual(result, {
     ok: true,
     value: {
       type: 'join_room',
-      v: 2,
+      v: PROTOCOL_VERSION,
       roomCode: 'ABC234',
       password: 'PitLane9',
       displayName: 'Nova',
     },
   });
+});
+
+test('compact kart snapshots round-trip dynamic state without static roster fields', () => {
+  const encoded = encodeKartSnapshot({
+    index: 3,
+    participantId: 'participant_003',
+    displayName: 'Nova',
+    characterId: 'nova',
+    lapTimes: [12.5],
+    x: 10.25,
+    speed: 23,
+    drifting: true,
+    boostTimer: 0.5,
+    item: 'shell',
+    lap: 2,
+    rank: 1,
+    bestLap: 12.5,
+    controls: { throttle: 1, brake: 0, steer: -0.5, drift: true, lookBack: false },
+  }, 'takeover-ai');
+  const decoded = decodeKartSnapshot(encoded);
+
+  assert.equal(decoded.index, 3);
+  assert.equal(decoded.controllerKind, 'takeover-ai');
+  assert.equal(decoded.x, 10.25);
+  assert.equal(decoded.speed, 23);
+  assert.equal(decoded.drifting, true);
+  assert.equal(decoded.boostTimer, 0.5);
+  assert.equal(decoded.item, 'shell');
+  assert.equal(decoded.lap, 2);
+  assert.equal(decoded.rank, 1);
+  assert.equal(decoded.bestLap, 12.5);
+  assert.deepEqual(decoded.controls, {
+    throttle: 1, brake: 0, steer: -0.5, drift: true, lookBack: false,
+  });
+  assert.equal(Object.hasOwn(decoded, 'participantId'), false);
+  assert.equal(Object.hasOwn(decoded, 'displayName'), false);
+  assert.equal(Object.hasOwn(decoded, 'characterId'), false);
+  assert.equal(Object.hasOwn(decoded, 'lapTimes'), false);
 });

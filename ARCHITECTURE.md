@@ -33,7 +33,8 @@ but do not decide authoritative physics, items, laps, ranks, or results.
 - `server/` owns process-memory rooms, WebSocket connections, authoritative
   race scheduling, snapshots, event delivery, and cleanup.
 - `src/net/protocol.js` is browser-safe and imported by both client and server;
-  it is the canonical source for protocol v2 names and validation.
+  it is the canonical source for protocol v3 names, compact snapshot codecs,
+  and validation.
 - Rooms are local to one Node process. There is no database, durable result
   store, account system, or cross-process room migration.
 
@@ -120,9 +121,10 @@ the existing renderer and HUD:
 | `src/game/race-simulation.js` | Generic eight-kart authoritative race pipeline |
 | `src/game/race.js` | Backward-compatible single-player `RaceDirector` adapter |
 | `src/session/local-race-session.js` | Presentation-facing wrapper for local races |
-| `src/net/protocol.js` | Shared protocol v2 constants and client-message validation |
+| `src/net/protocol.js` | Shared protocol v3 constants, compact snapshot codecs, and client-message validation |
 | `src/net/online-client.js` | Browser transport, lobby subscription, room commands, credentials, and reconnect loop |
 | `src/net/online-race-session.js` | Snapshot mirror, input sampling, prediction, and correction |
+| `src/net/online-race-loader.js` | Cancellable shader compilation and first-frame warmup barrier |
 | `server/room-manager.js` | Room lifecycle, scheduler, authoritative input and snapshot flow |
 | `server/websocket-game-server.js` | Upgrade/origin checks, connection limits, routing, and heartbeat |
 | `server/race-factory.js` | Builds a Track and `RaceSimulation` for an online room |
@@ -285,9 +287,13 @@ waiting → loading → countdown → racing → results → waiting
   change clears that member's ready flag; a room-setting change clears all ready flags.
 - Starting requires at least two members, with every member connected and ready.
   The room then locks against new joins and sends `prepare_race`.
-- Clients build the track/roster and answer `race_loaded`. The loading deadline
-  is 10 seconds; unready clients use takeover AI. Fewer than two connected,
-  loaded humans cancels the launch and resets the room to `waiting`.
+- Clients build the track/roster, compile shaders, pre-render one frame, and
+  answer `race_loaded`. The server replies with `race_loaded_ack` before launch
+  or snapshot delivery. The loading deadline is 10 seconds; at least two loaded
+  humans start while unready seats use takeover AI. A late client may load during
+  countdown/racing, receives an ACK, and reclaims its seat only after a newer
+  movement sequence. Fewer than two loaded humans cancels the launch and resets
+  the room to `waiting`.
 - A disconnect immediately enables takeover AI and opens a 30-second resume
   window. A successful resume keeps takeover AI active until the first newer
   movement input arrives. An explicit leave during a race abandons the session
@@ -313,10 +319,10 @@ waiting → loading → countdown → racing → results → waiting
   occupancy, host, or status changes. Quick match atomically chooses an available
   public waiting room and never creates a room implicitly.
 
-## Protocol v2
+## Protocol v3
 
 The WebSocket endpoint is `/ws`. Every application message is a JSON object
-with `v: 2` and a `type`. Unknown fields in client messages are discarded by the
+with `v: 3` and a `type`. Unknown fields in client messages are discarded by the
 shared validator.
 
 Client → server:
@@ -332,8 +338,8 @@ Server → client:
 
 ```text
 welcome, lobby_state, room_state, prepare_race,
-snapshot, race_events, race_results,
-error, pong
+race_loaded_ack, snapshot, race_events, race_results,
+kicked, error, pong, server_stats
 ```
 
 `lobby_state` contains public-safe summaries for both public and private rooms:
@@ -348,7 +354,7 @@ The authoritative driving message is:
 ```js
 {
   type: 'input',
-  v: 2,
+  v: 3,
   raceId,
   seq,
   useItemSeq,
@@ -361,14 +367,21 @@ The authoritative driving message is:
 ```
 
 Movement `seq` and item `useItemSeq` are monotonic and handled independently.
-Stale movement can be discarded without losing a newer item edge. Each
-participant's snapshot contains `ack`/`inputAck` for the last applied movement
-sequence.
+Stale movement can be discarded without losing a newer item edge. Clients do
+not send normal race input until the matching `race_loaded_ack`. Every shared
+snapshot contains `acks: [[kartIndex, inputSeq, useItemSeq], ...]`.
 
-Snapshots contain the race clock/state, standings order, all Kart fields needed
-by presentation, projectiles, hazards, and item-box activity. They are complete
-replacement state and may be skipped under backpressure. `race_events` carries
-globally increasing event IDs and is not intentionally skipped.
+Each room builds one shared 20 Hz snapshot and the WebSocket gateway serializes
+it once for all room connections. Kart state is an ordered compact array carrying
+dynamic movement, visual, item, progress, control, and `controllerKind` fields;
+static roster identity/appearance and `lapTimes` remain in `prepare_race` or
+results. Item boxes are `[active, respawnAt]` in track-definition order. There is
+no top-level standings array because each Kart already carries `rank`.
+
+Snapshots are complete replacement state and may be skipped when a socket's
+buffer exceeds `max(16 KiB, 2 * serializedSnapshotBytes)`. Events, results, and
+room state are not intentionally skipped. Any connection above 512 KiB total
+output backlog is closed. `race_events` carries globally increasing event IDs.
 
 `welcome` returns opaque `participantId` and `resumeToken` credentials after a
 room action. The browser keeps them only in memory and automatically retries

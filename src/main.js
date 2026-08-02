@@ -9,6 +9,7 @@ import { CHARACTERS } from './game/characters.js';
 import { LocalRaceSession } from './session/local-race-session.js';
 import { OnlineClient } from './net/online-client.js';
 import { OnlineRaceSession } from './net/online-race-session.js';
+import { prewarmRaceRenderer } from './net/online-race-loader.js';
 import { ERROR_CODES } from './net/protocol.js';
 import {
   invitationRoomCode,
@@ -88,6 +89,7 @@ let handledInviteRoomCode = '';
 let pendingInviteJoinCode = '';
 let localRoomReconnecting = false;
 let reconnectFailurePending = false;
+let onlineLoadGeneration = 0;
 
 const playerControls = makeControls();
 
@@ -533,6 +535,7 @@ function wireOnlineClient() {
     showOnlineRoom(message, {
       preservePanel: (mode === 'settings' || mode === 'help') && panelReturn === 'online-room',
     });
+    updateOnlineLoadingOverlay();
   });
   onlineClient.on('kicked', (message) => {
     finishLocalRoomReconnect({ restoreFocus: false });
@@ -550,12 +553,24 @@ function wireOnlineClient() {
     });
   });
   onlineClient.on('prepare_race', (message) => {
-    try {
-      startOnlineRace(message);
-    } catch (error) {
+    Promise.resolve(startOnlineRace(message)).catch((error) => {
+      if (race?.session.kind === 'online' && race.session.raceId === message?.raceId) endRace();
       onlineScreens.setBusy(false);
       reportOnlineError(error?.message || 'Unable to start the online race.', { action: 'start' });
-    }
+    });
+  });
+  onlineClient.on('race_loaded_ack', (message) => {
+    if (race?.session.kind !== 'online' || race.session.raceId !== message?.raceId) return;
+    race.loadAcknowledged = true;
+    if (race.loadReady) startOnlineRaceMusic(race);
+    activateOnlineRaceIfReady(race);
+  });
+  onlineClient.on('snapshot', (message) => {
+    if (race?.session.kind !== 'online'
+      || race.session.raceId !== message?.raceId
+      || !Array.isArray(message?.karts)) return;
+    race.hasAuthoritativeSnapshot = true;
+    activateOnlineRaceIfReady(race);
   });
   onlineClient.on('race_results', (message) => {
     onlineResultsState = message;
@@ -719,14 +734,93 @@ function startRace() {
   mountRace(track, session, def);
 }
 
+function onlineLoadedCountText(roomState = onlineRoomState) {
+  const members = roomState?.members || roomState?.participants || roomState?.players || [];
+  if (!Array.isArray(members) || members.length === 0) return 'PREPARING LOCAL RESOURCES';
+  const loaded = members.filter((member) => member?.loaded === true).length;
+  return `${loaded}/${members.length} PLAYERS LOADED`;
+}
+
+function updateOnlineLoadingOverlay(stage = race?.loadingStage) {
+  if (race?.session.kind !== 'online' || race.onlineActivated) return;
+  hud.showLoading(stage || 'BUILDING RACE...', onlineLoadedCountText());
+}
+
+function isCurrentOnlineLoad(mountedRace, token) {
+  return race === mountedRace
+    && mountedRace?.session.kind === 'online'
+    && mountedRace.loadToken === token
+    && token === onlineLoadGeneration;
+}
+
+function startOnlineRaceMusic(mountedRace) {
+  if (!mountedRace || mountedRace.musicStarted) return;
+  mountedRace.musicStarted = true;
+  audio.playRaceMusic(mountedRace.track.id, { restart: true });
+}
+
+function submitOnlineRaceLoaded(mountedRace) {
+  if (!mountedRace || race !== mountedRace || mountedRace.session.kind !== 'online') return false;
+  const raceId = mountedRace.session.raceId;
+  const acknowledged = onlineClient.hasRaceLoadedAck(raceId);
+  mountedRace.loadAcknowledged = acknowledged;
+  if (!shouldAcknowledgeRaceLoaded({ raceId }, acknowledged)) {
+    startOnlineRaceMusic(mountedRace);
+    return true;
+  }
+  if (!onlineClient.markRaceLoaded(raceId)) {
+    mountedRace.loadingStage = 'WAITING FOR CONNECTION...';
+    updateOnlineLoadingOverlay(mountedRace.loadingStage);
+    return false;
+  }
+  mountedRace.loadSubmitted = true;
+  mountedRace.loadingStage = 'SYNCING RACE...';
+  updateOnlineLoadingOverlay(mountedRace.loadingStage);
+  startOnlineRaceMusic(mountedRace);
+  return true;
+}
+
+function activateOnlineRaceIfReady(mountedRace) {
+  if (!mountedRace
+    || race !== mountedRace
+    || mountedRace.onlineActivated
+    || !mountedRace.loadReady
+    || !mountedRace.loadAcknowledged
+    || !mountedRace.hasAuthoritativeSnapshot) return false;
+  mountedRace.onlineActivated = true;
+  hud.hideLoading();
+  audio.setGameplaySfxPaused(false);
+  audio.startEngine();
+  return true;
+}
+
+async function prewarmOnlineRace(mountedRace, token) {
+  const ready = await prewarmRaceRenderer({
+    renderer,
+    scene: mountedRace.world.scene,
+    camera,
+    isCurrent: () => isCurrentOnlineLoad(mountedRace, token),
+    onStage: (stage) => {
+      mountedRace.loadingStage = stage === 'compile'
+        ? 'WARMING UP GPU...'
+        : 'PREPARING FIRST FRAME...';
+      updateOnlineLoadingOverlay(mountedRace.loadingStage);
+    },
+  });
+  if (!ready) return false;
+
+  mountedRace.loadReady = true;
+  submitOnlineRaceLoaded(mountedRace);
+  activateOnlineRaceIfReady(mountedRace);
+  return true;
+}
+
 function startOnlineRace(message) {
   const mountedSession = race?.session;
   if (mountedSession?.kind === 'online' && mountedSession.raceId === message?.raceId) {
     mountedSession.resumeFromPrepare?.(message);
-    if (shouldAcknowledgeRaceLoaded(message, onlineRoomState)) {
-      onlineClient.markRaceLoaded(message.raceId);
-    }
-    return;
+    if (race.loadReady) submitOnlineRaceLoaded(race);
+    return race.loadTask;
   }
 
   destroyAttract();
@@ -752,14 +846,17 @@ function startOnlineRace(message) {
     roomState: onlineRoomState,
   });
   onlineResultsState = null;
-  mountRace(track, session, def);
+  const token = ++onlineLoadGeneration;
+  const mountedRace = mountRace(track, session, def, {
+    onlineLoading: true,
+    loadToken: token,
+  });
   onlineScreens.hideAll();
-  if (shouldAcknowledgeRaceLoaded(message, onlineRoomState)) {
-    onlineClient.markRaceLoaded(message.raceId);
-  }
+  mountedRace.loadTask = prewarmOnlineRace(mountedRace, token);
+  return mountedRace.loadTask;
 }
 
-function mountRace(track, session, def) {
+function mountRace(track, session, def, { onlineLoading = false, loadToken = null } = {}) {
   const world = buildScene(track);
   world.scene.add(buildTrackMesh(track));
 
@@ -780,6 +877,15 @@ function mountRace(track, session, def) {
     finishSkipped: false,
     lastCountdownBeep: -1,
     sawCountdown: false,
+    loadToken,
+    loadTask: null,
+    loadReady: !onlineLoading,
+    loadSubmitted: false,
+    loadAcknowledged: !onlineLoading,
+    hasAuthoritativeSnapshot: !onlineLoading,
+    onlineActivated: !onlineLoading,
+    loadingStage: onlineLoading ? 'BUILDING RACE...' : '',
+    musicStarted: !onlineLoading,
   };
 
   mode = 'race';
@@ -788,15 +894,22 @@ function mountRace(track, session, def) {
   onlineScreens.hideAll();
   hud.showRace(session);
   networkStatus.showRace();
-  audio.setGameplaySfxPaused(false);
-  audio.playRaceMusic(def.id, { restart: true });
+  audio.setGameplaySfxPaused(onlineLoading);
+  if (onlineLoading) {
+    audio.stopEngine();
+    updateOnlineLoadingOverlay(race.loadingStage);
+  } else {
+    audio.playRaceMusic(def.id, { restart: true });
+    audio.startEngine();
+  }
   audio.setFinalLap(false);
-  audio.startEngine();
   resetControls(playerControls);
+  return race;
 }
 
 function endRace() {
   if (!race) return;
+  onlineLoadGeneration++;
   setFinishCinematic(false);
   race.finishCamera.reset();
   camera.fov = CAMERA.fov;

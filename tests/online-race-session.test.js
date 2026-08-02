@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { FIXED_DT, RACE_STATE } from '../src/core/constants.js';
 import { OnlineRaceSession } from '../src/net/online-race-session.js';
+import { encodeKartSnapshot } from '../src/net/protocol.js';
 import { Track } from '../src/track/track.js';
 import { getTrackDef } from '../src/track/tracks.js';
 
@@ -13,12 +14,20 @@ class FakeClient {
     this.listeners = new Map();
     this.inputs = [];
     this.sendAllowed = true;
+    this.ackedRaces = new Set();
   }
   on(type, listener) {
     this.listeners.set(type, listener);
     return () => this.listeners.delete(type);
   }
   emit(type, value) { this.listeners.get(type)?.(value); }
+  hasRaceLoadedAck(raceId) { return this.ackedRaces.has(raceId); }
+  ack(raceId, late = false) {
+    this.ackedRaces.add(raceId);
+    this.emit('race_loaded_ack', {
+      type: 'race_loaded_ack', raceId, phase: late ? 'racing' : 'countdown', late,
+    });
+  }
   sendInput(input) {
     if (!this.sendAllowed) return false;
     this.inputs.push(input);
@@ -52,7 +61,7 @@ function roster() {
 }
 
 function snapshotKart(index, extra = {}) {
-  return {
+  const kart = {
     index,
     x: index * 2,
     y: 0,
@@ -68,6 +77,11 @@ function snapshotKart(index, extra = {}) {
     progress: 0,
     ...extra,
   };
+  return encodeKartSnapshot(kart, kart.controllerKind || 'human');
+}
+
+function snapshotAcks(inputAck = 0, useItemAck = 0) {
+  return [[0, inputAck, useItemAck], [1, -1, 0]];
 }
 
 test('online snapshot populates Kart-shaped state and item views', () => {
@@ -91,7 +105,7 @@ test('online snapshot populates Kart-shaped state and item views', () => {
   assert.equal(session.applySnapshot({
     raceId: 'race-1',
     tick: 12,
-    ack: 0,
+    acks: snapshotAcks(),
     state: RACE_STATE.RACING,
     elapsed: 1.5,
     countdown: 0,
@@ -102,12 +116,12 @@ test('online snapshot populates Kart-shaped state and item views', () => {
     ],
     projectiles: [{ id: 1, kind: 'green_shell', x: 2, y: 0, z: 5 }],
     hazards: [{ id: 2, kind: 'banana', x: 3, y: 0, z: 6 }],
-    itemBoxes: [{ id: firstBox.id, active: false, respawnAt: 9 }],
+    itemBoxes: [[false, 9]],
   }), true);
 
-  assert.equal(session.player.name, 'Local Driver');
+  assert.equal(session.player.name, 'Local');
   assert.equal(session.player.isPlayer, true);
-  assert.equal(session.karts[1].name, 'Remote Driver');
+  assert.equal(session.karts[1].name, 'Remote');
   assert.equal(session.items.projectiles[0].id, 1);
   assert.equal(session.items.hazards[0].id, 2);
   assert.equal(firstBox.active, false);
@@ -203,10 +217,11 @@ test('input is sampled at 60Hz and item presses use a monotonic action counter',
     roster: roster(),
     localParticipantId: 'local',
   });
+  client.ack('race-2');
   session.applySnapshot({
     raceId: 'race-2',
     tick: 1,
-    ack: 0,
+    acks: snapshotAcks(),
     state: RACE_STATE.RACING,
     karts: [snapshotKart(0), snapshotKart(1)],
   });
@@ -253,10 +268,12 @@ test('loading sessions send no input before a snapshot and can neutralize immedi
   session.applySnapshot({
     raceId: 'race-loading',
     tick: 1,
-    ack: 0,
+    acks: snapshotAcks(),
     state: RACE_STATE.RACING,
     karts: [snapshotKart(0), snapshotKart(1)],
   });
+  assert.equal(session.sendNeutralInput(), false);
+  client.ack('race-loading');
   assert.equal(session.sendNeutralInput(), true);
   assert.deepEqual(client.inputs.at(-1), {
     seq: 1,
@@ -311,6 +328,7 @@ test('a finished local kart switches to snapshot interpolation and stops sending
     roster: roster(),
     localParticipantId: 'local',
   });
+  client.ack('race-finished');
   session.applySnapshot({
     raceId: 'race-finished',
     state: RACE_STATE.RACING,
@@ -339,8 +357,9 @@ test('congested sends do not advance input sequence and stale item presses expir
   const session = new OnlineRaceSession({
     client, track, raceId: 'race-congested', roster: roster(), localParticipantId: 'local',
   });
+  client.ack('race-congested');
   session.applySnapshot({
-    raceId: 'race-congested', tick: 30, ack: 40, useItemAck: 7,
+    raceId: 'race-congested', tick: 30, acks: snapshotAcks(40, 7),
     state: RACE_STATE.RACING,
     karts: [snapshotKart(0), snapshotKart(1)],
   });
@@ -396,11 +415,11 @@ test('large local authority corrections are smoothed while respawns still snap',
     client: new FakeClient(), track, raceId: 'race-correction', roster: roster(), localParticipantId: 'local',
   });
   session.applySnapshot({
-    raceId: 'race-correction', tick: 10, ack: 0, state: RACE_STATE.RACING,
+    raceId: 'race-correction', tick: 10, acks: snapshotAcks(), state: RACE_STATE.RACING,
     karts: [snapshotKart(0, { x: 0 }), snapshotKart(1)],
   });
   session.applySnapshot({
-    raceId: 'race-correction', tick: 13, ack: 0, state: RACE_STATE.RACING,
+    raceId: 'race-correction', tick: 13, acks: snapshotAcks(), state: RACE_STATE.RACING,
     karts: [snapshotKart(0, { x: 10 }), snapshotKart(1)],
   });
   assert.equal(session.player.x, 0);
@@ -408,7 +427,7 @@ test('large local authority corrections are smoothed while respawns still snap',
   assert.ok(session.player.x > 0 && session.player.x < 10);
 
   session.applySnapshot({
-    raceId: 'race-correction', tick: 16, ack: 0, state: RACE_STATE.RACING,
+    raceId: 'race-correction', tick: 16, acks: snapshotAcks(), state: RACE_STATE.RACING,
     karts: [snapshotKart(0, { x: 50, state: 'respawning' }), snapshotKart(1)],
   });
   assert.equal(session.player.x, 50);
@@ -420,8 +439,9 @@ test('disconnect pauses prediction and the next sent sequence continues from sna
   const session = new OnlineRaceSession({
     client, track, raceId: 'race-resume', roster: roster(), localParticipantId: 'local',
   });
+  client.ack('race-resume');
   session.applySnapshot({
-    raceId: 'race-resume', tick: 60, ack: 500, state: RACE_STATE.RACING,
+    raceId: 'race-resume', tick: 60, acks: snapshotAcks(500, 0), state: RACE_STATE.RACING,
     karts: [snapshotKart(0), snapshotKart(1)],
   });
   client.emit('connection', { state: 'disconnected' });
@@ -429,8 +449,9 @@ test('disconnect pauses prediction and the next sent sequence continues from sna
   assert.equal(client.inputs.length, 0);
 
   client.emit('connection', { state: 'connected' });
+  client.ack('race-resume', true);
   session.applySnapshot({
-    raceId: 'race-resume', tick: 63, ack: 500, state: RACE_STATE.RACING,
+    raceId: 'race-resume', tick: 63, acks: snapshotAcks(500, 0), state: RACE_STATE.RACING,
     karts: [snapshotKart(0, { controllerKind: 'takeover-ai' }), snapshotKart(1)],
   });
   session.update(INPUT_STEP, { throttle: 0.75 });

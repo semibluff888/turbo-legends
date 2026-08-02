@@ -80,6 +80,7 @@ export class OnlineClient {
     this.selfId = null;
     this.resumeToken = null;
     this.raceId = null;
+    this._raceLoadedAcks = new Map();
 
     this._listeners = new Map();
     this._connectionPurpose = null;
@@ -231,12 +232,20 @@ export class OnlineClient {
     return this.send({ type: CLIENT_MESSAGE_TYPES.RACE_LOADED, raceId });
   }
 
+  hasRaceLoadedAck(raceId = this.raceId) {
+    return typeof raceId === 'string' && this._raceLoadedAcks.has(raceId);
+  }
+
+  getRaceLoadedAck(raceId = this.raceId) {
+    return typeof raceId === 'string' ? this._raceLoadedAcks.get(raceId) ?? null : null;
+  }
+
   returnRoom() {
     return this.send({ type: CLIENT_MESSAGE_TYPES.RETURN_ROOM });
   }
 
   sendInput(input) {
-    if (!this.raceId) return false;
+    if (!this.raceId || !this.hasRaceLoadedAck(this.raceId)) return false;
     const socket = this.socket;
     if (!socket || socket.readyState !== 1
       || Number(socket.bufferedAmount || 0) > MAX_RACE_INPUT_BUFFERED_BYTES) {
@@ -415,14 +424,23 @@ export class OnlineClient {
       const self = Array.isArray(members)
         ? members.find((member) => String(member?.participantId || member?.id || '') === String(this.selfId || ''))
         : null;
-      if (phase === ROOM_STATES.WAITING || self?.postRaceState === 'room') this.raceId = null;
+      if (phase === ROOM_STATES.WAITING || self?.postRaceState === 'room') {
+        this.raceId = null;
+        this._raceLoadedAcks.clear();
+      }
     } else if (message.type === SERVER_MESSAGE_TYPES.KICKED) {
       this._cancelReconnect();
       this._clearRoomSession();
       this.scope = 'lobby';
       this._connectionPurpose = null;
     } else if (message.type === SERVER_MESSAGE_TYPES.PREPARE_RACE) {
+      if (this.raceId && this.raceId !== message.raceId) this._raceLoadedAcks.clear();
       this.raceId = message.raceId;
+    } else if (message.type === SERVER_MESSAGE_TYPES.RACE_LOADED_ACK) {
+      if (typeof message.raceId === 'string'
+        && (!this.raceId || message.raceId === this.raceId)) {
+        this._raceLoadedAcks.set(message.raceId, message);
+      }
     } else if (message.type === SERVER_MESSAGE_TYPES.RACE_RESULTS) {
       this.raceId = message.raceId || this.raceId;
     } else if (message.type === SERVER_MESSAGE_TYPES.PONG) {
@@ -676,6 +694,7 @@ export class OnlineClient {
     this.selfId = null;
     this.resumeToken = null;
     this.raceId = null;
+    this._raceLoadedAcks.clear();
   }
 }
 

@@ -10,6 +10,7 @@ import { angleDelta, clamp, lerp, loopDelta } from '../core/mathx.js';
 import { getCharacter } from '../game/characters.js';
 import { Kart, makeControls } from '../game/kart.js';
 import { stepKartPhysics } from '../game/physics.js';
+import { decodeKartSnapshot } from './protocol.js';
 
 const INPUT_DT = 1 / 60;
 const NETWORK_TICK_HZ = 60;
@@ -182,6 +183,7 @@ export class OnlineRaceSession {
     this._estimatedServerTick = null;
     this._hasLocalSnapshot = false;
     this._transportConnected = client?.state === undefined || client.state === 'connected';
+    this._loadAcknowledged = Boolean(client?.hasRaceLoadedAck?.(raceId));
 
     this._karts = [];
     this._byIndex = new Map();
@@ -265,6 +267,7 @@ export class OnlineRaceSession {
     if (client?.on) {
       this._unsubscribers.push(
         client.on('snapshot', (message) => this.applySnapshot(message)),
+        client.on('race_loaded_ack', (message) => this.applyRaceLoadedAck(message)),
         client.on('room_state', (message) => this.applyRoomState(message)),
         client.on('race_events', (message) => this.applyEvents(message)),
         client.on('race_results', (message) => this.applyResults(message)),
@@ -277,6 +280,7 @@ export class OnlineRaceSession {
   get player() { return this._player; }
   get items() { return this._items; }
   get hasSnapshot() { return this._hasSnapshot; }
+  get loadAcknowledged() { return this._loadAcknowledged; }
   get standings() {
     return this._karts.slice().sort((a, b) => (a.rank - b.rank) || (a.index - b.index));
   }
@@ -300,6 +304,7 @@ export class OnlineRaceSession {
     this._prevUseItem = !!controls?.useItem;
 
     if (this._hasSnapshot
+      && this._loadAcknowledged
       && this._transportConnected
       && !this._player.finished
       && (this.state === RACE_STATE.COUNTDOWN || this.state === RACE_STATE.RACING)) {
@@ -335,6 +340,7 @@ export class OnlineRaceSession {
     this._pendingUseItem = false;
     this._pendingUseItemAge = 0;
     if (!this._hasSnapshot
+      || !this._loadAcknowledged
       || !this._transportConnected
       || (this.state !== RACE_STATE.COUNTDOWN && this.state !== RACE_STATE.RACING)) {
       return false;
@@ -364,17 +370,22 @@ export class OnlineRaceSession {
     this.elapsed = Math.max(0, finite(snapshot.elapsed, this.elapsed));
     this.laps = Math.max(1, snapshot.laps | 0 || this.laps);
 
-    const ack = Number.isInteger(snapshot.ack) ? snapshot.ack : this.lastAck;
+    const localAcks = Array.isArray(snapshot.acks)
+      ? snapshot.acks.find((entry) => Array.isArray(entry) && entry[0] === this._player.index)
+      : null;
+    const ack = Number.isInteger(localAcks?.[1]) ? localAcks[1] : this.lastAck;
     if (ack >= 0) this._inputSeq = Math.max(this._inputSeq, ack);
     if (ack > this.lastAck) {
       this.lastAck = ack;
       this._inputHistory = this._inputHistory.filter((command) => command.seq > ack);
     }
-    if (Number.isInteger(snapshot.useItemAck) && snapshot.useItemAck >= 0) {
-      this._useItemSeq = Math.max(this._useItemSeq, snapshot.useItemAck);
+    if (Number.isInteger(localAcks?.[2]) && localAcks[2] >= 0) {
+      this._useItemSeq = Math.max(this._useItemSeq, localAcks[2]);
     }
 
-    for (const kartSnapshot of snapshot.karts || []) {
+    for (const encodedKart of snapshot.karts || []) {
+      const kartSnapshot = decodeKartSnapshot(encodedKart);
+      if (!kartSnapshot) continue;
       const kart = this._byIndex.get(kartSnapshot.index);
       if (!kart) continue;
       if (kart === this._player) this._applyLocalSnapshot(kartSnapshot, snapshotTick);
@@ -383,6 +394,13 @@ export class OnlineRaceSession {
 
     this._items.applySnapshot(snapshot);
     this._applyItemBoxes(snapshot.itemBoxes);
+    return true;
+  }
+
+  applyRaceLoadedAck(message) {
+    if (!message || message.raceId !== this.raceId) return false;
+    this._loadAcknowledged = true;
+    this._sendAccumulator = 0;
     return true;
   }
 
@@ -672,6 +690,7 @@ export class OnlineRaceSession {
     }
     if (event?.state === 'idle') return;
     this._transportConnected = false;
+    this._loadAcknowledged = false;
     this._inputHistory.length = 0;
     this._sendAccumulator = 0;
     this._pendingUseItem = false;
@@ -686,12 +705,14 @@ export class OnlineRaceSession {
 
   _applyItemBoxes(snapshots) {
     if (!Array.isArray(snapshots)) return;
-    const byId = new Map(this.track.itemBoxes.map((box) => [box.id, box]));
-    for (const snapshot of snapshots) {
-      const box = byId.get(snapshot.id);
+    for (let index = 0; index < snapshots.length; index++) {
+      const snapshot = snapshots[index];
+      const box = this.track.itemBoxes[index];
       if (!box) continue;
-      if (snapshot.active !== undefined) box.active = !!snapshot.active;
-      if (snapshot.respawnAt !== undefined) box.respawnAt = snapshot.respawnAt;
+      if (Array.isArray(snapshot)) {
+        if (snapshot[0] !== undefined) box.active = !!snapshot[0];
+        if (snapshot[1] !== undefined) box.respawnAt = snapshot[1];
+      }
     }
   }
 

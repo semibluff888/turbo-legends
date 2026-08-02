@@ -89,6 +89,10 @@ export class Hud {
       </div>
       <div class="hud-speed"><span class="hud-speed-val">0</span><span class="hud-speed-unit">km/h</span></div>
       <div class="hud-announcer">
+        <div class="hud-loading" role="status" aria-live="polite" hidden>
+          <span class="hud-loading-stage"></span>
+          <span class="hud-loading-detail"></span>
+        </div>
         <div class="hud-banner" hidden>
           <span class="hud-banner-primary"></span>
           <span class="hud-banner-secondary" hidden></span>
@@ -118,6 +122,9 @@ export class Hud {
     this._timeVal = q('.hud-time-val');
     this._bestVal = q('.hud-best-val');
     this._speedVal = q('.hud-speed-val');
+    this._loading = q('.hud-loading');
+    this._loadingStage = q('.hud-loading-stage');
+    this._loadingDetail = q('.hud-loading-detail');
     this._banner = q('.hud-banner');
     this._bannerPrimary = q('.hud-banner-primary');
     this._bannerSecondary = q('.hud-banner-secondary');
@@ -170,11 +177,24 @@ export class Hud {
 
   showRace() {
     this.root.hidden = false;
+    this.hideLoading();
     this._resetState();
   }
 
   hide() {
+    this.hideLoading();
     this.root.hidden = true;
+  }
+
+  showLoading(stage, detail = '') {
+    this._loadingStage.textContent = String(stage || 'LOADING RACE...');
+    this._loadingDetail.textContent = String(detail || '');
+    this._loadingDetail.hidden = !detail;
+    this._loading.hidden = false;
+  }
+
+  hideLoading() {
+    this._loading.hidden = true;
   }
 
   /**
