@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Turbo Legends</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🏎️</text></svg>" />
-  <link rel="stylesheet" href="./src/styles.css?v=20260802-online-loadout" />
+  <link rel="stylesheet" href="./src/styles.css?v=20260802-finish-cinematic" />
   <script type="importmap">
     {
       "imports": {
@@ -41,6 +41,13 @@
       <canvas id="minimap" width="220" height="220"></canvas>
     </div>
 
+    <!-- Presentation-only finish camera treatment. -->
+    <div id="finish-cinematic" aria-hidden="true"></div>
+    <button id="finish-cinematic-skip" type="button" aria-label="Skip finish cinematic" hidden disabled>
+      <span class="finish-skip-desktop">ENTER / A&nbsp;&nbsp;·&nbsp;&nbsp;SKIP</span>
+      <span class="finish-skip-touch">SKIP</span>
+    </button>
+
     <!-- Mobile race controls: auto-accelerate, drag left to steer. -->
     <div id="touch-steer-zone" aria-label="Drag left or right to steer">
       <div class="touch-steer-pad" aria-hidden="true">
@@ -74,6 +81,6 @@
       <div class="noscript-warning">Turbo Legends needs JavaScript enabled.</div>
     </noscript>
   </div>
-  <script type="module" src="./src/main.js?v=20260802-online-loadout"></script>
+  <script type="module" src="./src/main.js?v=20260802-finish-cinematic"></script>
 </body>
 </html>

@@ -2270,6 +2270,86 @@ kbd {
   animation: flash 0.7s steps(2, jump-none) infinite;
 }
 
+/* ---------------------------------------------------------------------------
+   Finish cinematic
+--------------------------------------------------------------------------- */
+
+#finish-cinematic {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(to bottom,
+    rgba(4, 3, 12, 0.96) 0,
+    rgba(4, 3, 12, 0.96) clamp(28px, 6.5vh, 72px),
+    transparent clamp(28px, 6.5vh, 72px),
+    transparent calc(100% - clamp(28px, 6.5vh, 72px)),
+    rgba(4, 3, 12, 0.96) calc(100% - clamp(28px, 6.5vh, 72px)),
+    rgba(4, 3, 12, 0.96) 100%);
+  box-shadow: inset 0 0 min(18vw, 190px) rgba(4, 3, 12, 0.34);
+  transition: opacity 0.25s ease-out;
+}
+
+body.finish-cinematic #finish-cinematic { opacity: 1; }
+
+#finish-cinematic-skip {
+  position: fixed;
+  right: max(20px, env(safe-area-inset-right, 0px) + 14px);
+  bottom: max(12px, env(safe-area-inset-bottom, 0px) + 8px);
+  z-index: 8;
+  min-width: 148px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(18, 14, 38, 0.72);
+  border: 1.5px solid rgba(255, 255, 255, 0.42);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-align: center;
+  text-shadow: var(--ink-shadow);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+  animation: finish-skip-in 0.25s ease-out both;
+}
+
+#finish-cinematic-skip:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+
+.finish-skip-touch { display: none; }
+
+body.finish-cinematic #hud .hud-slot,
+body.finish-cinematic #hud .hud-race-info,
+body.finish-cinematic #hud .hud-times,
+body.finish-cinematic #hud .hud-speed,
+body.finish-cinematic #hud #minimap,
+body.finish-cinematic #hud .hud-standings,
+body.finish-cinematic #hud .hud-wrongway {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+}
+
+body.finish-cinematic #touch-controls,
+body.finish-cinematic #touch-steer-zone {
+  opacity: 0;
+  pointer-events: none;
+}
+
+body.touch #finish-cinematic-skip {
+  min-width: 92px;
+  min-height: 42px;
+  padding: 9px 18px;
+  font-size: 12px;
+}
+
+body.touch .finish-skip-desktop { display: none; }
+body.touch .finish-skip-touch { display: inline; }
+
 /* Hold-Tab live standings ------------------------------------------------ */
 .hud-standings {
   position: absolute;
@@ -2710,6 +2790,11 @@ body.touch #hud:not([hidden]) #minimap {
 @keyframes status-pop {
   from { transform: translateX(-50%) translateY(-12px) scale(0.92); opacity: 0; }
   to   { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; }
+}
+
+@keyframes finish-skip-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes reconnect-spin {

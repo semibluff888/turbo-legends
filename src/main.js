@@ -28,7 +28,7 @@ import { buildTrackMesh } from './render/trackMesh.js';
 import { KartVisual } from './render/kartMesh.js';
 import { KartShowroom } from './render/kart-showroom.js';
 import { Effects } from './render/effects.js';
-import { ChaseCamera } from './render/camera.js';
+import { ChaseCamera, FinishCameraDirector } from './render/camera.js';
 import { Hud } from './ui/hud.js';
 import { NetworkStatus } from './ui/network-status.js';
 import { Screens } from './ui/screens.js';
@@ -48,6 +48,7 @@ import { InputManager } from './input/input.js?v=20260731-standings';
 // ---------------------------------------------------------------------------
 
 const canvas = document.getElementById('game-canvas');
+const finishCinematicSkip = document.getElementById('finish-cinematic-skip');
 const { renderer, resize } = createRenderer(canvas);
 const camera = new THREE.PerspectiveCamera(
   CAMERA.fov, window.innerWidth / window.innerHeight, CAMERA.near, CAMERA.far);
@@ -89,6 +90,8 @@ let localRoomReconnecting = false;
 let reconnectFailurePending = false;
 
 const playerControls = makeControls();
+
+finishCinematicSkip?.addEventListener('click', () => requestFinishCinematicSkip());
 
 // ---------------------------------------------------------------------------
 // Screens
@@ -764,14 +767,16 @@ function mountRace(track, session, def) {
   const chase = new ChaseCamera(camera);
   if (chase.setTrack) chase.setTrack(track);
   chase.snapTo(session.player);
+  const finishCamera = new FinishCameraDirector(camera, track);
 
   race = {
-    track, session, world, visuals, effects, chase,
+    track, session, world, visuals, effects, chase, finishCamera,
     online: session.kind === 'online',
     accumulator: 0,
     finalLapAnnounced: false,
     finishedAnnounced: false,
     resultsShown: false,
+    finishSkipped: false,
     lastCountdownBeep: -1,
     sawCountdown: false,
   };
@@ -791,12 +796,39 @@ function mountRace(track, session, def) {
 
 function endRace() {
   if (!race) return;
+  setFinishCinematic(false);
+  race.finishCamera.reset();
+  camera.fov = CAMERA.fov;
+  camera.updateProjectionMatrix();
   race.session.dispose?.();
   audio.stopEngine();
   hud.hide();
   networkStatus.hide();
   disposeSceneDeep(race.world.scene);
   race = null;
+}
+
+function setFinishCinematic(active) {
+  document.body.classList.toggle('finish-cinematic', Boolean(active));
+  if (finishCinematicSkip) {
+    finishCinematicSkip.hidden = true;
+    finishCinematicSkip.disabled = true;
+  }
+}
+
+function updateFinishCinematicUi() {
+  if (!finishCinematicSkip || !race?.finishCamera.active) return;
+  const showSkip = race.finishCamera.canSkip && !race.finishSkipped;
+  finishCinematicSkip.hidden = !showSkip;
+  finishCinematicSkip.disabled = !showSkip;
+}
+
+function requestFinishCinematicSkip() {
+  if (!race?.finishCamera.canSkip || race.finishSkipped) return false;
+  if (!race.finishCamera.skipIntro()) return false;
+  race.finishSkipped = true;
+  updateFinishCinematicUi();
+  return true;
 }
 
 function setPaused(p) {
@@ -870,7 +902,7 @@ function consumeRaceEvents() {
 }
 
 function updateRaceFrame(dt) {
-  const { session, visuals, effects, chase, world } = race;
+  const { session, visuals, effects, chase, finishCamera, world } = race;
   const online = session.kind === 'online';
 
   // --- Simulation at fixed timestep ---------------------------------------
@@ -924,58 +956,86 @@ function updateRaceFrame(dt) {
   for (const kart of session.karts) kart.clearEvents();
 
   effects.update(dt);
-  chase.update(dt, player, playerControls.lookBack);
+
+  // The player's finish is a presentation transition only. Simulation and
+  // online snapshot flow continue normally while the camera director takes over.
+  if (player.finished && !race.finishedAnnounced) {
+    race.finishedAnnounced = true;
+    audio.setFinalLap(false);
+    finishCamera.begin(player);
+    setFinishCinematic(true);
+  }
+  if (finishCamera.active) {
+    if (input.menu.confirm) requestFinishCinematicSkip();
+    finishCamera.update(dt, {
+      player,
+      standings: session.standings,
+      laps: session.laps,
+    });
+  } else {
+    chase.update(dt, player, playerControls.lookBack);
+  }
   world.animate(dt, session.elapsed);
   hud.update(player, session, dt, {
     showStandings: input.standingsHeld,
   });
+  updateFinishCinematicUi();
 
-  // Finish / results flow (the HUD shows its own FINISHED banner).
-  if (player.finished && !race.finishedAnnounced) {
-    race.finishedAnnounced = true;
-    audio.setFinalLap(false);
+  // Authoritative results may arrive before the three-second hero sequence ends.
+  // A deliberate skip completes the intro early; otherwise results wait.
+  if (session.state === RACE_STATE.RESULTS && !race.resultsShown
+      && (!finishCamera.active || finishCamera.introComplete)) {
+    presentRaceResults();
   }
-  if (session.state === RACE_STATE.RESULTS && !race.resultsShown) {
-    race.resultsShown = true;
-    race.resultsShownAt = performance.now() / 1000;
-    hud.hide(); // the results panel owns the screen now
-    networkStatus.showDetails();
-    if (online) {
-      mode = 'online-results';
-      screens.hideAll();
-      const fallback = {
-        raceId: session.raceId,
-        trackName: race.track.name,
-        standings: session.standings.map((kart) => ({
-          kartIndex: kart.index,
-          participantId: kart.participantId,
-          displayName: kart.name,
-          characterId: kart.character.id,
-          rank: kart.rank,
-          finished: kart.finished,
-          finishTime: kart.finishTime,
-          bestLap: kart.bestLap,
-          lapTimes: kart.lapTimes,
-        })),
-      };
-      const error = pendingOnlineError;
-      pendingOnlineError = null;
-      onlineScreens.showResults(onlineResultsState || fallback, {
-        localParticipantId: onlineClient.selfId,
-        isHost: onlineHostId() === onlineClient.selfId,
-        trackName: race.track.name,
-        ...(error ? { error: error.message } : {}),
-      });
-    } else {
-      mode = 'results';
-      screens.showResults(session.standings, player, race.track.name);
-    }
-    resetControls(playerControls);
-    race.accumulator = 0;
-    race.chase.settle?.();
-    audio.stopEngine();
-    audio.setFinalLap(false);
+}
+
+function presentRaceResults() {
+  if (!race || race.resultsShown) return;
+  const { session, finishCamera } = race;
+  const online = session.kind === 'online';
+  const hadFinishCamera = finishCamera.active;
+
+  race.resultsShown = true;
+  race.resultsShownAt = performance.now() / 1000;
+  setFinishCinematic(false);
+  finishCamera.reset();
+  hud.hide(); // the results panel owns the screen now
+  networkStatus.showDetails();
+  if (online) {
+    mode = 'online-results';
+    screens.hideAll();
+    const fallback = {
+      raceId: session.raceId,
+      trackName: race.track.name,
+      standings: session.standings.map((kart) => ({
+        kartIndex: kart.index,
+        participantId: kart.participantId,
+        displayName: kart.name,
+        characterId: kart.character.id,
+        rank: kart.rank,
+        finished: kart.finished,
+        finishTime: kart.finishTime,
+        bestLap: kart.bestLap,
+        lapTimes: kart.lapTimes,
+      })),
+    };
+    const error = pendingOnlineError;
+    pendingOnlineError = null;
+    onlineScreens.showResults(onlineResultsState || fallback, {
+      localParticipantId: onlineClient.selfId,
+      isHost: onlineHostId() === onlineClient.selfId,
+      trackName: race.track.name,
+      ...(error ? { error: error.message } : {}),
+    });
+  } else {
+    mode = 'results';
+    screens.showResults(session.standings, session.player, race.track.name);
   }
+  resetControls(playerControls);
+  race.accumulator = 0;
+  if (!hadFinishCamera) race.chase.settle?.();
+  audio.stopEngine();
+  audio.setFinalLap(false);
 }
 
 function updateResultsFrame(dt) {
