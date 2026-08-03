@@ -53,7 +53,9 @@ export class AudioManager {
     this._bgmElement = null;
     this._bgmNode = null;
     this._bgmPlayPending = false;
+    this._lastBgmFailure = null;
     this._random = options.random || Math.random;
+    this._logger = options.logger || console;
     this._createMediaElement = options.createMediaElement || (() => {
       if (typeof Audio !== 'undefined') return new Audio();
       if (typeof document !== 'undefined' && document.createElement) {
@@ -142,6 +144,9 @@ export class AudioManager {
   resume() {
     const retryBgm = () => {
       this._initBgmMedia(this.ctx);
+      if (this._bgmElement?.error && typeof this._bgmElement.load === 'function') {
+        this._bgmElement.load();
+      }
       if (this._bgmPlayPending || this._bgmElement?.paused) this._tryPlayBgm();
     };
     if (this.ctx && this.ctx.state === 'suspended') {
@@ -159,6 +164,10 @@ export class AudioManager {
       media.loop = true;
       media.preload = 'auto';
       media.playsInline = true;
+      media.addEventListener?.('error', () => {
+        this._bgmPlayPending = true;
+        this._reportBgmFailure(null, `MediaError:${media.error?.code ?? 'unknown'}`);
+      });
       this._bgmElement = media;
       this._applyBgmVolume();
       return media;
@@ -216,6 +225,7 @@ export class AudioManager {
     const sameTrack = this._bgmId === track.id;
     if (!sameTrack) {
       this._bgmId = track.id;
+      this._lastBgmFailure = null;
       media.src = track.url;
       if (typeof media.load === 'function') media.load();
     }
@@ -238,15 +248,32 @@ export class AudioManager {
     let attempt;
     try {
       attempt = media.play();
-    } catch {
+    } catch (error) {
+      this._reportBgmFailure(error);
       return;
     }
     if (attempt && typeof attempt.then === 'function') {
-      attempt.then(() => { this._bgmPlayPending = false; })
-        .catch(() => { this._bgmPlayPending = true; });
+      attempt.then(() => {
+        this._bgmPlayPending = false;
+        this._lastBgmFailure = null;
+      }).catch((error) => {
+        this._bgmPlayPending = true;
+        this._reportBgmFailure(error);
+      });
     } else {
       this._bgmPlayPending = false;
+      this._lastBgmFailure = null;
     }
+  }
+
+  _reportBgmFailure(error, fallback = 'UnknownError') {
+    const reason = error?.name || fallback;
+    // Autoplay rejection is expected before the first trusted user gesture.
+    if (reason === 'NotAllowedError') return;
+    const key = `${this._bgmId || 'unselected'}:${reason}`;
+    if (this._lastBgmFailure === key) return;
+    this._lastBgmFailure = key;
+    this._logger?.warn?.(`[audio] BGM playback pending (${reason})`);
   }
 
   setMuted(m) {

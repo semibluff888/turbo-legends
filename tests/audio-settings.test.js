@@ -139,7 +139,7 @@ test('menu and race BGM preserve position unless a restart is requested', () => 
   const media = attachFakeMedia(audio);
 
   audio.playMenuMusic();
-  assert.match(media.src, /Rainbow%20Drift\.mp3$/);
+  assert.match(media.src, /Rainbow%20Drift\.mp3\?v=/);
   assert.equal(media.currentTime, 0);
   assert.equal(media.loadCalls, 1);
 
@@ -149,7 +149,7 @@ test('menu and race BGM preserve position unless a restart is requested', () => 
   assert.equal(media.loadCalls, 1);
 
   audio.playRaceMusic('harbor-loop', { restart: true });
-  assert.match(media.src, /Rainbow%20Kart%20Parade%20\(0\.90x\)\.mp3$/);
+  assert.match(media.src, /Rainbow%20Kart%20Parade%20\(0\.90x\)\.mp3\?v=/);
   assert.equal(media.currentTime, 0);
 
   media.currentTime = 24;
@@ -174,17 +174,50 @@ test('resume retries a pending or paused BGM without restarting it', () => {
   assert.equal(media.paused, false);
 });
 
+test('resume reloads a failed BGM resource before retrying playback', () => {
+  const audio = new AudioManager();
+  const media = new FakeMedia();
+  media.src = 'test.mp3';
+  media.error = { code: 2 };
+  audio.ctx = { state: 'running' };
+  audio._bgmElement = media;
+  audio._bgmPlayPending = true;
+
+  audio.resume();
+  assert.equal(media.loadCalls, 1);
+  assert.equal(media.playCalls, 1);
+});
+
+test('network playback failures remain pending and produce one diagnostic', async () => {
+  const warnings = [];
+  const audio = new AudioManager({ logger: { warn(message) { warnings.push(message); } } });
+  const media = new FakeMedia();
+  media.src = 'test.mp3';
+  media.play = () => {
+    media.playCalls++;
+    return Promise.reject(Object.assign(new Error('offline'), { name: 'NetworkError' }));
+  };
+  audio.ctx = { state: 'running' };
+  audio._bgmElement = media;
+  audio._bgmPlayPending = true;
+
+  audio.resume();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(audio._bgmPlayPending, true);
+  assert.deepEqual(warnings, ['[audio] BGM playback pending (NetworkError)']);
+});
+
 test('race BGM setting changes switch the active race immediately', () => {
   const audio = new AudioManager();
   attachFakeGraph(audio);
   const media = new FakeMedia();
   audio._bgmElement = media;
   audio.playRaceMusic('summit-raceway', { restart: true });
-  assert.match(media.src, /Rainbow%20Kart%20Dash\.mp3$/);
+  assert.match(media.src, /Rainbow%20Kart%20Dash\.mp3\?v=/);
 
   media.currentTime = 12;
   audio.applySettings({ raceBgm: 'rainbow-lap-rush' });
-  assert.match(media.src, /Rainbow%20Lap%20Rush\.mp3$/);
+  assert.match(media.src, /Rainbow%20Lap%20Rush\.mp3\?v=/);
   assert.equal(media.currentTime, 0);
 });
 
@@ -198,11 +231,11 @@ test('random menu BGM picks once on entry and keeps looping that track', () => {
 
   const media = audio._bgmElement;
   assert.equal(media.loop, true);
-  assert.match(media.src, /Rainbow%20Drift\.mp3$/);
+  assert.match(media.src, /Rainbow%20Drift\.mp3\?v=/);
 
   media.currentTime = 20;
   audio.playMenuMusic();
-  assert.match(media.src, /Rainbow%20Drift\.mp3$/);
+  assert.match(media.src, /Rainbow%20Drift\.mp3\?v=/);
   assert.equal(media.currentTime, 20);
   assert.equal(media.loadCalls, 1);
 });
@@ -218,10 +251,10 @@ test('each fresh race selects one random BGM and loops it', () => {
 
   const media = audio._bgmElement;
   assert.equal(media.loop, true);
-  assert.match(media.src, /Rainbow%20Lap%20Rush\.mp3$/);
+  assert.match(media.src, /Rainbow%20Lap%20Rush\.mp3\?v=/);
 
   audio.playRaceMusic('harbor-loop', { restart: true });
-  assert.match(media.src, /Rainbow%20Kart%20Parade%20\(0\.90x\)\.mp3$/);
+  assert.match(media.src, /Rainbow%20Kart%20Parade%20\(0\.90x\)\.mp3\?v=/);
 });
 
 test('final lap changes BGM playback rate and resets for a fresh race', () => {

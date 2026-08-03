@@ -104,6 +104,10 @@ test('network telemetry shows full details off-track and compact details during 
   assert.match(source, /void networkStatus\.loadVersion\(\)/);
 });
 
+test('network recovery retries pending BGM playback', () => {
+  assert.match(source, /window\.addEventListener\('online', \(\) => audio\.resume\(\)\)/);
+});
+
 test('online screens do not render duplicate connection badges', () => {
   assert.doesNotMatch(onlineScreensSource, /data-online-connection/);
 });

@@ -104,10 +104,31 @@ test('only browser assets are exposed by the static server', async () => {
 
 test('MP3 sound assets are public and served with an audio MIME type', async () => {
   await withServer(async port => {
-    const response = await getResponse(
+    const unversioned = await getResponse(
       port, '/sound/Rainbow%20Kart%20Parade%20(0.90x).mp3');
-    assert.equal(response.statusCode, 200);
-    assert.equal(response.headers['content-type'], 'audio/mpeg');
+    assert.equal(unversioned.statusCode, 200);
+    assert.equal(unversioned.headers['content-type'], 'audio/mpeg');
+    assert.equal(unversioned.headers['cache-control'], 'public, max-age=0, must-revalidate');
+
+    const versioned = await getBufferResponse(
+      port, '/sound/Rainbow%20Kart%20Parade%20(0.90x).mp3?v=test', {
+        method: 'HEAD',
+        headers: { 'Accept-Encoding': 'br, gzip' },
+      });
+    assert.equal(versioned.statusCode, 200);
+    assert.equal(versioned.headers['content-type'], 'audio/mpeg');
+    assert.equal(versioned.headers['cache-control'], 'public, max-age=31536000, immutable');
+    assert.equal(versioned.headers['content-encoding'], undefined);
+    assert.match(versioned.headers.etag, /^W\//);
+
+    const range = await getBufferResponse(
+      port, '/sound/Rainbow%20Kart%20Parade%20(0.90x).mp3?v=test', {
+        headers: { Range: 'bytes=0-31' },
+      });
+    assert.equal(range.statusCode, 206);
+    assert.equal(range.body.length, 32);
+    assert.equal(range.headers['cache-control'], 'public, max-age=31536000, immutable');
+    assert.match(range.headers['content-range'], /^bytes 0-31\//);
   });
 });
 

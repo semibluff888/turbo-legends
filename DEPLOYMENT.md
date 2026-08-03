@@ -104,8 +104,11 @@ Compose 已将容器日志限制为最多 3 个 10 MB 文件，避免长期运�
 - 服务端是单进程、内存状态架构，只应运行一个副本；不能直接做多副本负载均衡。
 - 游戏服务端以 60 Hz 模拟活跃比赛，VPS 容量应按同时活跃的房间数量进行压测后确定。
 - 当前静态资源由 Node.js 直接提供：入口 HTML 使用 `no-cache`，其他未指纹资源使用
-  `public, max-age=0, must-revalidate`，并支持弱 ETag、Last-Modified、304、HEAD、
-  单段 Range、Brotli/gzip 和 16 MiB 压缩结果 LRU。音频等已压缩格式不会二次压缩。
+  `public, max-age=0, must-revalidate`；带 `v` 版本参数的 `/sound/*` 使用一年
+  `immutable` 缓存。所有静态资源支持弱 ETag、Last-Modified、304、HEAD 和单段 Range；
+  文本资源支持 Brotli/gzip 与 16 MiB 压缩结果 LRU，音频等已压缩格式不会二次压缩。
+- 更新任意内置 BGM 文件时，必须同步递增 `src/audio/bgm.js` 中的
+  `BGM_ASSET_VERSION`，使浏览器获取新资源 URL。
 - 后续接入 CDN 或反向代理时，应保留 ETag、Last-Modified、Cache-Control、Vary、
   Accept-Ranges 和 Content-Range；Range 请求必须使用原始表示，不能在代理层再次压缩。
   `/api/metrics` 不得缓存，`/api/stats` 可遵循服务端 5 秒缓存策略。

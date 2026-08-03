@@ -11,6 +11,7 @@
 - [x] 优化连接生命周期、会话索引、房内广播、Lobby 合并与 `server_stats` 合并。
 - [x] 将私房 scrypt 改为异步有界队列，拆分游戏 tick 与维护循环并隔离单房异常。
 - [x] 完成静态资源 ETag、条件请求、HEAD、Range、Brotli/gzip 与压缩 LRU。
+- [x] 为 BGM 增加版本化 URL、版本音频长期缓存、失败诊断及恢复联网重试。
 - [x] 完成客户端 HTTP 统计轮询、WebSocket 懒连接、输入调度、暂停与重连优化。
 - [x] 更新部署文档，运行新增测试、现有全量测试、语法检查与负载烟测。
 - [x] 记录本地隔离烟测基线并完成代码级第一阶段验收。
@@ -182,5 +183,7 @@ STATIC_COMPRESSION_CACHE_BYTES=16777216
 | 2026-08-03 | 本地 A/B：无人接收比赛 | 80 场可恢复比赛、5 秒采样 | CPU 时间 46ms → 16ms（约 -65.2%） |
 | 2026-08-03 | 本地 A/B：快照兼容 | 6 场活动比赛、12 个接收者 | 每客户端 20.20Hz → 20.16Hz，保持约 20Hz |
 | 2026-08-03 | 本地 A/B：静态资源 | 同一 JS 的 Brotli、条件请求和 Range | 首次 17528B → 4247B；复验 200/17528B → 304/0B |
+| 2026-08-03 | BGM 缓存与恢复 | `node --test tests\\bgm.test.js tests\\audio-settings.test.js tests\\server.test.js tests\\main-online-wiring.test.js` | 46 项全部通过；版本音频一年 immutable、Range、联网恢复及失败诊断通过 |
+| 2026-08-03 | BGM 优化全量回归 | `npm test`；`npm run check` | 285 项全部通过；38 个模块全部通过 |
 
 > 注：完整方法、数据和限制见 `MULTIPLAYER_PHASE1_LOCAL_AB_REPORT.md`。上述数据是本机隔离合成场景的代码基线，不替代生产流量基线。生产上线前后对比项保持未勾选，需在真实并发与网络条件下使用 `/api/metrics` 和结构化日志完成。

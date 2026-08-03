@@ -183,7 +183,8 @@ export function createStaticServer(root = ROOT, {
   const compressionCache = new CompressionCache(compressionCacheBytes);
 
   return createServer(async (req, res) => {
-    const pathname = req.url?.split('?')[0];
+    const [pathname = '/', rawQuery = ''] = (req.url || '/').split('?', 2);
+    const assetVersion = new URLSearchParams(rawQuery).get('v');
     if (statsProvider && req.method === 'GET' && pathname === '/api/stats') {
       const body = JSON.stringify(statsProvider());
       res.writeHead(200, {
@@ -275,9 +276,13 @@ export function createStaticServer(root = ROOT, {
       const extension = extname(filePath).toLowerCase();
       const etag = weakEtag(stat);
       const lastModified = stat.mtime.toUTCString();
-      const cacheControl = relative(staticRoot, filePath) === 'index.html'
+      const relativePath = relative(staticRoot, filePath).replaceAll('\\', '/');
+      const versionedSound = pathname.startsWith('/sound/') && Boolean(assetVersion);
+      const cacheControl = relativePath === 'index.html'
         ? 'no-cache'
-        : 'public, max-age=0, must-revalidate';
+        : versionedSound
+          ? 'public, max-age=31536000, immutable'
+          : 'public, max-age=0, must-revalidate';
       const baseHeaders = {
         'Content-Type': MIME[extension] || 'application/octet-stream',
         'Cache-Control': cacheControl,

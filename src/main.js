@@ -1322,6 +1322,7 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   resize(window.innerWidth, window.innerHeight);
 });
+window.addEventListener('online', () => audio.resume());
 resize(window.innerWidth, window.innerHeight);
 
 document.addEventListener('visibilitychange', () => {

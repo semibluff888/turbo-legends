@@ -1,6 +1,15 @@
 export const DEFAULT_MENU_BGM = 'rainbow-drift';
 export const DEFAULT_RACE_BGM = 'default';
 export const RANDOM_BGM = 'random';
+// Increment when any bundled BGM file changes. The versioned URL lets the
+// static server cache audio for a long time without serving stale music.
+export const BGM_ASSET_VERSION = '20260803-1';
+
+function bgmUrl(path) {
+  const url = new URL(path, import.meta.url);
+  url.searchParams.set('v', BGM_ASSET_VERSION);
+  return url.href;
+}
 
 export const MENU_BGM_CHOICES = Object.freeze([
   Object.freeze({ value: RANDOM_BGM, label: 'Random' }),
@@ -20,27 +29,27 @@ const TRACKS = Object.freeze({
   'rainbow-drift': Object.freeze({
     id: 'rainbow-drift',
     label: 'Rainbow Drift',
-    url: new URL('../../sound/Rainbow Drift.mp3', import.meta.url).href,
+    url: bgmUrl('../../sound/Rainbow Drift.mp3'),
   }),
   'neon-kart-groove': Object.freeze({
     id: 'neon-kart-groove',
     label: 'Neon Kart Groove',
-    url: new URL('../../sound/Neon Kart Groove.mp3', import.meta.url).href,
+    url: bgmUrl('../../sound/Neon Kart Groove.mp3'),
   }),
   'rainbow-lap-rush': Object.freeze({
     id: 'rainbow-lap-rush',
     label: 'Rainbow Lap Rush',
-    url: new URL('../../sound/Rainbow Lap Rush.mp3', import.meta.url).href,
+    url: bgmUrl('../../sound/Rainbow Lap Rush.mp3'),
   }),
   'rainbow-kart-parade': Object.freeze({
     id: 'rainbow-kart-parade',
     label: 'Rainbow Kart Parade (0.90x)',
-    url: new URL('../../sound/Rainbow Kart Parade (0.90x).mp3', import.meta.url).href,
+    url: bgmUrl('../../sound/Rainbow Kart Parade (0.90x).mp3'),
   }),
   'rainbow-kart-dash': Object.freeze({
     id: 'rainbow-kart-dash',
     label: 'Rainbow Kart Dash',
-    url: new URL('../../sound/Rainbow Kart Dash.mp3', import.meta.url).href,
+    url: bgmUrl('../../sound/Rainbow Kart Dash.mp3'),
   }),
 });
 

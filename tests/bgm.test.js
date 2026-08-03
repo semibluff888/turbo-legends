@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  BGM_ASSET_VERSION,
   MENU_BGM_CHOICES,
   RACE_BGM_CHOICES,
   resolveMenuBgm,
@@ -26,8 +27,9 @@ test('BGM preferences sanitize invalid values and expose encoded asset URLs', ()
   assert.equal(sanitizeMenuBgm('bad'), 'rainbow-drift');
   assert.equal(sanitizeRaceBgm('bad'), 'default');
   assert.equal(resolveMenuBgm('bad').id, 'rainbow-drift');
-  assert.match(resolveRaceBgm('default', 'harbor-loop').url,
-    /Rainbow%20Kart%20Parade%20\(0\.90x\)\.mp3$/);
+  const url = new URL(resolveRaceBgm('default', 'harbor-loop').url);
+  assert.match(url.pathname, /Rainbow%20Kart%20Parade%20\(0\.90x\)\.mp3$/);
+  assert.equal(url.searchParams.get('v'), BGM_ASSET_VERSION);
 });
 
 test('menu BGM choices include Neon Kart Groove', () => {
@@ -37,7 +39,7 @@ test('menu BGM choices include Neon Kart Groove', () => {
   );
   assert.equal(sanitizeMenuBgm('neon-kart-groove'), 'neon-kart-groove');
   assert.equal(resolveMenuBgm('neon-kart-groove').id, 'neon-kart-groove');
-  assert.match(resolveMenuBgm('neon-kart-groove').url, /Neon%20Kart%20Groove\.mp3$/);
+  assert.match(resolveMenuBgm('neon-kart-groove').url, /Neon%20Kart%20Groove\.mp3\?v=/);
 });
 
 test('menu and race BGM choices expose random playback modes', () => {
