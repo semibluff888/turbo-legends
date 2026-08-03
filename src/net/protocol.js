@@ -7,9 +7,11 @@
 import { isAvatarId, isPaintId } from '../game/appearance.js';
 
 export const PROTOCOL_VERSION = 3;
-export const MAX_CLIENT_MESSAGE_BYTES = 16 * 1024;
+export const MAX_CLIENT_MESSAGE_BYTES = 2 * 1024;
 export const MAX_CLIENT_MESSAGES_PER_SECOND = 120;
 export const MAX_CLIENT_MESSAGE_BURST = 180;
+export const MAX_CLIENT_BYTES_PER_SECOND = 64 * 1024;
+export const MAX_CLIENT_BYTE_BURST = 128 * 1024;
 
 export const CLIENT_MESSAGE_TYPES = Object.freeze({
   ENTER_LOBBY: 'enter_lobby',

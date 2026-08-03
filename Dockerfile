@@ -6,7 +6,15 @@ WORKDIR /app
 
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
-    PORT=5173
+    PORT=5173 \
+    METRICS_TOKEN="" \
+    METRICS_LOG_INTERVAL_MS=60000 \
+    TRUST_PROXY=false \
+    AUTH_SCRYPT_CONCURRENCY=2 \
+    AUTH_SCRYPT_QUEUE_LIMIT=32 \
+    LOBBY_BROADCAST_DEBOUNCE_MS=100 \
+    MAINTENANCE_INTERVAL_MS=500 \
+    STATIC_COMPRESSION_CACHE_BYTES=16777216
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts \

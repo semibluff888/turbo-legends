@@ -199,6 +199,8 @@ export class OnlineRaceSession {
     this._pendingUseItem = false;
     this._pendingUseItemAge = 0;
     this._sendAccumulator = 0;
+    this._pauseKeepaliveAccumulator = 0;
+    this._lastFrameControls = makeControls();
     this._inputHistory = [];
     this._correction = { x: 0, y: 0, z: 0, yaw: 0 };
     this._correctionTime = 0.15;
@@ -294,30 +296,11 @@ export class OnlineRaceSession {
 
   update(dt, controls) {
     copyControls(this._player.controls, controls);
-    if (controls?.useItem && !this._prevUseItem) {
-      this._pendingUseItem = true;
-      this._pendingUseItemAge = 0;
-    } else if (this._pendingUseItem) {
+    if (this._pendingUseItem) {
       this._pendingUseItemAge += Math.max(0, dt);
       if (this._pendingUseItemAge > ITEM_ACTION_FRESHNESS) this._pendingUseItem = false;
     }
-    this._prevUseItem = !!controls?.useItem;
-
-    if (this._hasSnapshot
-      && this._loadAcknowledged
-      && this._transportConnected
-      && !this._player.finished
-      && (this.state === RACE_STATE.COUNTDOWN || this.state === RACE_STATE.RACING)) {
-      this._sendAccumulator += dt;
-      while (this._sendAccumulator >= INPUT_DT) {
-        this._sendAccumulator -= INPUT_DT;
-        if (!this._sendInput(controls)) {
-          // Do not turn a stalled render/network frame into a later input burst.
-          this._sendAccumulator = 0;
-          break;
-        }
-      }
-    }
+    this._sendAccumulator += Math.max(0, dt);
 
     if (this.state === RACE_STATE.RACING
       && this._transportConnected
@@ -332,6 +315,44 @@ export class OnlineRaceSession {
     this._updateRemoteKarts(dt);
   }
 
+  /** Flush at most one current input packet from the browser render frame. */
+  flushInput(controls, { force = false } = {}) {
+    const normalized = cloneControls(controls);
+    const useItemPressed = normalized.useItem && !this._prevUseItem;
+    if (useItemPressed) {
+      this._pendingUseItem = true;
+      this._pendingUseItemAge = 0;
+    }
+    const urgent = useItemPressed
+      || normalized.drift !== this._lastFrameControls.drift
+      || normalized.lookBack !== this._lastFrameControls.lookBack
+      || (normalized.throttle === 0) !== (this._lastFrameControls.throttle === 0)
+      || (normalized.brake === 0) !== (this._lastFrameControls.brake === 0);
+    this._prevUseItem = normalized.useItem;
+    copyControls(this._lastFrameControls, normalized);
+
+    if (!this._canSendInput() || (!force && !urgent && this._sendAccumulator < INPUT_DT)) {
+      return false;
+    }
+    // A long render stall still produces only the newest packet, never catch-up traffic.
+    this._sendAccumulator = 0;
+    return this._sendInput(normalized);
+  }
+
+  /** Send one neutral keepalive every 500ms while the online pause menu is open. */
+  flushPausedInput(dt) {
+    this._sendAccumulator = 0;
+    this._pauseKeepaliveAccumulator += Math.max(0, dt);
+    if (this._pauseKeepaliveAccumulator < 0.5) return false;
+    this._pauseKeepaliveAccumulator = 0;
+    return this.sendNeutralInput();
+  }
+
+  resumeInput(controls) {
+    this._pauseKeepaliveAccumulator = 0;
+    return this.flushInput(controls, { force: true });
+  }
+
   /** Immediately relinquish held controls without advancing prediction. */
   sendNeutralInput() {
     const controls = makeControls();
@@ -339,15 +360,11 @@ export class OnlineRaceSession {
     this._prevUseItem = false;
     this._pendingUseItem = false;
     this._pendingUseItemAge = 0;
-    if (!this._hasSnapshot
-      || !this._loadAcknowledged
-      || !this._transportConnected
-      || (this.state !== RACE_STATE.COUNTDOWN && this.state !== RACE_STATE.RACING)) {
-      return false;
-    }
+    copyControls(this._lastFrameControls, controls);
+    this._pauseKeepaliveAccumulator = 0;
+    if (!this._canSendInput()) return false;
     this._sendAccumulator = 0;
-    this._sendInput(controls);
-    return true;
+    return this._sendInput(controls);
   }
 
   applySnapshot(snapshot) {
@@ -495,6 +512,14 @@ export class OnlineRaceSession {
       if (this._inputHistory.length > MAX_INPUT_HISTORY) this._inputHistory.shift();
     }
     return true;
+  }
+
+  _canSendInput() {
+    return this._hasSnapshot
+      && this._loadAcknowledged
+      && this._transportConnected
+      && !this._player.finished
+      && (this.state === RACE_STATE.COUNTDOWN || this.state === RACE_STATE.RACING);
   }
 
   _applyLocalSnapshot(snapshot, snapshotTick) {
@@ -686,6 +711,7 @@ export class OnlineRaceSession {
     if (connected) {
       this._transportConnected = true;
       this._sendAccumulator = 0;
+      this._pauseKeepaliveAccumulator = 0;
       return;
     }
     if (event?.state === 'idle') return;
@@ -693,6 +719,7 @@ export class OnlineRaceSession {
     this._loadAcknowledged = false;
     this._inputHistory.length = 0;
     this._sendAccumulator = 0;
+    this._pauseKeepaliveAccumulator = 0;
     this._pendingUseItem = false;
     this._pendingUseItemAge = 0;
     this._prevUseItem = false;

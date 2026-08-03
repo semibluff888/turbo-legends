@@ -4,6 +4,9 @@ import assert from 'node:assert/strict';
 import {
   CLIENT_MESSAGE_TYPES,
   ERROR_CODES,
+  MAX_CLIENT_BYTES_PER_SECOND,
+  MAX_CLIENT_BYTE_BURST,
+  MAX_CLIENT_MESSAGE_BYTES,
   PROTOCOL_VERSION,
   ROOM_STATES,
   ROOM_TYPES,
@@ -31,6 +34,9 @@ test('protocol v3 exports Lobby, Room, loading ACK, and matchmaking message name
   assert.equal(ROOM_STATES.WAITING, 'waiting');
   assert.equal(ROOM_TYPES.PUBLIC, 'public');
   assert.equal(ROOM_TYPES.PRIVATE, 'private');
+  assert.equal(MAX_CLIENT_MESSAGE_BYTES, 2 * 1024);
+  assert.equal(MAX_CLIENT_BYTES_PER_SECOND, 64 * 1024);
+  assert.equal(MAX_CLIENT_BYTE_BURST, 128 * 1024);
 });
 
 test('online loadouts validate atomically and can accompany room entry', () => {

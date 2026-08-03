@@ -66,6 +66,8 @@ function makeClient(options = {}) {
     WebSocketImpl: FakeWebSocket,
     location: { protocol: 'http:', host: 'localhost:5173' },
     sessionStorage: new MemoryStorage(),
+    random: () => 0.5,
+    connectTimeoutMs: 0,
     ...options,
   });
 }
@@ -753,6 +755,61 @@ test('disconnect is the operation that closes the Lobby transport', () => {
   assert.equal(client.socket, null);
   assert.equal(client.state, 'idle');
   assert.equal(client.scope, 'none');
+});
+
+test('reconnect delay applies injectable plus or minus twenty percent jitter', () => {
+  const fastest = makeClient({ random: () => 0 });
+  const slowest = makeClient({ random: () => 1 });
+  assert.equal(fastest._nextReconnectDelay(), 200);
+  assert.equal(slowest._nextReconnectDelay(), 300);
+});
+
+test('a connecting WebSocket is closed after the ten second handshake timeout', () => {
+  FakeWebSocket.instances.length = 0;
+  const timers = [];
+  const errors = [];
+  const client = makeClient({
+    connectTimeoutMs: 10_000,
+    setTimeoutImpl(fn, ms) { timers.push({ fn, ms }); return timers.length; },
+    clearTimeoutImpl() {},
+  });
+  client.on('error', error => errors.push(error));
+  client.enterLobby();
+
+  assert.equal(timers[0].ms, 10_000);
+  timers[0].fn();
+  assert.equal(FakeWebSocket.instances[0].readyState, 3);
+  assert.deepEqual(errors, [{
+    code: 'connection_timeout', message: 'Network connection timed out.',
+  }]);
+});
+
+test('hidden Lobby retries every twenty seconds and becoming visible retries immediately', () => {
+  FakeWebSocket.instances.length = 0;
+  const timers = [];
+  const listeners = new Map();
+  const document = {
+    hidden: true,
+    addEventListener(type, listener) { listeners.set(type, listener); },
+    removeEventListener() {},
+  };
+  const client = makeClient({
+    document,
+    setTimeoutImpl(fn, ms) { timers.push({ fn, ms }); return timers.length; },
+    clearTimeoutImpl() {},
+  });
+  client.enterLobby();
+  FakeWebSocket.instances[0].open();
+  FakeWebSocket.instances[0].close(1006, 'network');
+  assert.equal(timers[0].ms, 20_000);
+
+  document.hidden = false;
+  listeners.get('visibilitychange')();
+  assert.equal(FakeWebSocket.instances.length, 2);
+  FakeWebSocket.instances[1].open();
+  assert.deepEqual(FakeWebSocket.instances[1].sent[0], {
+    v: PROTOCOL_VERSION, type: 'enter_lobby',
+  });
 });
 
 test('protocol-v1 and v2 browser credentials are discarded instead of migrated', () => {

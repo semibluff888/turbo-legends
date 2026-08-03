@@ -8,6 +8,8 @@ import {
   MAX_CLIENT_MESSAGE_BURST,
   MAX_CLIENT_MESSAGE_BYTES,
   MAX_CLIENT_MESSAGES_PER_SECOND,
+  MAX_CLIENT_BYTES_PER_SECOND,
+  MAX_CLIENT_BYTE_BURST,
   PROTOCOL_VERSION,
   SERVER_MESSAGE_TYPES,
   parseClientMessage,
@@ -56,8 +58,8 @@ function connectionId() {
   return randomBytes(9).toString('base64url');
 }
 
-function clientAddress(request) {
-  const forwarded = request.headers['x-forwarded-for'];
+export function clientAddress(request, trustProxy = false) {
+  const forwarded = trustProxy ? request.headers['x-forwarded-for'] : null;
   if (typeof forwarded === 'string' && forwarded) return forwarded.split(',')[0].trim();
   return request.socket.remoteAddress ?? 'unknown';
 }
@@ -69,6 +71,11 @@ function normalizeAllowedOrigins(allowedOrigins) {
     return new Set(allowedOrigins.split(',').map((origin) => origin.trim()).filter(Boolean));
   }
   return new Set();
+}
+
+function nonNegativeNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
 }
 
 export function isOriginAllowed(request, allowedOrigins = new Set()) {
@@ -120,9 +127,15 @@ export function attachGameWebSocket(httpServer, {
   authAttemptWindowMs = 60_000,
   messageRatePerSecond = MAX_CLIENT_MESSAGES_PER_SECOND,
   messageBurst = MAX_CLIENT_MESSAGE_BURST,
+  byteRatePerSecond = MAX_CLIENT_BYTES_PER_SECOND,
+  byteBurst = MAX_CLIENT_BYTE_BURST,
+  trustProxy = process.env.TRUST_PROXY === 'true',
   snapshotBackpressureFloorBytes = SNAPSHOT_BACKPRESSURE_FLOOR_BYTES,
   slowClientBytes = SLOW_CLIENT_BACKPRESSURE_BYTES,
   stringify = JSON.stringify,
+  metrics = null,
+  lobbyBroadcastDebounceMs = nonNegativeNumber(process.env.LOBBY_BROADCAST_DEBOUNCE_MS, 100),
+  serverStatsDebounceMs = 250,
 } = {}) {
   if (!httpServer || !roomManager) throw new TypeError('httpServer and roomManager are required.');
 
@@ -134,8 +147,13 @@ export function attachGameWebSocket(httpServer, {
     perMessageDeflate: false,
   });
   const sessions = new Set();
+  const lobbySessions = new Set();
+  const roomSessions = new Map();
   const participantSessions = new Map();
   const authAttempts = new Map();
+  let lobbyBroadcastTimer = null;
+  let pendingLobbyRooms = null;
+  let serverStatsTimer = null;
   let closed = false;
 
   function sendSerialized(session, serialized, messageType, serializedBytes) {
@@ -148,11 +166,19 @@ export function attachGameWebSocket(httpServer, {
       slowClientBytes,
     });
     if (action === 'close') {
+      metrics?.increment('snapshot', 'slowConnectionsClosed');
       session.socket.close(1013, 'Client is too slow');
       return false;
     }
-    if (action === 'skip') return false;
+    if (action === 'skip') {
+      metrics?.increment('snapshot', 'backpressureSkipped');
+      return false;
+    }
     session.socket.send(serialized);
+    metrics?.recordTraffic('outbound', messageType, serializedBytes);
+    if (messageType === SERVER_MESSAGE_TYPES.SNAPSHOT) {
+      metrics?.recordSnapshot({ bytes: serializedBytes, built: false, sent: 1 });
+    }
     return true;
   }
 
@@ -186,22 +212,94 @@ export function attachGameWebSocket(httpServer, {
     });
   }
 
-  function broadcastServerStats() {
-    const message = serverStats();
-    for (const session of sessions) send(session, message);
+  function broadcastShared(message, recipients) {
+    const serialized = stringify(message);
+    const serializedBytes = Buffer.byteLength(serialized);
+    let sent = 0;
+    for (const session of recipients) {
+      if (sendSerialized(session, serialized, message.type, serializedBytes)) sent++;
+    }
+    return { sent, serializedBytes };
+  }
+
+  function flushServerStats() {
+    serverStatsTimer = null;
+    broadcastShared(serverStats(), sessions);
+  }
+
+  function scheduleServerStats() {
+    if (serverStatsTimer || closed) return;
+    serverStatsTimer = setTimeout(flushServerStats, serverStatsDebounceMs);
+    serverStatsTimer.unref?.();
+  }
+
+  function removeFromRoomIndex(session) {
+    const roomCode = session.indexedRoomCode;
+    if (!roomCode) return;
+    const roomSet = roomSessions.get(roomCode);
+    roomSet?.delete(session);
+    if (roomSet?.size === 0) roomSessions.delete(roomCode);
+    session.indexedRoomCode = null;
+  }
+
+  function addToRoomIndex(session, roomCode) {
+    removeFromRoomIndex(session);
+    lobbySessions.delete(session);
+    let roomSet = roomSessions.get(roomCode);
+    if (!roomSet) {
+      roomSet = new Set();
+      roomSessions.set(roomCode, roomSet);
+    }
+    roomSet.add(session);
+    session.indexedRoomCode = roomCode;
+  }
+
+  function sendLobbyState(session, rooms = roomManager.listRooms()) {
+    const message = serverMessage(SERVER_MESSAGE_TYPES.LOBBY_STATE, { rooms });
+    const serialized = stringify(message);
+    const serializedBytes = Buffer.byteLength(serialized);
+    metrics?.increment('lobby', 'builds');
+    const sent = sendSerialized(session, serialized, message.type, serializedBytes);
+    if (sent) {
+      metrics?.increment('lobby', 'recipients');
+      metrics?.increment('lobby', 'bytes', serializedBytes);
+    }
+  }
+
+  function flushLobbyState() {
+    lobbyBroadcastTimer = null;
+    const rooms = pendingLobbyRooms ?? roomManager.listRooms();
+    pendingLobbyRooms = null;
+    const message = serverMessage(SERVER_MESSAGE_TYPES.LOBBY_STATE, { rooms });
+    metrics?.increment('lobby', 'builds');
+    const { sent, serializedBytes } = broadcastShared(message, lobbySessions);
+    metrics?.increment('lobby', 'broadcasts');
+    metrics?.increment('lobby', 'recipients', sent);
+    metrics?.increment('lobby', 'bytes', sent * serializedBytes);
+  }
+
+  function scheduleLobbyState(rooms = null) {
+    pendingLobbyRooms = rooms;
+    if (lobbyBroadcastTimer || closed) return;
+    lobbyBroadcastTimer = setTimeout(flushLobbyState, lobbyBroadcastDebounceMs);
+    lobbyBroadcastTimer.unref?.();
   }
 
   function subscribeLobby(session, { sendState = true } = {}) {
+    removeFromRoomIndex(session);
     session.inLobby = true;
-    if (sendState) send(session, lobbyState());
+    lobbySessions.add(session);
+    if (sendState) sendLobbyState(session);
   }
 
   function bindParticipant(session, result) {
     const previous = participantSessions.get(result.participantId);
     if (previous && previous !== session) previous.socket.close(4001, 'Session resumed elsewhere');
+    lobbySessions.delete(session);
     session.participantId = result.participantId;
     session.roomCode = result.roomCode;
     session.inLobby = false;
+    addToRoomIndex(session, result.roomCode);
     participantSessions.set(result.participantId, session);
     const sessionState = {
       roomCode: result.roomCode,
@@ -223,6 +321,8 @@ export function attachGameWebSocket(httpServer, {
   }
 
   function unbindParticipant(session, disconnect) {
+    lobbySessions.delete(session);
+    removeFromRoomIndex(session);
     const participantId = session.participantId;
     if (!participantId) return;
     if (participantSessions.get(participantId) === session) {
@@ -247,6 +347,19 @@ export function attachGameWebSocket(httpServer, {
     return true;
   }
 
+  function consumeByteBudget(session, bytes) {
+    const now = Date.now();
+    const elapsed = Math.max(0, now - session.byteBudgetUpdatedAt);
+    session.byteBudgetUpdatedAt = now;
+    session.byteTokens = Math.min(
+      byteBurst,
+      session.byteTokens + elapsed * byteRatePerSecond / 1000,
+    );
+    if (session.byteTokens < bytes) return false;
+    session.byteTokens -= bytes;
+    return true;
+  }
+
   function consumeAuthBudget(ip) {
     const now = Date.now();
     const cutoff = now - authAttemptWindowMs;
@@ -265,7 +378,9 @@ export function attachGameWebSocket(httpServer, {
       if (session.participantId) {
         throw new GameError(ERROR_CODES.ALREADY_IN_ROOM, 'Leave the current room first.');
       }
+      metrics?.increment('auth', 'attempts');
       if (!consumeAuthBudget(session.ip)) {
+        metrics?.increment('auth', 'rateLimited');
         throw new GameError(ERROR_CODES.RATE_LIMITED, 'Too many room attempts. Try again shortly.');
       }
     } else if (!session.participantId
@@ -282,36 +397,40 @@ export function attachGameWebSocket(httpServer, {
         subscribeLobby(session);
         break;
       case CLIENT_MESSAGE_TYPES.CREATE_ROOM:
+        lobbySessions.delete(session);
         session.inLobby = false;
         try {
-          bindParticipant(session, roomManager.createRoom(message));
+          bindParticipant(session, await roomManager.createRoom(message));
         } catch (error) {
-          session.inLobby = true;
+          subscribeLobby(session, { sendState: false });
           throw error;
         }
         logger.info?.(`[multiplayer] room created by ${session.ip}`);
         break;
       case CLIENT_MESSAGE_TYPES.JOIN_ROOM:
+        lobbySessions.delete(session);
         session.inLobby = false;
         try {
-          bindParticipant(session, roomManager.joinRoom(message.roomCode, message));
+          bindParticipant(session, await roomManager.joinRoom(message.roomCode, message));
         } catch (error) {
-          session.inLobby = true;
+          subscribeLobby(session, { sendState: false });
           throw error;
         }
         logger.info?.(`[multiplayer] room joined from ${session.ip}`);
         break;
       case CLIENT_MESSAGE_TYPES.QUICK_MATCH:
+        lobbySessions.delete(session);
         session.inLobby = false;
         try {
-          bindParticipant(session, roomManager.quickMatch(message));
+          bindParticipant(session, await roomManager.quickMatch(message));
         } catch (error) {
-          session.inLobby = true;
+          subscribeLobby(session, { sendState: false });
           throw error;
         }
         logger.info?.(`[multiplayer] quick match joined from ${session.ip}`);
         break;
       case CLIENT_MESSAGE_TYPES.RESUME:
+        lobbySessions.delete(session);
         session.inLobby = false;
         try {
           bindParticipant(session, roomManager.resume(
@@ -381,28 +500,23 @@ export function attachGameWebSocket(httpServer, {
     if (message.type === SERVER_MESSAGE_TYPES.SNAPSHOT) {
       const serialized = stringify(message);
       const serializedBytes = Buffer.byteLength(serialized);
-      for (const session of sessions) {
-        if (session.roomCode === roomCode) {
-          sendSerialized(session, serialized, message.type, serializedBytes);
-        }
+      metrics?.recordSnapshot({ bytes: serializedBytes, built: true, sent: 0 });
+      const recipients = roomSessions.get(roomCode);
+      if (!recipients) return;
+      for (const session of recipients) {
+        sendSerialized(session, serialized, message.type, serializedBytes);
       }
       return;
     }
-    for (const session of sessions) {
-      if (session.roomCode === roomCode) send(session, message);
-    }
+    for (const session of roomSessions.get(roomCode) ?? []) send(session, message);
   }
 
-  function onLobbyChanged() {
-    const message = lobbyState();
-    for (const session of sessions) {
-      if (session.inLobby && !session.participantId) send(session, message);
-    }
+  function onLobbyChanged({ rooms } = {}) {
+    scheduleLobbyState(rooms ?? null);
   }
 
   function onRoomDestroyed({ roomCode }) {
-    for (const session of sessions) {
-      if (session.roomCode !== roomCode) continue;
+    for (const session of [...(roomSessions.get(roomCode) ?? [])]) {
       sendError(session, new GameError(ERROR_CODES.ROOM_NOT_FOUND, 'The room expired.'));
       unbindParticipant(session, false);
       subscribeLobby(session);
@@ -446,13 +560,16 @@ export function attachGameWebSocket(httpServer, {
     const session = {
       socket,
       connectionId: connectionId(),
-      ip: clientAddress(request),
+      ip: clientAddress(request, trustProxy),
       participantId: null,
       roomCode: null,
       inLobby: false,
+      indexedRoomCode: null,
       alive: true,
       messageBudgetUpdatedAt: Date.now(),
       messageTokens: messageBurst,
+      byteBudgetUpdatedAt: Date.now(),
+      byteTokens: byteBurst,
     };
     sessions.add(session);
     socket.on('pong', () => { session.alive = true; });
@@ -460,23 +577,26 @@ export function attachGameWebSocket(httpServer, {
     socket.on('close', () => {
       sessions.delete(session);
       unbindParticipant(session, true);
-      broadcastServerStats();
+      scheduleServerStats();
     });
     socket.on('message', (data, isBinary) => {
-      if (isBinary || data.byteLength > MAX_CLIENT_MESSAGE_BYTES) {
+      const messageBytes = data.byteLength;
+      if (isBinary || messageBytes > MAX_CLIENT_MESSAGE_BYTES) {
         socket.close(1009, 'Message too large');
         return;
       }
-      if (!consumeMessageBudget(session)) {
+      if (!consumeMessageBudget(session) || !consumeByteBudget(session, messageBytes)) {
         sendError(session, new GameError(ERROR_CODES.RATE_LIMITED, 'Message rate limit exceeded.'));
         socket.close(1008, 'Rate limit exceeded');
         return;
       }
       const parsed = parseClientMessage(data.toString('utf8'));
       if (!parsed.ok) {
+        metrics?.recordTraffic('inbound', 'invalid', messageBytes);
         sendError(session, new GameError(parsed.error.code, parsed.error.message));
         return;
       }
+      metrics?.recordTraffic('inbound', parsed.value.type, messageBytes);
       Promise.resolve(dispatch(session, parsed.value)).catch((error) => {
         if (!(error instanceof GameError)) logger.error?.('[multiplayer] request failed', error);
         sendError(session, error);
@@ -488,7 +608,7 @@ export function attachGameWebSocket(httpServer, {
       protocolVersion: PROTOCOL_VERSION,
       session: null,
     }));
-    broadcastServerStats();
+    scheduleServerStats();
   }
 
   httpServer.on('upgrade', onUpgrade);
@@ -497,14 +617,9 @@ export function attachGameWebSocket(httpServer, {
   roomManager.on('lobbyChanged', onLobbyChanged);
   roomManager.on('roomDestroyed', onRoomDestroyed);
   roomManager.on('participantKicked', onParticipantKicked);
+  roomManager.setRoomReceiverCountProvider?.((roomCode) => roomSessions.get(roomCode)?.size ?? 0);
 
   const heartbeat = setInterval(() => {
-    const now = Date.now();
-    for (const [ip, attempts] of authAttempts) {
-      const current = attempts.filter((at) => at > now - authAttemptWindowMs);
-      if (current.length) authAttempts.set(ip, current);
-      else authAttempts.delete(ip);
-    }
     for (const session of sessions) {
       if (!session.alive) {
         session.socket.terminate();
@@ -516,23 +631,37 @@ export function attachGameWebSocket(httpServer, {
   }, heartbeatIntervalMs);
   heartbeat.unref?.();
 
+  function maintenance(now = Date.now()) {
+    for (const [ip, attempts] of authAttempts) {
+      const current = attempts.filter((at) => at > now - authAttemptWindowMs);
+      if (current.length) authAttempts.set(ip, current);
+      else authAttempts.delete(ip);
+    }
+  }
+
   async function close({ code = 1012, reason = 'Server restarting' } = {}) {
     if (closed) return;
     closed = true;
     clearInterval(heartbeat);
+    if (lobbyBroadcastTimer) clearTimeout(lobbyBroadcastTimer);
+    if (serverStatsTimer) clearTimeout(serverStatsTimer);
     httpServer.off('upgrade', onUpgrade);
     roomManager.off('message', onManagerMessage);
     roomManager.off('lobbyChanged', onLobbyChanged);
     roomManager.off('roomDestroyed', onRoomDestroyed);
     roomManager.off('participantKicked', onParticipantKicked);
     for (const session of sessions) session.socket.close(code, reason);
+    roomManager.setRoomReceiverCountProvider?.(null);
     await new Promise((resolve) => wss.close(resolve));
   }
 
   return {
     wss,
     sessions,
+    lobbySessions,
+    roomSessions,
     get connectionCount() { return sessions.size; },
+    maintenance,
     close,
   };
 }

@@ -1,7 +1,7 @@
 # Docker 部署说明
 
-本项目由同一个 Node.js 进程提供网页、`/ws` WebSocket 联机服务和
-`/healthz` 健康检查。默认 Docker Compose 配置会将 VPS 的 TCP `8888`
+本项目由同一个 Node.js 进程提供网页、`/ws` WebSocket 联机服务、
+`/api/stats` 公开统计和 `/healthz` 健康检查。默认 Docker Compose 配置会将 VPS 的 TCP `8888`
 端口映射到容器内的 `5173` 端口。
 
 ## 1. VPS 准备
@@ -67,6 +67,15 @@ docker compose ps
 docker compose logs -f --tail=100 turbo-legends
 ```
 
+服务每 60 秒输出一条不含昵称、房间码、IP 或恢复令牌的聚合指标日志。
+如需启用只读指标接口，请为容器设置非空 `METRICS_TOKEN`，然后使用：
+
+```bash
+curl -H "Authorization: Bearer YOUR_TOKEN" http://127.0.0.1:8888/api/metrics
+```
+
+未设置令牌时 `/api/metrics` 返回 404；错误或缺失令牌返回 401。
+
 ## 4. 停止或重启
 
 ```bash
@@ -87,11 +96,19 @@ Compose 已将容器日志限制为最多 3 个 10 MB 文件，避免长期运�
 - 容器反复重启：运行 `docker compose logs --tail=200 turbo-legends` 查看启动错误。
 - 后续使用域名和 HTTPS 时，需要让反向代理同时转发普通 HTTP 请求和 `/ws` 的
   WebSocket Upgrade 请求。浏览器会自动从 `ws://` 切换为 `wss://`。
+- 只有在可信反向代理会覆盖并清洗 `X-Forwarded-For` 时才设置 `TRUST_PROXY=true`；
+  直接暴露 Node 端口时保持默认 `false`。
 
 ## 6. 当前部署边界
 
 - 服务端是单进程、内存状态架构，只应运行一个副本；不能直接做多副本负载均衡。
 - 游戏服务端以 60 Hz 模拟活跃比赛，VPS 容量应按同时活跃的房间数量进行压测后确定。
-- 当前静态资源由 Node.js 直接提供，并统一使用 `Cache-Control: no-cache`。音频文件合计
-  约 21 MB；访问量明显增大后，建议再通过 CDN 或反向代理优化静态资源缓存。
+- 当前静态资源由 Node.js 直接提供：入口 HTML 使用 `no-cache`，其他未指纹资源使用
+  `public, max-age=0, must-revalidate`，并支持弱 ETag、Last-Modified、304、HEAD、
+  单段 Range、Brotli/gzip 和 16 MiB 压缩结果 LRU。音频等已压缩格式不会二次压缩。
+- 后续接入 CDN 或反向代理时，应保留 ETag、Last-Modified、Cache-Control、Vary、
+  Accept-Ranges 和 Content-Range；Range 请求必须使用原始表示，不能在代理层再次压缩。
+  `/api/metrics` 不得缓存，`/api/stats` 可遵循服务端 5 秒缓存策略。
+- `/ws` 必须转发 HTTP/1.1 Upgrade/Connection 头、关闭代理缓冲并设置长于 30 秒恢复窗口的
+  空闲超时；不要将 WebSocket 流量送入静态缓存或 CDN 页面缓存规则。
 - 直接使用公网 HTTP 不加密传输。域名准备好后应启用 HTTPS。

@@ -17,6 +17,8 @@ const SESSION_STORAGE_KEY = 'turbo-legends.online-session.v2';
 const LEGACY_SESSION_STORAGE_KEY = 'turbo-legends.online-session.v1';
 const RECONNECT_DELAYS_MS = [250, 500, 1000, 2000, 4000];
 const RECONNECT_WINDOW_MS = 30_000;
+export const CONNECT_TIMEOUT_MS = 10_000;
+export const HIDDEN_LOBBY_RECONNECT_MS = 20_000;
 export const TELEMETRY_PING_INTERVAL_MS = 5_000;
 export const TELEMETRY_STALE_MS = 15_000;
 export const MAX_RACE_INPUT_BUFFERED_BYTES = 4 * 1024;
@@ -60,6 +62,10 @@ export class OnlineClient {
     setTimeoutImpl = globalThis.setTimeout,
     clearTimeoutImpl = globalThis.clearTimeout,
     now = () => globalThis.performance?.now?.() ?? Date.now(),
+    random = Math.random,
+    document = globalThis.document,
+    connectTimeoutMs = CONNECT_TIMEOUT_MS,
+    hiddenLobbyReconnectMs = HIDDEN_LOBBY_RECONNECT_MS,
   } = {}) {
     this.WebSocketImpl = WebSocketImpl;
     this.url = webSocketUrl(location);
@@ -71,6 +77,10 @@ export class OnlineClient {
     this._setTimeout = setTimeoutImpl.bind(globalThis);
     this._clearTimeout = clearTimeoutImpl.bind(globalThis);
     this._now = now;
+    this._random = random;
+    this.document = document;
+    this.connectTimeoutMs = connectTimeoutMs;
+    this.hiddenLobbyReconnectMs = hiddenLobbyReconnectMs;
 
     this.socket = null;
     this.state = 'idle';
@@ -87,6 +97,7 @@ export class OnlineClient {
     this._connectionFailureReported = false;
     this._pendingMessages = [];
     this._reconnectTimer = null;
+    this._connectTimer = null;
     this._reconnectExpiryTimer = null;
     this._reconnectAttempt = 0;
     this._reconnectDeadline = 0;
@@ -95,6 +106,14 @@ export class OnlineClient {
     this._lastPongAt = null;
     this.latencyMs = null;
     this.onlineCount = null;
+    this._onVisibilityChange = () => {
+      if (this.document?.hidden || this.scope !== 'lobby'
+        || this._reconnectTimer == null || this.socket) return;
+      this._clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+      this._open({ type: CLIENT_MESSAGE_TYPES.ENTER_LOBBY }, true);
+    };
+    this.document?.addEventListener?.('visibilitychange', this._onVisibilityChange);
 
     // Participant IDs and resume tokens are deliberately memory-only. Remove
     // credentials left by older builds without ever replaying or migrating them.
@@ -310,6 +329,7 @@ export class OnlineClient {
   dispose() {
     this.stopTelemetry();
     this.disconnect({ clearSession: false });
+    this.document?.removeEventListener?.('visibilitychange', this._onVisibilityChange);
     this._listeners.clear();
   }
 
@@ -340,8 +360,10 @@ export class OnlineClient {
 
     const socket = new this.WebSocketImpl(this.url);
     this.socket = socket;
+    this._armConnectTimeout(socket);
     socket.addEventListener('open', () => {
       if (socket !== this.socket) return;
+      this._clearConnectTimeout();
       this.state = reconnecting ? 'reconnecting' : 'connected';
       socket.send(JSON.stringify({ v: PROTOCOL_VERSION, ...initialMessage }));
       for (const message of this._pendingMessages.splice(0)) {
@@ -363,6 +385,7 @@ export class OnlineClient {
     });
     socket.addEventListener('close', (event) => {
       if (socket !== this.socket) return;
+      this._clearConnectTimeout();
       this.socket = null;
       this._handleClose(event);
     });
@@ -534,7 +557,9 @@ export class OnlineClient {
   }
 
   _scheduleLobbyReconnect() {
-    const delay = this._nextReconnectDelay();
+    const delay = this.document?.hidden
+      ? this.hiddenLobbyReconnectMs
+      : this._nextReconnectDelay();
     this._reconnectTimer = this._setTimeout(() => {
       this._reconnectTimer = null;
       if (this.scope === 'lobby') {
@@ -544,11 +569,12 @@ export class OnlineClient {
   }
 
   _nextReconnectDelay() {
-    const delay = RECONNECT_DELAYS_MS[
+    const baseDelay = RECONNECT_DELAYS_MS[
       Math.min(this._reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)
     ];
     this._reconnectAttempt++;
-    return delay;
+    const random = Math.max(0, Math.min(1, Number(this._random?.()) || 0));
+    return Math.round(baseDelay * (0.8 + random * 0.4));
   }
 
   _cancelReconnect({ resetAttempts = true } = {}) {
@@ -662,9 +688,29 @@ export class OnlineClient {
   }
 
   _closeCurrentSocket(reason) {
+    this._clearConnectTimeout();
     const socket = this.socket;
     this.socket = null;
     if (socket && socket.readyState < 2) socket.close(1000, reason);
+  }
+
+  _armConnectTimeout(socket) {
+    this._clearConnectTimeout();
+    if (!(this.connectTimeoutMs > 0)) return;
+    this._connectTimer = this._setTimeout(() => {
+      this._connectTimer = null;
+      if (socket !== this.socket || socket.readyState !== 0) return;
+      this._reportConnectionFailure({
+        code: 'connection_timeout',
+        message: 'Network connection timed out.',
+      });
+      socket.close(4000, 'Connection timeout');
+    }, this.connectTimeoutMs);
+  }
+
+  _clearConnectTimeout() {
+    if (this._connectTimer != null) this._clearTimeout(this._connectTimer);
+    this._connectTimer = null;
   }
 
   _resumeMessage() {

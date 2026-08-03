@@ -85,14 +85,15 @@ test('kicked players return to the Lobby and receive an information alert', () =
   assert.match(source, /onKickPlayer\(\{ participantId \}\)[\s\S]*onlineClient\.kickPlayer\(participantId\)/);
 });
 
-test('title telemetry keeps the Lobby transport alive without navigating on background updates', () => {
+test('title and single-player use HTTP stats without keeping a Lobby WebSocket alive', () => {
   assert.match(source, /onBackToTitle\(\) \{\s*clearOnlineRoomUrl\(\);\s*goToTitle\(\);\s*\}/);
-  assert.doesNotMatch(source, /onBackToTitle\(\)[\s\S]{0,120}onlineClient\.disconnect\(\)/);
   assert.match(
     source,
     /onlineClient\.on\('lobby_state',[\s\S]*onlineLobbyState = message \|\| \{ rooms: \[\] \};[\s\S]*if \(mode === 'online-lobby'\) showOnlineLobby\(onlineLobbyState\);/,
   );
-  assert.match(source, /function goToTitle\(\)[\s\S]*networkStatus\.showDetails\(\);[\s\S]*if \(onlineClient\.scope === 'none'\) onlineClient\.enterLobby\(\);/);
+  assert.match(source, /function goToTitle\(\)[\s\S]*onlineClient\.disconnect\(\);[\s\S]*publicStatsPoller\.start\(\);/);
+  assert.match(source, /function openOnlineLobby[\s\S]*publicStatsPoller\.stop\(\);[\s\S]*onlineClient\.startTelemetry\(\)/);
+  assert.doesNotMatch(source, /function goToTitle\(\)[\s\S]*onlineClient\.enterLobby\(\)/);
 });
 
 test('network telemetry shows full details off-track and compact details during races', () => {
@@ -171,6 +172,7 @@ test('main keeps paused online panels alive and neutralizes hidden-page controls
     source,
     /visibilitychange[\s\S]*race\?\.session\.kind === 'online'[\s\S]*race\.session\.sendNeutralInput\?\.\(\)/,
   );
+  assert.match(source, /if \(paused\) session\.flushPausedInput\?\.\(dt\);\s*else session\.flushInput\?\.\(playerControls\);/);
 });
 
 test('settings and help return to online screens while their live state keeps updating', () => {

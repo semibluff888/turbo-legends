@@ -9,6 +9,7 @@ import { CHARACTERS } from './game/characters.js';
 import { LocalRaceSession } from './session/local-race-session.js';
 import { OnlineClient } from './net/online-client.js';
 import { OnlineRaceSession } from './net/online-race-session.js';
+import { PublicServerStatsPoller } from './net/public-server-stats.js';
 import { prewarmRaceRenderer } from './net/online-race-loader.js';
 import { ERROR_CODES } from './net/protocol.js';
 import {
@@ -63,6 +64,13 @@ audio.applySettings(gameSettings);
 const hud = new Hud(document.getElementById('hud'), document.getElementById('minimap'));
 const networkStatus = new NetworkStatus(document.getElementById('network-status-overlay'));
 const onlineClient = new OnlineClient();
+const publicStatsPoller = new PublicServerStatsPoller({
+  onUpdate({ available, latencyMs, onlineCount, version }) {
+    networkStatus.setConnectionState(available ? 'connected' : 'disconnected');
+    networkStatus.setMetrics({ latencyMs, onlineCount });
+    if (version) networkStatus.setVersion(version);
+  },
+});
 
 /** Player selections, persisted across races in this session. */
 const selection = {
@@ -268,7 +276,6 @@ const onlineScreens = new OnlineScreens({
 });
 
 wireOnlineClient();
-onlineClient.startTelemetry();
 void networkStatus.loadVersion();
 
 function ensureOnlineDisplayName() {
@@ -304,6 +311,8 @@ function clearOnlineRoomUrl() {
 }
 
 function openOnlineLobby({ tryResume = true } = {}) {
+  publicStatsPoller.stop();
+  onlineClient.startTelemetry();
   const inviteRequest = invitationRoomRequest(window.location.search);
   const invalidInviteError = inviteRequest.present && !inviteRequest.valid
     ? { code: ERROR_CODES.ROOM_CODE_INVALID }
@@ -637,7 +646,9 @@ function goToTitle() {
   audio.setGameplaySfxPaused(true);
   audio.playMenuMusic();
   buildAttract();
-  if (onlineClient.scope === 'none') onlineClient.enterLobby();
+  onlineClient.stopTelemetry();
+  onlineClient.disconnect();
+  publicStatsPoller.start();
 }
 
 function ensureAudio() {
@@ -951,6 +962,9 @@ function setPaused(p) {
   if (p && race.session.kind === 'online') {
     resetControls(playerControls);
     race.session.sendNeutralInput?.();
+  } else if (!p && race.session.kind === 'online') {
+    input.readControls(playerControls);
+    race.session.resumeInput?.(playerControls);
   }
   audio.setGameplaySfxPaused(p);
   if (p) {
@@ -1027,6 +1041,10 @@ function updateRaceFrame(dt) {
     while (race.accumulator >= FIXED_DT) {
       session.update(FIXED_DT, playerControls);
       race.accumulator -= FIXED_DT;
+    }
+    if (online) {
+      if (paused) session.flushPausedInput?.(dt);
+      else session.flushInput?.(playerControls);
     }
   }
 

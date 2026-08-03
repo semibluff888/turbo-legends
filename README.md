@@ -34,7 +34,8 @@ HOST=0.0.0.0 npm start
 ```
 
 The process also exposes `GET /healthz` with uptime, room, race, and connection
-counts.
+counts. `GET /api/stats` is the public, short-cached aggregate used by title and
+single-player screens, so those flows do not keep a WebSocket open.
 
 ## Run with Docker
 
@@ -143,13 +144,21 @@ the server race continues while the client sends neutral controls.
 | `HOST` | `127.0.0.1` | HTTP/WebSocket listen address |
 | `PORT` | `5173` | HTTP/WebSocket listen port |
 | `ALLOWED_ORIGINS` | empty | Comma-separated extra WebSocket origins; same-origin is always accepted |
+| `METRICS_TOKEN` | empty | Enables bearer-protected `GET /api/metrics`; empty keeps the route disabled |
+| `METRICS_LOG_INTERVAL_MS` | `60000` | Structured aggregate metrics log interval |
+| `TRUST_PROXY` | `false` | Trust the first proxy-sanitized `X-Forwarded-For` address |
+| `AUTH_SCRYPT_CONCURRENCY` | `2` | Maximum concurrent private-room scrypt jobs |
+| `AUTH_SCRYPT_QUEUE_LIMIT` | `32` | Maximum waiting private-room scrypt jobs |
+| `LOBBY_BROADCAST_DEBOUNCE_MS` | `100` | Lobby summary coalescing window |
+| `MAINTENANCE_INTERVAL_MS` | `500` | Room expiry/loading/results maintenance interval |
+| `STATIC_COMPRESSION_CACHE_BYTES` | `16777216` | Brotli/gzip in-memory LRU limit |
 
 The multiplayer endpoint is `/ws` and automatically uses `wss://` when the
 page is served over HTTPS. For public deployment, terminate TLS in the hosting
 platform or reverse proxy and ensure WebSocket Upgrade requests for `/ws` are
 forwarded to this process.
 
-Protocol v2 is JSON. The shared message names, validators, limits, room states,
+Protocol v3 is JSON. The shared message names, validators, limits, room states,
 and error codes are defined in `src/net/protocol.js`.
 
 ## Development
@@ -157,6 +166,7 @@ and error codes are defined in `src/net/protocol.js`.
 ```bash
 npm test         # Node test discovery: simulation, protocol, server, and UI contracts
 npm run check    # import every browser module under Node (syntax/contract check)
+npm run smoke:multiplayer # isolated Lobby/race/reconnect/private-auth load smoke
 ```
 
 The authoritative simulation (`src/core`, `src/track`, `src/game`) is pure

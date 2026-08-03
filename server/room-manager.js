@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 
 import { CHARACTERS } from '../src/game/characters.js';
@@ -26,6 +26,7 @@ import {
   validateRoomType,
 } from '../src/net/protocol.js';
 import { GameError } from './game-error.js';
+import { defaultScryptQueue, ScryptQueueFullError } from './scrypt-queue.js';
 
 const ROOM_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const POST_RACE_STATES = Object.freeze({
@@ -85,7 +86,8 @@ function serializeSimulation(room) {
   const simulation = room.race.simulation;
   const supplied = simulation.getSnapshot?.() ?? simulation.serializeSnapshot?.();
   const source = supplied && typeof supplied === 'object' ? supplied : simulation;
-  const rosterByIndex = new Map(room.race.roster.map((entry) => [entry.kartIndex, entry]));
+  const rosterByIndex = room.race.rosterByKartIndex
+    ?? new Map(room.race.roster.map((entry) => [entry.kartIndex, entry]));
   const membersById = room.members;
   const sourceKarts = Array.isArray(source.karts) ? source.karts : simulation.karts;
   const karts = Array.isArray(sourceKarts)
@@ -186,6 +188,9 @@ export class RoomManager extends EventEmitter {
     roomCodeFactory = null,
     random = Math.random,
     passwordSaltFactory = () => randomBytes(16),
+    scryptQueue = defaultScryptQueue,
+    metrics = null,
+    roomReceiverCountProvider = null,
   } = {}) {
     super();
     this.now = now;
@@ -212,10 +217,16 @@ export class RoomManager extends EventEmitter {
     this.roomCodeFactory = roomCodeFactory;
     this.random = random;
     this.passwordSaltFactory = passwordSaltFactory;
+    this.scryptQueue = scryptQueue;
+    this.metrics = metrics;
+    this.roomReceiverCountProvider = roomReceiverCountProvider;
     this._passwordVerifiers = new WeakMap();
     this.rooms = new Map();
+    this.activeRaceRooms = new Set();
     this.participantRooms = new Map();
     this._joinOrder = 0;
+    this._lobbySignature = '[]';
+    this._roomErrorLastAt = new WeakMap();
   }
 
   get roomCount() { return this.rooms.size; }
@@ -255,7 +266,7 @@ export class RoomManager extends EventEmitter {
     return rooms;
   }
 
-  createRoom(options = {}) {
+  async createRoom(options = {}) {
     const displayName = requireValid(validateDisplayName(options.displayName));
     const characterId = options.characterId;
     const paintId = options.paintId;
@@ -274,12 +285,11 @@ export class RoomManager extends EventEmitter {
     const password = requireValid(validateRoomPassword(options.password, {
       required: roomType === ROOM_TYPES.PRIVATE,
     }));
-    const passwordVerifier = roomType === ROOM_TYPES.PRIVATE
-      ? (() => {
-        const salt = this.passwordSaltFactory();
-        return { salt, hash: scryptSync(password, salt, PASSWORD_HASH_BYTES) };
-      })()
-      : null;
+    let passwordVerifier = null;
+    if (roomType === ROOM_TYPES.PRIVATE) {
+      const salt = this.passwordSaltFactory();
+      passwordVerifier = { salt, hash: await this._runScrypt(password, salt) };
+    }
     const now = this.now();
     const roomCode = this._allocateRoomCode();
     const defaultTrack = this.tracks.values().next().value;
@@ -315,7 +325,7 @@ export class RoomManager extends EventEmitter {
     return { ...session, roomCode, roomState: this.getRoomState(roomCode) };
   }
 
-  joinRoom(roomCode, {
+  async joinRoom(roomCode, {
     displayName, characterId, paintId, avatarId, password,
   } = {}) {
     const room = this._requireRoom(roomCode);
@@ -325,7 +335,16 @@ export class RoomManager extends EventEmitter {
     if (occupiedMembers(room).length >= room.maxPlayers) {
       throw new GameError(ERROR_CODES.ROOM_FULL, 'This room is full.');
     }
-    this._verifyPassword(room, password);
+    await this._verifyPassword(room, password);
+    if (this.rooms.get(room.code) !== room) {
+      throw new GameError(ERROR_CODES.ROOM_NOT_FOUND, 'Room not found.');
+    }
+    if (room.state !== ROOM_STATES.WAITING) {
+      throw new GameError(ERROR_CODES.ROOM_LOCKED, 'This race has already started.');
+    }
+    if (occupiedMembers(room).length >= room.maxPlayers) {
+      throw new GameError(ERROR_CODES.ROOM_FULL, 'This room is full.');
+    }
     const session = this._addParticipant(room, {
       displayName, characterId, paintId, avatarId,
     }, this.now());
@@ -334,7 +353,7 @@ export class RoomManager extends EventEmitter {
     return { ...session, roomCode: room.code, roomState: this.getRoomState(room.code) };
   }
 
-  quickMatch({ displayName, characterId, paintId, avatarId } = {}) {
+  async quickMatch({ displayName, characterId, paintId, avatarId } = {}) {
     displayName = requireValid(validateDisplayName(displayName));
     const candidates = [...this.rooms.values()].filter((room) => {
       if (room.roomType !== ROOM_TYPES.PUBLIC
@@ -353,7 +372,7 @@ export class RoomManager extends EventEmitter {
       candidates.length - 1,
       Math.max(0, Math.floor(this.random() * candidates.length)),
     );
-    return this.joinRoom(candidates[index].code, {
+    return await this.joinRoom(candidates[index].code, {
       displayName, characterId, paintId, avatarId,
     });
   }
@@ -567,6 +586,15 @@ export class RoomManager extends EventEmitter {
       raceId,
       seed,
       roster,
+      rosterByKartIndex: new Map(roster.map((entry) => [entry.kartIndex, entry])),
+      rosterByParticipantId: new Map(roster.map((entry) => [entry.participantId, entry])),
+      ackRoster: roster.slice().sort((a, b) => a.kartIndex - b.kartIndex),
+      firstInputs: new Array(roster.length).fill(null),
+      secondInputs: new Array(roster.length).fill(null),
+      inputPairs: Array.from({ length: roster.length }, () => ([
+        { ...DEFAULT_ZERO_INPUT, useItem: false },
+        { ...DEFAULT_ZERO_INPUT, useItem: false },
+      ])),
       trackId: track.id,
       difficulty: room.settings.difficulty,
       laps: track.laps ?? 3,
@@ -751,37 +779,56 @@ export class RoomManager extends EventEmitter {
     return messages;
   }
 
-  async tick(now = this.now()) {
-    const launches = [];
-    for (const room of this.rooms.values()) {
-      if (room.emptySince !== null && now - room.emptySince >= this.emptyRoomTtlMs) {
-        this._destroyRoom(room);
+  tick(now = this.now()) {
+    let catchUpSteps = 0;
+    let catchUpCapped = 0;
+    let roomErrors = 0;
+    for (const room of [...this.activeRaceRooms]) {
+      if (!this.rooms.has(room.code) || !room.race?.simulation
+        || ![ROOM_STATES.COUNTDOWN, ROOM_STATES.RACING].includes(room.state)) {
+        this.activeRaceRooms.delete(room);
         continue;
       }
-      if (room.state === ROOM_STATES.WAITING) {
-        this._expireWaitingMembers(room, now);
-        continue;
-      }
-      this._expireRaceSessions(room, now);
-      if (room.state === ROOM_STATES.LOADING) {
-        if (now >= room.race.loadingDeadline) launches.push(this._beginRace(room, now));
-        continue;
-      }
-      if ([ROOM_STATES.COUNTDOWN, ROOM_STATES.RACING].includes(room.state)) {
-        this._advanceRace(room, now);
-        continue;
-      }
-      if (room.state === ROOM_STATES.RESULTS
-        && now - room.race.resultsAt >= this.resultsTimeoutMs) {
-        this._returnRoom(room);
+      try {
+        const advanced = this._advanceRace(room, now);
+        catchUpSteps += advanced.steps;
+        if (advanced.capped) catchUpCapped++;
+      } catch (error) {
+        roomErrors++;
+        this._isolateRoomError(room, error, now);
       }
     }
-    if (launches.length) {
-      const results = await Promise.allSettled(launches);
-      for (const result of results) {
-        if (result.status === 'rejected') this.emit('managerError', result.reason);
+    return { catchUpSteps, catchUpCapped, roomErrors };
+  }
+
+  maintenance(now = this.now()) {
+    for (const room of [...this.rooms.values()]) {
+      try {
+        if (room.emptySince !== null && now - room.emptySince >= this.emptyRoomTtlMs) {
+          this._destroyRoom(room);
+          continue;
+        }
+        if (room.state === ROOM_STATES.WAITING) {
+          this._expireWaitingMembers(room, now);
+          continue;
+        }
+        this._expireRaceSessions(room, now);
+        if (room.state === ROOM_STATES.LOADING) {
+          if (now >= room.race.loadingDeadline) this._beginRace(room, now);
+          continue;
+        }
+        if (room.state === ROOM_STATES.RESULTS
+          && now - room.race.resultsAt >= this.resultsTimeoutMs) {
+          this._returnRoom(room);
+        }
+      } catch (error) {
+        this._isolateRoomError(room, error, now);
       }
     }
+  }
+
+  setRoomReceiverCountProvider(provider) {
+    this.roomReceiverCountProvider = typeof provider === 'function' ? provider : null;
   }
 
   close() {
@@ -925,6 +972,7 @@ export class RoomManager extends EventEmitter {
       room.state = simulation.state === ROOM_STATES.RACING
         ? ROOM_STATES.RACING
         : ROOM_STATES.COUNTDOWN;
+      this.activeRaceRooms.add(room);
       for (const member of room.members.values()) {
         const kind = member.connected && member.raceLoaded && !member.abandoned
           ? CONTROLLER_KINDS.HUMAN
@@ -936,6 +984,7 @@ export class RoomManager extends EventEmitter {
       this._broadcastRoomState(room);
     })().catch((error) => {
       if (room.state === ROOM_STATES.LOADING && room.race === race) {
+        this.activeRaceRooms.delete(room);
         this._finalizeRaceMembers(room, { resetReady: true });
         room.state = ROOM_STATES.WAITING;
         room.race = null;
@@ -963,15 +1012,18 @@ export class RoomManager extends EventEmitter {
       steps++;
       if (room.state === ROOM_STATES.RESULTS) break;
     }
+    const capped = steps === this.maxCatchUpTicks && race.accumulatorMs >= this.networkStepMs;
     if (steps === this.maxCatchUpTicks) {
       race.accumulatorMs = Math.min(race.accumulatorMs, this.networkStepMs);
     }
+    return { steps, capped };
   }
 
   _networkTick(room, now) {
     const race = room.race;
-    const firstInputs = new Array(race.roster.length).fill(null);
-    const secondInputs = new Array(race.roster.length).fill(null);
+    const { firstInputs, secondInputs, inputPairs } = race;
+    firstInputs.fill(null);
+    secondInputs.fill(null);
     for (const member of room.members.values()) {
       if (member.kartIndex === null) continue;
       const timedOut = now - member.lastInputAt > this.inputTimeoutMs;
@@ -984,8 +1036,11 @@ export class RoomManager extends EventEmitter {
       this._setController(room, member, human ? CONTROLLER_KINDS.HUMAN : CONTROLLER_KINDS.TAKEOVER_AI);
       if (!human) continue;
       const useItem = member.pendingUseItems > 0;
-      firstInputs[member.kartIndex] = { ...member.lastInput, useItem };
-      secondInputs[member.kartIndex] = { ...member.lastInput, useItem: false };
+      const [firstInput, secondInput] = inputPairs[member.kartIndex];
+      Object.assign(firstInput, member.lastInput, { useItem });
+      Object.assign(secondInput, member.lastInput, { useItem: false });
+      firstInputs[member.kartIndex] = firstInput;
+      secondInputs[member.kartIndex] = secondInput;
       if (useItem) member.pendingUseItems--;
       member.lastAppliedSeq = member.lastInputSeq;
     }
@@ -1030,14 +1085,18 @@ export class RoomManager extends EventEmitter {
   }
 
   _broadcastSnapshots(room) {
+    if (this.roomReceiverCountProvider
+      && this.roomReceiverCountProvider(room.code) <= 0) {
+      this.metrics?.increment('snapshot', 'noReceiversSkipped');
+      return false;
+    }
     this._emitToRoom(room, this._snapshotFor(room));
+    return true;
   }
 
   _snapshotFor(room) {
     const snapshot = serializeSimulation(room);
-    const acks = room.race.roster
-      .slice()
-      .sort((a, b) => a.kartIndex - b.kartIndex)
+    const acks = room.race.ackRoster
       .map((entry) => {
         const member = room.members.get(entry.participantId);
         return [
@@ -1065,6 +1124,7 @@ export class RoomManager extends EventEmitter {
 
   _finishRace(room, now) {
     if (room.state === ROOM_STATES.RESULTS) return;
+    this.activeRaceRooms.delete(room);
     room.state = ROOM_STATES.RESULTS;
     room.race.resultsAt = now;
     room.race.results = defaultRaceResults(room);
@@ -1081,6 +1141,7 @@ export class RoomManager extends EventEmitter {
   }
 
   _returnRoom(room) {
+    this.activeRaceRooms.delete(room);
     room.race?.simulation?.dispose?.();
     room.lastRaceId = room.race?.raceId ?? room.lastRaceId;
     this._finalizeRaceMembers(room);
@@ -1124,7 +1185,8 @@ export class RoomManager extends EventEmitter {
   }
 
   _setController(room, member, kind, force = false) {
-    const rosterEntry = room.race?.roster.find((entry) => entry.participantId === member.participantId);
+    const rosterEntry = room.race?.rosterByParticipantId?.get(member.participantId)
+      ?? room.race?.roster.find((entry) => entry.participantId === member.participantId);
     if (!force && member.controllerKind === kind && rosterEntry?.controllerKind === kind) return;
     if (kind === CONTROLLER_KINDS.TAKEOVER_AI
       && (force || member.controllerKind !== CONTROLLER_KINDS.TAKEOVER_AI)) {
@@ -1184,11 +1246,12 @@ export class RoomManager extends EventEmitter {
   }
 
   _destroyRoom(room) {
+    this.activeRaceRooms.delete(room);
     room.race?.simulation?.dispose?.();
     for (const participantId of room.members.keys()) this.participantRooms.delete(participantId);
     this.rooms.delete(room.code);
     this.emit('roomDestroyed', { roomCode: room.code });
-    this.emit('lobbyChanged');
+    this._emitLobbyChangedIfNeeded();
   }
 
   _requireRoom(roomCode, code = ERROR_CODES.ROOM_NOT_FOUND) {
@@ -1238,7 +1301,7 @@ export class RoomManager extends EventEmitter {
     throw new GameError(ERROR_CODES.SERVER_BUSY, 'Could not allocate a room code.');
   }
 
-  _verifyPassword(room, password) {
+  async _verifyPassword(room, password) {
     if (room.roomType !== ROOM_TYPES.PRIVATE) return;
     if (password === undefined || password === null || password === '') {
       throw new GameError(ERROR_CODES.PASSWORD_REQUIRED, 'A password is required for this room.');
@@ -1251,7 +1314,7 @@ export class RoomManager extends EventEmitter {
     if (!verifier) {
       throw new GameError(ERROR_CODES.INTERNAL_ERROR, 'Room password verifier is unavailable.');
     }
-    const candidate = scryptSync(validated.value, verifier.salt, PASSWORD_HASH_BYTES);
+    const candidate = await this._runScrypt(validated.value, verifier.salt);
     if (!timingSafeEqual(candidate, verifier.hash)) {
       throw new GameError(ERROR_CODES.PASSWORD_INVALID, 'The room password is incorrect.');
     }
@@ -1260,7 +1323,53 @@ export class RoomManager extends EventEmitter {
   _broadcastRoomState(room) {
     if (!this.rooms.has(room.code)) return;
     this._emitToRoom(room, this.getRoomState(room.code));
-    this.emit('lobbyChanged');
+    this._emitLobbyChangedIfNeeded();
+  }
+
+  async _runScrypt(password, salt) {
+    const startedAt = performance.now();
+    try {
+      const result = await this.scryptQueue.run(password, salt, PASSWORD_HASH_BYTES);
+      this.metrics?.recordScrypt(performance.now() - startedAt);
+      return result;
+    } catch (error) {
+      if (error instanceof ScryptQueueFullError) {
+        this.metrics?.increment('auth', 'queueRejected');
+        throw new GameError(ERROR_CODES.SERVER_BUSY, 'The server is busy. Try again shortly.');
+      }
+      throw error;
+    }
+  }
+
+  _emitLobbyChangedIfNeeded() {
+    const rooms = this.listRooms();
+    const signature = JSON.stringify(rooms);
+    if (signature === this._lobbySignature) return false;
+    this._lobbySignature = signature;
+    this.emit('lobbyChanged', { rooms });
+    return true;
+  }
+
+  _isolateRoomError(room, error, now = this.now()) {
+    this.metrics?.increment('tick', 'roomErrors');
+    this.activeRaceRooms.delete(room);
+    if (room.race) {
+      room.race.simulation?.dispose?.();
+      this._finalizeRaceMembers(room, { resetReady: true, now });
+      room.lastRaceId = room.race.raceId;
+      room.race = null;
+      room.state = ROOM_STATES.WAITING;
+      this._emitToRoom(room, serverMessage(SERVER_MESSAGE_TYPES.ERROR, {
+        code: ERROR_CODES.INTERNAL_ERROR,
+        message: 'This race was cancelled after an authoritative simulation error.',
+      }));
+      this._broadcastRoomState(room);
+    }
+    const lastAt = this._roomErrorLastAt.get(room) ?? -Infinity;
+    if (now - lastAt >= 5_000) {
+      this._roomErrorLastAt.set(room, now);
+      this.emit('managerError', error);
+    }
   }
 
   _emitToRoom(room, message) {

@@ -84,22 +84,22 @@ function createHarness(options = {}) {
   };
 }
 
-function addTwoPlayers(harness) {
-  const host = harness.manager.createRoom({
+async function addTwoPlayers(harness) {
+  const host = await harness.manager.createRoom({
     displayName: 'Host',
     characterId: 'pip',
     roomName: 'Host Raceway',
     roomType: ROOM_TYPES.PUBLIC,
     maxPlayers: 8,
   });
-  const guest = harness.manager.joinRoom(host.roomCode, {
+  const guest = await harness.manager.joinRoom(host.roomCode, {
     displayName: 'Guest', characterId: 'nova',
   });
   return { host, guest };
 }
 
 async function startTwoPlayerRace(harness) {
-  const players = addTwoPlayers(harness);
+  const players = await addTwoPlayers(harness);
   harness.manager.setReady(players.host.participantId, true);
   harness.manager.setReady(players.guest.participantId, true);
   const race = harness.manager.startRace(players.host.participantId);
@@ -108,9 +108,9 @@ async function startTwoPlayerRace(harness) {
   return { ...players, race };
 }
 
-test('waiting room allows duplicate names and racers while loadout changes reset only that racer', () => {
+test('waiting room allows duplicate names and racers while loadout changes reset only that racer', async () => {
   const harness = createHarness();
-  const { host, guest } = addTwoPlayers(harness);
+  const { host, guest } = await addTwoPlayers(harness);
   const initialMembers = harness.manager.getRoomState(host.roomCode).members;
   assert.deepEqual(
     initialMembers.map(({ paintId, avatarId }) => ({ paintId, avatarId })),
@@ -136,7 +136,7 @@ test('waiting room allows duplicate names and racers while loadout changes reset
     initialMembers[1],
   );
 
-  const duplicateName = harness.manager.joinRoom(host.roomCode, {
+  const duplicateName = await harness.manager.joinRoom(host.roomCode, {
     displayName: 'host', characterId: 'kit',
   });
   assert.notEqual(duplicateName.participantId, host.participantId);
@@ -171,13 +171,13 @@ test('waiting room allows duplicate names and racers while loadout changes reset
   assert.equal(harness.manager.getRoomState(host.roomCode).settings.autoFillAi, false);
 });
 
-test('duplicate human racers keep independent appearances in the announced roster', () => {
+test('duplicate human racers keep independent appearances in the announced roster', async () => {
   const harness = createHarness();
-  const host = harness.manager.createRoom({
+  const host = await harness.manager.createRoom({
     displayName: 'Host', characterId: 'kit', paintId: 'turbo-blue', avatarId: 'cat',
     roomName: 'Clone Cup', roomType: ROOM_TYPES.PUBLIC, maxPlayers: 2,
   });
-  const guest = harness.manager.joinRoom(host.roomCode, {
+  const guest = await harness.manager.joinRoom(host.roomCode, {
     displayName: 'Guest', characterId: 'kit', paintId: 'crimson-heat', avatarId: 'dog',
   });
   harness.manager.setReady(host.participantId, true);
@@ -190,13 +190,13 @@ test('duplicate human racers keep independent appearances in the announced roste
   assert.deepEqual(new Set(humans.map((entry) => entry.avatarId)), new Set(['cat', 'dog']));
 });
 
-test('AI auto-fill uses room capacity and can be disabled by the host', () => {
+test('AI auto-fill uses room capacity and can be disabled by the host', async () => {
   const filledHarness = createHarness();
-  const filledHost = filledHarness.manager.createRoom({
+  const filledHost = await filledHarness.manager.createRoom({
     displayName: 'Host', characterId: 'pip', roomName: 'Four Kart Cup',
     roomType: ROOM_TYPES.PUBLIC, maxPlayers: 4,
   });
-  const filledGuest = filledHarness.manager.joinRoom(filledHost.roomCode, {
+  const filledGuest = await filledHarness.manager.joinRoom(filledHost.roomCode, {
     displayName: 'Guest', characterId: 'nova',
   });
   filledHarness.manager.setReady(filledHost.participantId, true);
@@ -206,11 +206,11 @@ test('AI auto-fill uses room capacity and can be disabled by the host', () => {
   assert.equal(filledRace.roster.filter((entry) => entry.controllerKind === 'ai').length, 2);
 
   const humansOnlyHarness = createHarness();
-  const humansOnlyHost = humansOnlyHarness.manager.createRoom({
+  const humansOnlyHost = await humansOnlyHarness.manager.createRoom({
     displayName: 'Host', characterId: 'pip', roomName: 'Human Cup',
     roomType: ROOM_TYPES.PUBLIC, maxPlayers: 4,
   });
-  const humansOnlyGuest = humansOnlyHarness.manager.joinRoom(humansOnlyHost.roomCode, {
+  const humansOnlyGuest = await humansOnlyHarness.manager.joinRoom(humansOnlyHost.roomCode, {
     displayName: 'Guest', characterId: 'nova',
   });
   humansOnlyHarness.manager.setRoom(humansOnlyHost.participantId, { autoFillAi: false });
@@ -221,9 +221,9 @@ test('AI auto-fill uses room capacity and can be disabled by the host', () => {
   assert.equal(humansOnlyRace.roster.every((entry) => entry.controllerKind === 'human'), true);
 });
 
-test('only the host can kick another waiting-room player', () => {
+test('only the host can kick another waiting-room player', async () => {
   const harness = createHarness();
-  const { host, guest } = addTwoPlayers(harness);
+  const { host, guest } = await addTwoPlayers(harness);
 
   assert.throws(
     () => harness.manager.kickPlayer(guest.participantId, host.participantId),
@@ -248,15 +248,15 @@ test('only the host can kick another waiting-room player', () => {
   );
   assert.equal(harness.manager.participantRooms.has(guest.participantId), false);
 
-  const replacement = harness.manager.joinRoom(host.roomCode, {
+  const replacement = await harness.manager.joinRoom(host.roomCode, {
     displayName: 'Replacement', characterId: 'nova',
   });
   assert.notEqual(replacement.participantId, guest.participantId);
 });
 
-test('room metadata, capacity, and list status use each room human-seat limit', () => {
+test('room metadata, capacity, and list status use each room human-seat limit', async () => {
   const harness = createHarness();
-  const host = harness.manager.createRoom({
+  const host = await harness.manager.createRoom({
     displayName: 'Host', characterId: 'pip', roomName: 'Two Seat Sprint',
     roomType: ROOM_TYPES.PUBLIC, maxPlayers: 2, trackId: 'harbor-loop',
   });
@@ -278,20 +278,20 @@ test('room metadata, capacity, and list status use each room human-seat limit', 
     joinable: true,
   }]);
 
-  harness.manager.joinRoom(host.roomCode, { displayName: 'Host', characterId: 'nova' });
+  await harness.manager.joinRoom(host.roomCode, { displayName: 'Host', characterId: 'nova' });
   state = harness.manager.getRoomState(host.roomCode);
   assert.equal(state.members.length, 2);
   assert.equal(harness.manager.listRooms()[0].status, 'full');
   assert.equal(harness.manager.listRooms()[0].joinable, false);
-  assert.throws(
-    () => harness.manager.joinRoom(host.roomCode, { displayName: 'Third', characterId: 'kit' }),
+  await assert.rejects(
+    harness.manager.joinRoom(host.roomCode, { displayName: 'Third', characterId: 'kit' }),
     (error) => error.code === ERROR_CODES.ROOM_FULL,
   );
 });
 
-test('private rooms hash case-sensitive passwords and expose no verifier data', () => {
+test('private rooms hash case-sensitive passwords and expose no verifier data', async () => {
   const harness = createHarness();
-  const host = harness.manager.createRoom({
+  const host = await harness.manager.createRoom({
     displayName: 'Host', characterId: 'pip', roomName: 'Private Only',
     roomType: ROOM_TYPES.PRIVATE, maxPlayers: 4, password: 'PitLane9',
   });
@@ -305,51 +305,51 @@ test('private rooms hash case-sensitive passwords and expose no verifier data', 
   assert.equal(verifier.hash.toString('utf8').includes('PitLane9'), false);
   assert.equal(Object.hasOwn(harness.manager.listRooms()[0], 'passwordHash'), false);
   assert.equal(Object.hasOwn(harness.manager.getRoomState(host.roomCode), 'passwordHash'), false);
-  assert.throws(
-    () => harness.manager.joinRoom(host.roomCode, { displayName: 'Guest', characterId: 'nova' }),
+  await assert.rejects(
+    harness.manager.joinRoom(host.roomCode, { displayName: 'Guest', characterId: 'nova' }),
     (error) => error.code === ERROR_CODES.PASSWORD_REQUIRED,
   );
-  assert.throws(
-    () => harness.manager.joinRoom(host.roomCode, {
+  await assert.rejects(
+    harness.manager.joinRoom(host.roomCode, {
       displayName: 'Guest', characterId: 'nova', password: 'pitlane9',
     }),
     (error) => error.code === ERROR_CODES.PASSWORD_INVALID,
   );
-  const guest = harness.manager.joinRoom(host.roomCode, {
+  const guest = await harness.manager.joinRoom(host.roomCode, {
     displayName: 'Host', characterId: 'nova', password: 'PitLane9',
   });
   assert.notEqual(guest.participantId, host.participantId);
   assert.equal(harness.manager.listRooms()[0].requiresPassword, true);
 });
 
-test('quick match atomically joins only a visible joinable public room', () => {
+test('quick match atomically joins only a visible joinable public room', async () => {
   const codes = ['ABC234', 'DEF567'];
   const harness = createHarness({ roomCodeFactory: () => codes.shift() });
-  harness.manager.createRoom({
+  await harness.manager.createRoom({
     displayName: 'Private Host', characterId: 'pip', roomName: 'Private',
     roomType: ROOM_TYPES.PRIVATE, maxPlayers: 4, password: 'Secret99',
   });
-  assert.throws(
-    () => harness.manager.quickMatch({ displayName: 'Guest' }),
+  await assert.rejects(
+    harness.manager.quickMatch({ displayName: 'Guest' }),
     (error) => error.code === ERROR_CODES.NO_MATCHING_ROOM,
   );
 
-  const publicHost = harness.manager.createRoom({
+  const publicHost = await harness.manager.createRoom({
     displayName: 'Public Host', characterId: 'nova', roomName: 'Public',
     roomType: ROOM_TYPES.PUBLIC, maxPlayers: 2,
   });
-  const matched = harness.manager.quickMatch({ displayName: 'Public Host' });
+  const matched = await harness.manager.quickMatch({ displayName: 'Public Host' });
   assert.equal(matched.roomCode, publicHost.roomCode);
   assert.equal(harness.manager.listRooms().find((room) => room.roomCode === publicHost.roomCode).status, 'full');
-  assert.throws(
-    () => harness.manager.quickMatch({ displayName: 'Another Guest' }),
+  await assert.rejects(
+    harness.manager.quickMatch({ displayName: 'Another Guest' }),
     (error) => error.code === ERROR_CODES.NO_MATCHING_ROOM,
   );
 });
 
-test('room list counts reserved reconnect seats and hides rooms with no online member', () => {
+test('room list counts reserved reconnect seats and hides rooms with no online member', async () => {
   const harness = createHarness();
-  const { host, guest } = addTwoPlayers(harness);
+  const { host, guest } = await addTwoPlayers(harness);
   harness.manager.disconnect(guest.participantId);
   assert.equal(harness.manager.listRooms()[0].playerCount, 2);
   assert.equal(harness.manager.listRooms()[0].hostDisplayName, 'Host');
@@ -359,13 +359,13 @@ test('room list counts reserved reconnect seats and hides rooms with no online m
 
 test('connected waiting rooms remain available without an inactivity timeout', async () => {
   const harness = createHarness({ emptyRoomTtlMs: 60_000 });
-  const host = harness.manager.createRoom({
+  const host = await harness.manager.createRoom({
     displayName: 'Host', characterId: 'pip', roomName: 'Long Wait',
     roomType: ROOM_TYPES.PUBLIC, maxPlayers: 8,
   });
 
   harness.advance(24 * 60 * 60_000);
-  await harness.manager.tick();
+  harness.manager.maintenance();
 
   assert.equal(harness.manager.roomCount, 1);
   assert.equal(harness.manager.getRoomState(host.roomCode).members.length, 1);
@@ -376,31 +376,31 @@ test('a disconnected waiting room honors the full empty-room TTL', async () => {
   const harness = createHarness({ resumeTimeoutMs: 30_000, emptyRoomTtlMs: 60_000 });
   const destroyed = [];
   harness.manager.on('roomDestroyed', (event) => destroyed.push(event));
-  const host = harness.manager.createRoom({
+  const host = await harness.manager.createRoom({
     displayName: 'Host', characterId: 'pip', roomName: 'Reconnect Window',
     roomType: ROOM_TYPES.PUBLIC, maxPlayers: 8,
   });
   harness.manager.disconnect(host.participantId);
 
   harness.advance(30_001);
-  await harness.manager.tick();
+  harness.manager.maintenance();
   assert.equal(harness.manager.roomCount, 1);
   assert.equal(harness.manager.rooms.get(host.roomCode).members.size, 0);
   assert.deepEqual(harness.manager.listRooms(), []);
 
   harness.advance(29_998);
-  await harness.manager.tick();
+  harness.manager.maintenance();
   assert.equal(harness.manager.roomCount, 1);
 
   harness.advance(1);
-  await harness.manager.tick();
+  harness.manager.maintenance();
   assert.equal(harness.manager.roomCount, 0);
   assert.deepEqual(destroyed, [{ roomCode: host.roomCode }]);
 });
 
 test('an explicitly emptied waiting room also honors the full empty-room TTL', async () => {
   const harness = createHarness({ emptyRoomTtlMs: 60_000 });
-  const host = harness.manager.createRoom({
+  const host = await harness.manager.createRoom({
     displayName: 'Host', characterId: 'pip', roomName: 'Empty Room',
     roomType: ROOM_TYPES.PUBLIC, maxPlayers: 8,
   });
@@ -410,11 +410,11 @@ test('an explicitly emptied waiting room also honors the full empty-room TTL', a
   assert.deepEqual(harness.manager.listRooms(), []);
 
   harness.advance(59_999);
-  await harness.manager.tick();
+  harness.manager.maintenance();
   assert.equal(harness.manager.roomCount, 1);
 
   harness.advance(1);
-  await harness.manager.tick();
+  harness.manager.maintenance();
   assert.equal(harness.manager.roomCount, 0);
 });
 
@@ -443,7 +443,7 @@ test('start prepares one deterministic eight-kart roster and launches after all 
 
 test('race_loaded ACK is emitted before simulation launch and duplicate loads are idempotent', async () => {
   const harness = createHarness();
-  const { host, guest } = addTwoPlayers(harness);
+  const { host, guest } = await addTwoPlayers(harness);
   harness.manager.setReady(host.participantId, true);
   harness.manager.setReady(guest.participantId, true);
   const race = harness.manager.startRace(host.participantId);
@@ -470,6 +470,25 @@ test('race_loaded ACK is emitted before simulation launch and duplicate loads ar
     event.participantId === guest.participantId
     && event.message.type === 'race_loaded_ack'
   )).length, 2);
+});
+
+test('ready, loadout, and ordinary race-loaded changes do not change the Lobby summary', async () => {
+  const harness = createHarness();
+  const lobbyChanges = [];
+  harness.manager.on('lobbyChanged', event => lobbyChanges.push(event));
+  const { host, guest } = await addTwoPlayers(harness);
+  lobbyChanges.length = 0;
+
+  harness.manager.setReady(host.participantId, true);
+  harness.manager.setLoadout(guest.participantId, { paintId: 'crimson-heat' });
+  assert.equal(lobbyChanges.length, 0);
+
+  harness.manager.setReady(guest.participantId, true);
+  const race = harness.manager.startRace(host.participantId);
+  assert.equal(lobbyChanges.length, 1);
+  lobbyChanges.length = 0;
+  await harness.manager.markRaceLoaded(host.participantId, race.raceId);
+  assert.equal(lobbyChanges.length, 0);
 });
 
 test('new useItemSeq survives a stale movement seq and fires for exactly one physics step', async () => {
@@ -536,6 +555,82 @@ test('one public compact snapshot is built per room tick for every connected cli
   assert.equal(snapshots[0].participantId, null);
   assert.equal(Array.isArray(snapshots[0].message.karts[0]), true);
   assert.equal(Object.hasOwn(snapshots[0].message, 'standings'), false);
+});
+
+test('authoritative simulation continues but periodic snapshots are skipped without receivers', async () => {
+  const counters = new Map();
+  const metrics = {
+    increment(group, name, amount = 1) {
+      const key = `${group}.${name}`;
+      counters.set(key, (counters.get(key) ?? 0) + amount);
+    },
+  };
+  const harness = createHarness({ metrics });
+  const { host } = await startTwoPlayerRace(harness);
+  harness.manager.setRoomReceiverCountProvider(() => 0);
+  const before = harness.messages.length;
+  harness.advance(51);
+  await harness.manager.tick();
+
+  assert.equal(harness.simulations[0].updates.length > 0, true);
+  assert.equal(
+    harness.messages.slice(before).some(event => event.message.type === 'snapshot'),
+    false,
+  );
+  assert.equal(counters.get('snapshot.noReceiversSkipped'), 1);
+  assert.equal(
+    harness.manager.getCatchUpMessages(host.participantId).some(message => message.type === 'snapshot'),
+    true,
+  );
+});
+
+test('one room simulation error is isolated without starving another active room', async () => {
+  let now = 0;
+  let participant = 0;
+  const codes = ['BAD234', 'GOOD23'];
+  const simulations = new Map();
+  const errors = [];
+  const manager = new RoomManager({
+    now: () => now,
+    roomCodeFactory: () => codes.shift(),
+    participantIdFactory: () => `participant_${String(++participant).padStart(3, '0')}`,
+    resumeTokenFactory: () => `resume_${participant}`,
+    raceIdFactory: () => `race_${participant}`,
+    raceFactory: async (args) => {
+      const simulation = new FakeSimulation(args);
+      const badRoom = args.roster.some(entry => entry.displayName === 'Bad Host');
+      if (badRoom) {
+        simulation.update = () => { throw new Error('bad room simulation'); };
+      }
+      simulations.set(badRoom ? 'bad' : 'good', simulation);
+      return simulation;
+    },
+  });
+  manager.on('managerError', error => errors.push(error));
+
+  async function startRoom(hostName, guestName) {
+    const host = await manager.createRoom({
+      displayName: hostName, roomName: hostName, roomType: 'public', maxPlayers: 2,
+    });
+    const guest = await manager.joinRoom(host.roomCode, { displayName: guestName });
+    manager.setReady(host.participantId, true);
+    manager.setReady(guest.participantId, true);
+    const race = manager.startRace(host.participantId);
+    await manager.markRaceLoaded(host.participantId, race.raceId);
+    await manager.markRaceLoaded(guest.participantId, race.raceId);
+    return host;
+  }
+
+  const bad = await startRoom('Bad Host', 'Bad Guest');
+  const good = await startRoom('Good Host', 'Good Guest');
+  now = 20;
+  const result = manager.tick();
+  assert.equal(manager.getRoomState(bad.roomCode).state, ROOM_STATES.WAITING);
+  assert.equal(manager.getRoomState(good.roomCode).state, ROOM_STATES.COUNTDOWN);
+  assert.equal(simulations.get('good').updates.length, 2);
+  assert.equal(result.roomErrors, 1);
+  assert.equal(errors.length, 1);
+  manager.close();
 });
 
 test('a race ending on a scheduled snapshot tick emits only the final shared snapshot', async () => {
@@ -665,7 +760,7 @@ test('room state distinguishes reconnecting, disconnected and explicit leave pre
 
   harness.manager.disconnect(guest.participantId);
   harness.advance(30_001);
-  await harness.manager.tick();
+  harness.manager.maintenance();
   state = harness.manager.getRoomState(host.roomCode);
   assert.equal(
     state.members.find((member) => member.participantId === guest.participantId).presenceState,
@@ -708,9 +803,9 @@ test('item-only traffic cannot reclaim takeover AI or queue a delayed item use',
   assert.equal(simulation.updates.some((inputs) => inputs[hostIndex]?.useItem), false);
 });
 
-test('a sole player reclaiming an empty room becomes its host again', () => {
+test('a sole player reclaiming an empty room becomes its host again', async () => {
   const harness = createHarness();
-  const host = harness.manager.createRoom({
+  const host = await harness.manager.createRoom({
     displayName: 'Host', characterId: 'pip', roomName: 'Solo Room',
     roomType: ROOM_TYPES.PUBLIC, maxPlayers: 8,
   });
@@ -722,14 +817,15 @@ test('a sole player reclaiming an empty room becomes its host again', () => {
 
 test('loading timeout cancels a race when fewer than two clients finish loading', async () => {
   const harness = createHarness({ loadTimeoutMs: 10_000 });
-  const { host, guest } = addTwoPlayers(harness);
+  const { host, guest } = await addTwoPlayers(harness);
   harness.manager.setReady(host.participantId, true);
   harness.manager.setReady(guest.participantId, true);
   const race = harness.manager.startRace(host.participantId);
   await harness.manager.markRaceLoaded(host.participantId, race.raceId);
 
   harness.advance(10_001);
-  await harness.manager.tick();
+  harness.manager.maintenance();
+  await race.launchPromise;
   const roomState = harness.manager.getRoomState(host.roomCode);
   assert.equal(roomState.state, ROOM_STATES.WAITING);
   assert.equal(harness.simulations.length, 0);
@@ -740,8 +836,8 @@ test('loading timeout cancels a race when fewer than two clients finish loading'
 
 test('two loaded players start at timeout while a late third player keeps AI until fresh movement', async () => {
   const harness = createHarness({ loadTimeoutMs: 10_000 });
-  const { host, guest } = addTwoPlayers(harness);
-  const late = harness.manager.joinRoom(host.roomCode, {
+  const { host, guest } = await addTwoPlayers(harness);
+  const late = await harness.manager.joinRoom(host.roomCode, {
     displayName: 'Late', characterId: 'kit',
   });
   for (const player of [host, guest, late]) {
@@ -753,7 +849,8 @@ test('two loaded players start at timeout while a late third player keeps AI unt
   assert.equal(harness.simulations.length, 0);
 
   harness.advance(10_001);
-  await harness.manager.tick();
+  harness.manager.maintenance();
+  await race.launchPromise;
   const simulation = harness.simulations[0];
   const lateIndex = race.roster.find((entry) => entry.participantId === late.participantId).kartIndex;
   assert.equal(harness.manager.getRoomState(host.roomCode).state, ROOM_STATES.COUNTDOWN);
@@ -809,7 +906,7 @@ test('race_loaded rejects a wrong race and the results phase', async () => {
 
 test('loading waits for the reconnect window instead of cancelling immediately at one player', async () => {
   const harness = createHarness({ loadTimeoutMs: 10_000 });
-  const { host, guest } = addTwoPlayers(harness);
+  const { host, guest } = await addTwoPlayers(harness);
   harness.manager.setReady(host.participantId, true);
   harness.manager.setReady(guest.participantId, true);
   const race = harness.manager.startRace(host.participantId);
@@ -819,7 +916,8 @@ test('loading waits for the reconnect window instead of cancelling immediately a
   assert.equal(harness.manager.getRoomState(host.roomCode).state, ROOM_STATES.LOADING);
 
   harness.advance(10_001);
-  await harness.manager.tick();
+  harness.manager.maintenance();
+  await race.launchPromise;
   const state = harness.manager.getRoomState(host.roomCode);
   assert.equal(state.state, ROOM_STATES.WAITING);
   assert.equal(state.members.length, 2);
@@ -829,7 +927,7 @@ test('loading waits for the reconnect window instead of cancelling immediately a
 
 test('loading cancellation removes an abandoned member and releases their character', async () => {
   const harness = createHarness({ loadTimeoutMs: 10_000 });
-  const { host, guest } = addTwoPlayers(harness);
+  const { host, guest } = await addTwoPlayers(harness);
   harness.manager.setReady(host.participantId, true);
   harness.manager.setReady(guest.participantId, true);
   const race = harness.manager.startRace(host.participantId);
@@ -837,7 +935,8 @@ test('loading cancellation removes an abandoned member and releases their charac
   harness.manager.leave(guest.participantId);
 
   harness.advance(10_001);
-  await harness.manager.tick();
+  harness.manager.maintenance();
+  await race.launchPromise;
   const state = harness.manager.getRoomState(host.roomCode);
   assert.equal(state.state, ROOM_STATES.WAITING);
   assert.deepEqual(state.members.map((member) => member.participantId), [host.participantId]);
@@ -850,8 +949,8 @@ test('race factory failure removes loading-stage leavers instead of leaving ghos
   const harness = createHarness({
     raceFactory: async () => { throw new Error('factory failed'); },
   });
-  const { host, guest } = addTwoPlayers(harness);
-  const leaver = harness.manager.joinRoom(host.roomCode, {
+  const { host, guest } = await addTwoPlayers(harness);
+  const leaver = await harness.manager.joinRoom(host.roomCode, {
     displayName: 'Leaver', characterId: 'kit',
   });
   for (const participant of [host, guest, leaver]) {
@@ -884,7 +983,7 @@ test('expired reconnect credentials are rejected and the kart remains AI-control
   const hostIndex = race.roster.find((entry) => entry.participantId === host.participantId).kartIndex;
   harness.manager.disconnect(host.participantId);
   harness.advance(30_001);
-  await harness.manager.tick();
+  harness.manager.maintenance();
 
   assert.throws(
     () => harness.manager.resume(host.roomCode, host.participantId, host.resumeToken),
@@ -910,7 +1009,7 @@ test('production race factory accepts the announced roster without reordering it
 
 test('production race factory starts a two-player race when AI auto-fill is disabled', async () => {
   const harness = createHarness({ raceFactory: createDefaultRaceFactory() });
-  const { host, guest } = addTwoPlayers(harness);
+  const { host, guest } = await addTwoPlayers(harness);
   harness.manager.setRoom(host.participantId, { autoFillAi: false });
   harness.manager.setReady(host.participantId, true);
   harness.manager.setReady(guest.participantId, true);
@@ -999,7 +1098,7 @@ test('results automatically return every online player to a waiting room after 3
   assert.equal(harness.manager.getRoomState(host.roomCode).state, ROOM_STATES.RESULTS);
 
   harness.advance(30_001);
-  await harness.manager.tick();
+  harness.manager.maintenance();
   const state = harness.manager.getRoomState(host.roomCode);
   assert.equal(state.state, ROOM_STATES.WAITING);
   assert.equal(state.raceId, null);
@@ -1048,7 +1147,7 @@ test('a disconnected results member is removed after the waiting-room reconnect 
   harness.manager.returnToRoom(host.participantId);
 
   harness.advance(30_001);
-  await harness.manager.tick();
+  harness.manager.maintenance();
   const state = harness.manager.getRoomState(host.roomCode);
   assert.deepEqual(state.members.map((member) => member.participantId), [host.participantId]);
   assert.equal(harness.manager.listRooms()[0].playerCount, 1);

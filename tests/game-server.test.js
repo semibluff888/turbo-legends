@@ -8,6 +8,7 @@ import { createGameServer } from '../server.mjs';
 import {
   ROOM_PRESENCE_HEARTBEAT_INTERVAL_MS,
   SLOW_CLIENT_BACKPRESSURE_BYTES,
+  clientAddress,
   outgoingMessageAction,
   snapshotBackpressureThreshold,
 } from '../server/websocket-game-server.js';
@@ -15,6 +16,15 @@ import { PROTOCOL_VERSION } from '../src/net/protocol.js';
 
 const PROJECT_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const wsModule = await import('ws').catch(() => null);
+
+test('client addresses ignore forwarded headers unless proxy trust is enabled', () => {
+  const requestLike = {
+    headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.2' },
+    socket: { remoteAddress: '127.0.0.1' },
+  };
+  assert.equal(clientAddress(requestLike), '127.0.0.1');
+  assert.equal(clientAddress(requestLike, true), '203.0.113.7');
+});
 
 function readJson(port, path) {
   return new Promise((resolve, reject) => {

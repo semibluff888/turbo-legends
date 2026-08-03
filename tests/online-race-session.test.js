@@ -231,6 +231,7 @@ test('input is sampled at 60Hz and item presses use a monotonic action counter',
   };
   session.update(FIXED_DT, controls);
   session.update(FIXED_DT, controls);
+  session.flushInput(controls);
   assert.equal(client.inputs.length, 1);
   assert.equal(client.inputs[0].seq, 1);
   assert.equal(client.inputs[0].useItemSeq, 1);
@@ -238,9 +239,11 @@ test('input is sampled at 60Hz and item presses use a monotonic action counter',
   controls.useItem = false;
   session.update(FIXED_DT, controls);
   session.update(FIXED_DT, controls);
+  session.flushInput(controls);
   controls.useItem = true;
   session.update(FIXED_DT, controls);
   session.update(FIXED_DT, controls);
+  session.flushInput(controls);
   assert.equal(client.inputs.at(-1).useItemSeq, 2);
 });
 
@@ -336,6 +339,7 @@ test('a finished local kart switches to snapshot interpolation and stops sending
   });
   session.update(FIXED_DT, { throttle: 1 });
   session.update(FIXED_DT, { throttle: 1 });
+  session.flushInput({ throttle: 1 });
   const sentBeforeFinish = client.inputs.length;
 
   session.applySnapshot({
@@ -366,11 +370,14 @@ test('congested sends do not advance input sequence and stale item presses expir
 
   client.sendAllowed = false;
   session.update(INPUT_STEP, { throttle: 1, useItem: true });
+  session.flushInput({ throttle: 1, useItem: true });
   session.update(0.3, { throttle: 0, useItem: false });
+  session.flushInput({ throttle: 0, useItem: false });
   assert.equal(client.inputs.length, 0);
 
   client.sendAllowed = true;
   session.update(INPUT_STEP, { throttle: 0.25, useItem: false });
+  session.flushInput({ throttle: 0.25, useItem: false });
   assert.deepEqual(client.inputs.at(-1), {
     seq: 41,
     useItemSeq: 7,
@@ -446,6 +453,7 @@ test('disconnect pauses prediction and the next sent sequence continues from sna
   });
   client.emit('connection', { state: 'disconnected' });
   session.update(INPUT_STEP * 4, { throttle: 1 });
+  session.flushInput({ throttle: 1 });
   assert.equal(client.inputs.length, 0);
 
   client.emit('connection', { state: 'connected' });
@@ -455,5 +463,44 @@ test('disconnect pauses prediction and the next sent sequence continues from sna
     karts: [snapshotKart(0, { controllerKind: 'takeover-ai' }), snapshotKart(1)],
   });
   session.update(INPUT_STEP, { throttle: 0.75 });
+  session.flushInput({ throttle: 0.75 });
   assert.equal(client.inputs.at(-1).seq, 501);
+});
+
+test('a 250ms render stall flushes only the newest input packet', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  const session = new OnlineRaceSession({
+    client, track, raceId: 'race-stall', roster: roster(), localParticipantId: 'local',
+  });
+  client.ack('race-stall');
+  session.applySnapshot({
+    raceId: 'race-stall', tick: 1, acks: snapshotAcks(), state: RACE_STATE.RACING,
+    karts: [snapshotKart(0), snapshotKart(1)],
+  });
+
+  for (let index = 0; index < 30; index++) {
+    session.update(FIXED_DT, { throttle: index === 29 ? 0.75 : 1, steer: index / 30 });
+  }
+  session.flushInput({ throttle: 0.75, steer: 29 / 30 });
+  assert.equal(client.inputs.length, 1);
+  assert.equal(client.inputs[0].throttle, 0.75);
+});
+
+test('online pause sends one immediate neutral input and 500ms neutral keepalives', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  const session = new OnlineRaceSession({
+    client, track, raceId: 'race-pause', roster: roster(), localParticipantId: 'local',
+  });
+  client.ack('race-pause');
+  session.applySnapshot({
+    raceId: 'race-pause', tick: 1, acks: snapshotAcks(), state: RACE_STATE.RACING,
+    karts: [snapshotKart(0), snapshotKart(1)],
+  });
+
+  assert.equal(session.sendNeutralInput(), true);
+  for (let index = 0; index < 40; index++) session.flushPausedInput(0.25);
+  assert.equal(client.inputs.length, 21);
+  assert.equal(client.inputs.every((packet) => packet.throttle === 0 && packet.brake === 0), true);
 });
