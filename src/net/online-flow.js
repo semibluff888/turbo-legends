@@ -12,6 +12,9 @@ const CONNECTION_ERROR_CODES = new Set([
   'socket_error',
   'invalid_server_message',
   'protocol_mismatch',
+  'protocol_error',
+  'input_codec_error',
+  ERROR_CODES.CLIENT_UPDATE_REQUIRED,
   ERROR_CODES.UNSUPPORTED_VERSION,
 ]);
 
@@ -33,7 +36,15 @@ const ERROR_COPY = Object.freeze({
   [ERROR_CODES.NOT_READY]: 'Every connected racer must be ready.',
   [ERROR_CODES.NOT_ENOUGH_PLAYERS]: 'At least two racers are required to start.',
   [ERROR_CODES.SESSION_EXPIRED]: 'The reconnect window expired. Join the room again.',
+  [ERROR_CODES.CLIENT_UPDATE_REQUIRED]: 'The game was updated. Refresh the page to continue.',
 });
+
+const TERMINAL_PROTOCOL_ERROR_CODES = new Set([
+  ERROR_CODES.CLIENT_UPDATE_REQUIRED,
+  ERROR_CODES.UNSUPPORTED_VERSION,
+  'protocol_error',
+  'input_codec_error',
+]);
 
 export function onlineRoomPhase(roomState) {
   return String(roomState?.phase || roomState?.state || ROOM_STATES.WAITING);
@@ -95,6 +106,10 @@ export function shouldUpdateOnlineRaceBehindPanel({ mode, paused, raceKind } = {
 /** Business-rule errors do not imply that the WebSocket connection is down. */
 export function isOnlineConnectionError(message) {
   return CONNECTION_ERROR_CODES.has(String(message?.code || ''));
+}
+
+export function isTerminalOnlineProtocolError(message) {
+  return TERMINAL_PROTOCOL_ERROR_CODES.has(String(message?.code || ''));
 }
 
 /** Prefer stable protocol codes over server-authored prose in the UI. */

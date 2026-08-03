@@ -88,10 +88,12 @@ export const UI_COPY = Object.freeze({
       roomTitle: 'ROOM ACTION FAILED',
       connectionTitle: 'CONNECTION PROBLEM',
       reconnectExpiredTitle: 'RECONNECTION FAILED',
+      updateRequiredTitle: 'GAME UPDATE REQUIRED',
       kickedTitle: 'REMOVED FROM ROOM',
       dismiss: 'OK',
       cancel: 'CANCEL',
       returnLobby: 'RETURN TO LOBBY',
+      refreshPage: 'REFRESH PAGE',
     },
     connection: {
       connecting: 'CONNECTING',

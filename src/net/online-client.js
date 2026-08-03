@@ -6,12 +6,18 @@
 
 import {
   CLIENT_MESSAGE_TYPES,
+  CLIENT_UPDATE_CLOSE_CODE,
   ERROR_CODES,
   PROTOCOL_VERSION,
   ROOM_STATES,
   ROOM_TYPES,
   SERVER_MESSAGE_TYPES,
 } from './protocol.js';
+import {
+  RaceCodecError,
+  decodeSnapshotPacket,
+  encodeInputPacket,
+} from './binary-race-codec.js';
 
 const SESSION_STORAGE_KEY = 'turbo-legends.online-session.v2';
 const LEGACY_SESSION_STORAGE_KEY = 'turbo-legends.online-session.v1';
@@ -22,7 +28,6 @@ export const HIDDEN_LOBBY_RECONNECT_MS = 20_000;
 export const TELEMETRY_PING_INTERVAL_MS = 5_000;
 export const TELEMETRY_STALE_MS = 15_000;
 export const MAX_RACE_INPUT_BUFFERED_BYTES = 4 * 1024;
-
 function storageForCleanup(candidate) {
   return candidate && typeof candidate.removeItem === 'function' ? candidate : null;
 }
@@ -90,11 +95,13 @@ export class OnlineClient {
     this.selfId = null;
     this.resumeToken = null;
     this.raceId = null;
+    this.wireRaceId = null;
     this._raceLoadedAcks = new Map();
 
     this._listeners = new Map();
     this._connectionPurpose = null;
     this._connectionFailureReported = false;
+    this._terminalProtocolFailure = false;
     this._pendingMessages = [];
     this._reconnectTimer = null;
     this._connectTimer = null;
@@ -264,13 +271,32 @@ export class OnlineClient {
   }
 
   sendInput(input) {
-    if (!this.raceId || !this.hasRaceLoadedAck(this.raceId)) return false;
+    if (!this.raceId || !this.wireRaceId || !this.hasRaceLoadedAck(this.raceId)) return false;
     const socket = this.socket;
     if (!socket || socket.readyState !== 1
       || Number(socket.bufferedAmount || 0) > MAX_RACE_INPUT_BUFFERED_BYTES) {
       return false;
     }
-    return this.send({ type: CLIENT_MESSAGE_TYPES.INPUT, raceId: this.raceId, ...input });
+    let packet;
+    try {
+      packet = encodeInputPacket({ wireRaceId: this.wireRaceId, ...input });
+    } catch (error) {
+      this._reportConnectionFailure({
+        code: 'input_codec_error',
+        message: error instanceof RaceCodecError ? error.message : 'Could not encode race input.',
+      });
+      return false;
+    }
+    try {
+      socket.send(packet);
+      return true;
+    } catch {
+      this._reportConnectionFailure({
+        code: 'socket_error',
+        message: 'Could not send race input.',
+      });
+      return false;
+    }
   }
 
   ping(clientTime = this._now()) {
@@ -355,10 +381,12 @@ export class OnlineClient {
     this._closeCurrentSocket('replaced');
 
     this._connectionPurpose = initialMessage.type;
+    this._terminalProtocolFailure = false;
     this.state = reconnecting ? 'reconnecting' : 'connecting';
     this._emit('connection', { state: this.state });
 
     const socket = new this.WebSocketImpl(this.url);
+    socket.binaryType = 'arraybuffer';
     this.socket = socket;
     this._armConnectTimeout(socket);
     socket.addEventListener('open', () => {
@@ -392,9 +420,13 @@ export class OnlineClient {
   }
 
   _handleRawMessage(raw) {
+    if (typeof raw !== 'string') {
+      this._handleBinarySnapshot(raw);
+      return;
+    }
     let message;
     try {
-      message = JSON.parse(typeof raw === 'string' ? raw : String(raw));
+      message = JSON.parse(raw);
     } catch {
       this._reportConnectionFailure({
         code: 'invalid_server_message',
@@ -403,10 +435,12 @@ export class OnlineClient {
       return;
     }
     if (!message || message.v !== PROTOCOL_VERSION || typeof message.type !== 'string') {
+      this._terminalProtocolFailure = true;
       this._reportConnectionFailure({
-        code: 'protocol_mismatch',
-        message: 'Server protocol mismatch.',
+        code: ERROR_CODES.CLIENT_UPDATE_REQUIRED,
+        message: 'The game version changed. Refresh the page to continue.',
       });
+      if (this.socket?.readyState === 1) this.socket.close(1002, 'Protocol mismatch');
       return;
     }
 
@@ -449,6 +483,7 @@ export class OnlineClient {
         : null;
       if (phase === ROOM_STATES.WAITING || self?.postRaceState === 'room') {
         this.raceId = null;
+        this.wireRaceId = null;
         this._raceLoadedAcks.clear();
       }
     } else if (message.type === SERVER_MESSAGE_TYPES.KICKED) {
@@ -459,6 +494,18 @@ export class OnlineClient {
     } else if (message.type === SERVER_MESSAGE_TYPES.PREPARE_RACE) {
       if (this.raceId && this.raceId !== message.raceId) this._raceLoadedAcks.clear();
       this.raceId = message.raceId;
+      this.wireRaceId = Number.isInteger(message.wireRaceId) && message.wireRaceId > 0
+        ? message.wireRaceId
+        : null;
+      if (!this.wireRaceId) {
+        this._terminalProtocolFailure = true;
+        this._reportConnectionFailure({
+          code: 'protocol_error',
+          message: 'The race preparation message is missing its binary race id.',
+        });
+        if (this.socket?.readyState === 1) this.socket.close(1002, 'Missing binary race id');
+        return;
+      }
     } else if (message.type === SERVER_MESSAGE_TYPES.RACE_LOADED_ACK) {
       if (typeof message.raceId === 'string'
         && (!this.raceId || message.raceId === this.raceId)) {
@@ -485,6 +532,28 @@ export class OnlineClient {
       this._emit('reconnect_expired', resumeRejected);
       this.send({ type: CLIENT_MESSAGE_TYPES.ENTER_LOBBY });
     }
+  }
+
+  _handleBinarySnapshot(raw) {
+    let message;
+    try {
+      message = decodeSnapshotPacket(raw);
+    } catch (error) {
+      this._terminalProtocolFailure = true;
+      this._reportConnectionFailure({
+        code: 'protocol_error',
+        message: error instanceof RaceCodecError
+          ? `Received an invalid race snapshot: ${error.message} Refresh the page to continue.`
+          : 'Received an invalid race snapshot. Refresh the page to continue.',
+      });
+      if (this.socket?.readyState === 1) this.socket.close(1002, 'Invalid binary snapshot');
+      return false;
+    }
+    if (!this.raceId || !this.wireRaceId || message.wireRaceId !== this.wireRaceId) return false;
+    message.raceId = this.raceId;
+    this._connectionFailureReported = false;
+    this._emit(SERVER_MESSAGE_TYPES.SNAPSHOT, message);
+    return true;
   }
 
   _captureSession(message) {
@@ -521,6 +590,19 @@ export class OnlineClient {
       code: event?.code,
       reason: event?.reason || '',
     });
+
+    if (event?.code === CLIENT_UPDATE_CLOSE_CODE || this._terminalProtocolFailure) {
+      this._cancelReconnect();
+      this._reportConnectionFailure({
+        code: event?.code === CLIENT_UPDATE_CLOSE_CODE
+          ? ERROR_CODES.CLIENT_UPDATE_REQUIRED
+          : 'protocol_error',
+        message: event?.code === CLIENT_UPDATE_CLOSE_CODE
+          ? 'The game was updated. Refresh the page to continue.'
+          : 'The multiplayer protocol failed. Refresh the page to reconnect.',
+      });
+      return;
+    }
 
     // A replaced Room session must not resume and evict the other window back.
     // It may still reconnect anonymously to the Lobby.
@@ -740,6 +822,7 @@ export class OnlineClient {
     this.selfId = null;
     this.resumeToken = null;
     this.raceId = null;
+    this.wireRaceId = null;
     this._raceLoadedAcks.clear();
   }
 }

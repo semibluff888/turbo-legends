@@ -9,7 +9,8 @@
     "dev": "node server.mjs",
     "test": "node --test",
     "check": "node tools/syntax-check.mjs",
-    "smoke:multiplayer": "node tools/multiplayer-load-smoke.mjs"
+    "smoke:multiplayer": "node tools/multiplayer-load-smoke.mjs",
+    "ab:multiplayer-phase2": "node --expose-gc tools/multiplayer-phase2-ab.mjs"
   },
   "engines": {
     "node": ">=18"

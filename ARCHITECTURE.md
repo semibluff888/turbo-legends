@@ -33,8 +33,8 @@ but do not decide authoritative physics, items, laps, ranks, or results.
 - `server/` owns process-memory rooms, WebSocket connections, authoritative
   race scheduling, snapshots, event delivery, and cleanup.
 - `src/net/protocol.js` is browser-safe and imported by both client and server;
-  it is the canonical source for protocol v3 names, compact snapshot codecs,
-  and validation.
+  it is the canonical source for protocol v4 JSON message names and validation.
+  `src/net/binary-race-codec.js` is the shared zero-dependency binary race codec.
 - Rooms are local to one Node process. There is no database, durable result
   store, account system, or cross-process room migration.
 
@@ -83,7 +83,7 @@ URL.
 | Authority | Browser `RaceSimulation` | Node `RaceSimulation` |
 | Physics | 120 Hz fixed-step accumulator | Two 120 Hz steps per 60 Hz network tick |
 | Human input | Read locally each frame | Sent at up to 60 Hz with sequence numbers |
-| State delivery | Direct object reads | Full JSON snapshots at 20 Hz |
+| State delivery | Direct object reads | Full binary snapshots at 20 Hz |
 | Events | Kart/ItemSystem queues | Numbered `race_events`, deduplicated client-side |
 | Pause | Stops local simulation | Local overlay; server continues and receives neutral controls |
 
@@ -121,7 +121,8 @@ the existing renderer and HUD:
 | `src/game/race-simulation.js` | Generic eight-kart authoritative race pipeline |
 | `src/game/race.js` | Backward-compatible single-player `RaceDirector` adapter |
 | `src/session/local-race-session.js` | Presentation-facing wrapper for local races |
-| `src/net/protocol.js` | Shared protocol v3 constants, compact snapshot codecs, and client-message validation |
+| `src/net/protocol.js` | Shared protocol v4 JSON constants, limits, errors, and client-message validation |
+| `src/net/binary-race-codec.js` | Shared little-endian snapshot/input codec and strict wire validation |
 | `src/net/online-client.js` | Browser transport, lobby subscription, room commands, credentials, and reconnect loop |
 | `src/net/online-race-session.js` | Snapshot mirror, input sampling, prediction, and correction |
 | `src/net/online-race-loader.js` | Cancellable shader compilation and first-frame warmup barrier |
@@ -319,11 +320,12 @@ waiting → loading → countdown → racing → results → waiting
   occupancy, host, or status changes. Quick match atomically chooses an available
   public waiting room and never creates a room implicitly.
 
-## Protocol v3
+## Protocol v4
 
-The WebSocket endpoint is `/ws`. Every application message is a JSON object
-with `v: 3` and a `type`. Unknown fields in client messages are discarded by the
-shared validator.
+The WebSocket endpoint is `/ws`. Lobby, room, authentication, event, result,
+telemetry, and error messages remain JSON objects with `v: 4` and a `type`.
+Unknown fields in JSON client messages are discarded by the shared validator.
+Race snapshots and race inputs use binary codec revision 1 instead.
 
 Client → server:
 
@@ -342,6 +344,11 @@ race_loaded_ack, snapshot, race_events, race_results,
 kicked, error, pong, server_stats
 ```
 
+In those lists, `input` and `snapshot` are logical message types rather than
+JSON frames. The binary preamble is little-endian and contains `TLG4`, codec
+revision, packet type, and a `uint16` total length. `prepare_race` remains JSON
+and announces both the business `raceId` and a nonzero `wireRaceId: uint32`.
+
 `lobby_state` contains public-safe summaries for both public and private rooms:
 room code/name/type, selected track, password requirement, occupied/capacity counts,
 host display name, status, and whether the room is joinable. It never contains member IDs,
@@ -349,18 +356,18 @@ resume tokens, passwords, or password digests. `create_room` supplies room
 name/type/capacity/track and an optional private-room password; `join_room` supplies
 the password only when needed.
 
-The authoritative driving message is:
+The authoritative driving packet is exactly 28 bytes:
 
 ```js
 {
   type: 'input',
-  v: 3,
-  raceId,
+  v: 4,
+  wireRaceId,
   seq,
   useItemSeq,
-  throttle, // clamped 0..1
-  brake,    // clamped 0..1
-  steer,    // clamped -1..1
+  throttle, // uint16 normalized 0..1
+  brake,    // uint16 normalized 0..1
+  steer,    // int16 normalized -1..1
   drift,
   lookBack,
 }
@@ -369,19 +376,27 @@ The authoritative driving message is:
 Movement `seq` and item `useItemSeq` are monotonic and handled independently.
 Stale movement can be discarded without losing a newer item edge. Clients do
 not send normal race input until the matching `race_loaded_ack`. Every shared
-snapshot contains `acks: [[kartIndex, inputSeq, useItemSeq], ...]`.
+snapshot contains `acks: [[kartIndex, inputSeq, useItemSeq], ...]` for real room
+members only; AI-only seats do not consume ACK bytes.
 
-Each room builds one shared 20 Hz snapshot and the WebSocket gateway serializes
-it once for all room connections. Kart state is an ordered compact array carrying
-dynamic movement, visual, item, progress, control, and `controllerKind` fields;
-static roster identity/appearance and `lapTimes` remain in `prepare_race` or
-results. Item boxes are `[active, respawnAt]` in track-definition order. There is
-no top-level standings array because each Kart already carries `rank`.
+Each room writes one shared immutable 20 Hz binary snapshot and sends the same
+packet to all room connections. It is a complete replacement state containing
+the race header, up to eight fixed kart records, bounded projectile/hazard
+sections, item-box activity/timers, and human ACKs. Float32 carries world and
+unbounded values, normalized Int16 carries angles, millisecond Uint16/Uint32
+fields carry timers, and stable Uint8 tables carry item/controller/surface/state
+enums. Static roster identity/appearance and `lapTimes` remain in
+`prepare_race` or results.
 
 Snapshots are complete replacement state and may be skipped when a socket's
-buffer exceeds `max(16 KiB, 2 * serializedSnapshotBytes)`. Events, results, and
+buffer exceeds `max(16 KiB, 2 * snapshotBytes)`. Events, results, and
 room state are not intentionally skipped. Any connection above 512 KiB total
 output backlog is closed. `race_events` carries globally increasing event IDs.
+
+A v3 JSON message receives a terminal `client_update_required` error and close
+code `4006`. A v4 browser treats that close code, a damaged binary packet, or a
+missing `wireRaceId` as terminal and presents a refresh action without entering
+the normal reconnect loop.
 
 `welcome` returns opaque `participantId` and `resumeToken` credentials after a
 room action. The browser keeps them only in memory and automatically retries
@@ -392,14 +407,17 @@ window. Refreshing or opening another tab does not transfer those credentials.
 
 - Upgrade requests must target `/ws` and include an allowed browser Origin.
   Same-origin HTTP/HTTPS is accepted; `ALLOWED_ORIGINS` adds explicit origins.
-- Client messages are limited to 16 KiB and use a per-connection token bucket
-  that refills at 120 messages per second with a burst capacity of 180.
+- Client frames are limited to 2 KiB and use per-connection message and byte
+  token buckets: 120 messages/second with a burst of 180, plus 64 KiB/second
+  with a 128 KiB burst.
 - Create/join/quick-match/resume attempts are limited to 20 per IP per minute
   by default. Wrong private-room passwords consume the same budget.
-- Binary client messages are rejected. Per-message compression is disabled.
+- Binary client frames are accepted only when they are valid fixed 28-byte v4
+  race inputs. Other binary frames close the connection. Per-message
+  compression is disabled.
 - Ping/pong heartbeat runs every 15 seconds and terminates dead sockets.
-- A snapshot is skipped when buffered output exceeds 256 KiB. Connections are
-  closed as too slow when buffered output exceeds 1 MiB.
+- A complete snapshot may be skipped above its dynamic backpressure threshold.
+  Connections are closed as too slow when buffered output exceeds 512 KiB.
 - Browsers stop writing race inputs when their WebSocket send buffer exceeds
   4 KiB. Remote karts render from a 100 ms tick buffer with at most 100 ms of
   extrapolation; larger gaps recover through a smooth transition.
@@ -436,6 +454,8 @@ local simulation.
 ```bash
 npm test
 npm run check
+npm run smoke:multiplayer
+npm run ab:multiplayer-phase2
 ```
 
 The Node test suite covers:
@@ -443,7 +463,8 @@ The Node test suite covers:
 - spline/track geometry and surfaces;
 - physics, items, AI, full deterministic local races, and multiplayer
   `RaceSimulation` controller/RNG behavior;
-- the shared protocol validator;
+- the shared JSON validator plus binary golden bytes, round trips, boundaries,
+  corruption rejection, v3 termination, and v4 recovery ordering;
 - room creation, permissions, loading, input ordering, takeover/reconnect,
   results, expiry, and scheduler behavior;
 - WebSocket origin, limits, routing, and combined game-server health behavior;

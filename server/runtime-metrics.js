@@ -88,6 +88,14 @@ export class RuntimeMetrics {
         queueRejected: 0,
         scryptCompleted: 0,
       },
+      codec: {
+        snapshotEncoded: 0,
+        inputDecoded: 0,
+        errors: 0,
+        oversized: 0,
+        v3Rejected: 0,
+        invalidBinary: 0,
+      },
     };
     this.traffic = {
       inbound: createTrafficDirection(),
@@ -97,6 +105,8 @@ export class RuntimeMetrics {
       eventLoopDelayMs: [],
       tickDurationMs: [],
       snapshotBytes: [],
+      snapshotEncodeDurationMs: [],
+      inputDecodeDurationMs: [],
       scryptDurationMs: [],
     };
     this._lastCpu = process.cpuUsage();
@@ -187,6 +197,26 @@ export class RuntimeMetrics {
     this.observe('scryptDurationMs', durationMs);
   }
 
+  recordSnapshotEncoding({ durationMs = 0 } = {}) {
+    this.increment('codec', 'snapshotEncoded');
+    this.observe('snapshotEncodeDurationMs', durationMs);
+  }
+
+  recordInputDecode(durationMs) {
+    this.increment('codec', 'inputDecoded');
+    this.observe('inputDecodeDurationMs', durationMs);
+  }
+
+  recordCodecError({ oversized = false, invalidBinary = false } = {}) {
+    this.increment('codec', 'errors');
+    if (oversized) this.increment('codec', 'oversized');
+    if (invalidBinary) this.increment('codec', 'invalidBinary');
+  }
+
+  recordProtocolV3Rejected() {
+    this.increment('codec', 'v3Rejected');
+  }
+
   snapshot() {
     const at = this.now();
     const cpu = process.cpuUsage();
@@ -230,6 +260,11 @@ export class RuntimeMetrics {
       auth: {
         ...this.counters.auth,
         scryptDurationMs: summarizeSamples(this.samples.scryptDurationMs, at),
+      },
+      codec: {
+        ...this.counters.codec,
+        snapshotEncodeDurationMs: summarizeSamples(this.samples.snapshotEncodeDurationMs, at),
+        inputDecodeDurationMs: summarizeSamples(this.samples.inputDecodeDurationMs, at),
       },
     };
   }

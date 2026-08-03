@@ -54,12 +54,20 @@ http://VPS的公网IP:8888/
 
 ## 3. 更新版本
 
+协议 v4 必须按“页面静态资源 + Node 服务端”同一镜像原子发布，不能只更新其中一侧。
+旧的 v3 页面会收到 `client_update_required` 并以 WebSocket `4006` 关闭，界面会要求
+刷新；这是预期行为，不应由代理把该连接自动改写为普通重连。
+
 ```bash
 cd turbo-legends
 git pull --ff-only
 docker compose up -d --build
 docker compose ps
 ```
+
+发布失败时应整体回滚到上一镜像/上一 Git 提交，再重新构建并启动；不要尝试让 v3
+页面连接 v4 服务端，也不要单独回滚 `src/net/binary-race-codec.js`。由于房间和比赛均为
+内存状态，任何重启或回滚都会清空当前对局。
 
 查看实时日志：
 
@@ -114,4 +122,7 @@ Compose 已将容器日志限制为最多 3 个 10 MB 文件，避免长期运�
   `/api/metrics` 不得缓存，`/api/stats` 可遵循服务端 5 秒缓存策略。
 - `/ws` 必须转发 HTTP/1.1 Upgrade/Connection 头、关闭代理缓冲并设置长于 30 秒恢复窗口的
   空闲超时；不要将 WebSocket 流量送入静态缓存或 CDN 页面缓存规则。
+- 代理必须透明转发 WebSocket 文本帧和二进制帧，不能把二进制比赛快照转换为文本、
+  启用 `perMessageDeflate` 或对 `/ws` 做内容缓存。协议 v4 的快照和输入分别是共享二进制
+  完整包与固定 28 字节包。
 - 直接使用公网 HTTP 不加密传输。域名准备好后应启用 HTTPS。

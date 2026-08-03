@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { ERROR_CODES, PROTOCOL_VERSION, ROOM_STATES, ROOM_TYPES } from '../src/net/protocol.js';
+import { decodeSnapshotPacket } from '../src/net/binary-race-codec.js';
 import { GameError } from '../server/game-error.js';
 import { createDefaultRaceFactory } from '../server/race-factory.js';
 import { RoomManager } from '../server/room-manager.js';
@@ -495,7 +496,7 @@ test('new useItemSeq survives a stale movement seq and fires for exactly one phy
   const harness = createHarness();
   const { host, race } = await startTwoPlayerRace(harness);
   const base = {
-    raceId: race.raceId,
+    wireRaceId: race.wireRaceId,
     brake: 0,
     steer: 0.25,
     drift: false,
@@ -520,14 +521,15 @@ test('new useItemSeq survives a stale movement seq and fires for exactly one phy
   const snapshot = harness.messages.find((event) => (
     event.roomCode === host.roomCode && event.message.type === 'snapshot'
   ))?.message;
-  const hostAck = snapshot.acks.find((entry) => entry[0] === hostIndex);
+  const decoded = decodeSnapshotPacket(snapshot.binaryData);
+  const hostAck = decoded.acks.find((entry) => entry[0] === hostIndex);
   assert.deepEqual(hostAck, [hostIndex, 2, 1]);
-  assert.equal(Object.hasOwn(snapshot, 'ack'), false);
-  assert.equal(Object.hasOwn(snapshot, 'inputAck'), false);
-  assert.equal(Object.hasOwn(snapshot, 'useItemAck'), false);
+  assert.equal(Object.hasOwn(decoded, 'ack'), false);
+  assert.equal(Object.hasOwn(decoded, 'inputAck'), false);
+  assert.equal(Object.hasOwn(decoded, 'useItemAck'), false);
 });
 
-test('one public compact snapshot is built per room tick for every connected client', async () => {
+test('one public binary snapshot is built per room tick for every connected client', async () => {
   const harness = createHarness();
   const { host } = await startTwoPlayerRace(harness);
   const simulation = harness.simulations[0];
@@ -553,8 +555,10 @@ test('one public compact snapshot is built per room tick for every connected cli
   assert.equal(snapshots.length, 1);
   assert.equal(snapshots[0].roomCode, host.roomCode);
   assert.equal(snapshots[0].participantId, null);
-  assert.equal(Array.isArray(snapshots[0].message.karts[0]), true);
-  assert.equal(Object.hasOwn(snapshots[0].message, 'standings'), false);
+  const decoded = decodeSnapshotPacket(snapshots[0].message.binaryData);
+  assert.equal(decoded.karts.length, 8);
+  assert.equal(Array.isArray(decoded.karts[0]), false);
+  assert.equal(Object.hasOwn(decoded, 'standings'), false);
 });
 
 test('authoritative simulation continues but periodic snapshots are skipped without receivers', async () => {
@@ -664,7 +668,7 @@ test('a race ending on a scheduled snapshot tick emits only the final shared sna
   assert.equal(harness.messages.filter((event) => event.message.type === 'race_results').length, 1);
 });
 
-test('production eight-kart baseline snapshot stays below 7 KB without static roster data', async () => {
+test('production eight-kart binary snapshot stays below 1536 bytes without static roster data', async () => {
   const harness = createHarness({ raceFactory: createDefaultRaceFactory() });
   const { host } = await startTwoPlayerRace(harness);
   harness.advance(51);
@@ -672,17 +676,18 @@ test('production eight-kart baseline snapshot stays below 7 KB without static ro
   const snapshot = harness.messages.find((event) => (
     event.roomCode === host.roomCode && event.message.type === 'snapshot'
   ))?.message;
-  const bytes = Buffer.byteLength(JSON.stringify(snapshot));
+  const bytes = snapshot.binaryData.byteLength;
+  const decoded = decodeSnapshotPacket(snapshot.binaryData);
 
-  assert.ok(bytes <= 7 * 1024, `expected <= 7168 bytes, received ${bytes}`);
-  assert.equal(snapshot.karts.length, 8);
-  assert.equal(snapshot.acks.length, 8);
-  assert.equal(Object.hasOwn(snapshot, 'standings'), false);
-  assert.equal(snapshot.karts.every((kart) => Array.isArray(kart)), true);
-  assert.equal(snapshot.itemBoxes.every((box) => (
+  assert.ok(bytes <= 1_536, `expected <= 1536 bytes, received ${bytes}`);
+  assert.equal(decoded.karts.length, 8);
+  assert.equal(decoded.acks.length, 2);
+  assert.equal(Object.hasOwn(decoded, 'standings'), false);
+  assert.equal(decoded.karts.every((kart) => !Array.isArray(kart)), true);
+  assert.equal(decoded.itemBoxes.every((box) => (
     Array.isArray(box) && box.length === 2
   )), true);
-  const wire = JSON.stringify(snapshot);
+  const wire = JSON.stringify(decoded);
   for (const staticField of ['displayName', 'participantId', 'characterId', 'paintId', 'avatarId', 'lapTimes']) {
     assert.equal(wire.includes(`\"${staticField}\"`), false, `${staticField} leaked into snapshot`);
   }
@@ -707,7 +712,7 @@ test('disconnect immediately transfers host and takeover AI can be reclaimed wit
   );
   assert.equal(simulation.controllers[hostIndex], 'takeover-ai');
   harness.manager.handleInput(host.participantId, {
-    raceId: race.raceId,
+    wireRaceId: race.wireRaceId,
     seq: 1,
     useItemSeq: 0,
     throttle: 0.6,
@@ -743,7 +748,7 @@ test('room state distinguishes reconnecting, disconnected and explicit leave pre
   assert.equal(guestState.controllerKind, 'takeover-ai');
 
   harness.manager.handleInput(guest.participantId, {
-    raceId: race.raceId,
+    wireRaceId: race.wireRaceId,
     seq: 1,
     useItemSeq: 0,
     throttle: 0.5,
@@ -781,7 +786,7 @@ test('item-only traffic cannot reclaim takeover AI or queue a delayed item use',
   const simulation = harness.simulations[0];
   const hostIndex = race.roster.find((entry) => entry.participantId === host.participantId).kartIndex;
   const input = {
-    raceId: race.raceId,
+    wireRaceId: race.wireRaceId,
     seq: 10,
     useItemSeq: 0,
     throttle: 0.5,
@@ -877,7 +882,7 @@ test('two loaded players start at timeout while a late third player keeps AI unt
   assert.equal(simulation.controllers[lateIndex], 'takeover-ai');
 
   harness.manager.handleInput(late.participantId, {
-    raceId: race.raceId,
+    wireRaceId: race.wireRaceId,
     seq: 0,
     useItemSeq: 0,
     throttle: 0,
@@ -1035,7 +1040,7 @@ test('late input from the current finished race is ignored but another race id i
   const room = harness.manager.rooms.get(host.roomCode);
   harness.manager._finishRace(room, harness.now());
   const input = {
-    raceId: race.raceId,
+    wireRaceId: race.wireRaceId,
     seq: 1,
     useItemSeq: 0,
     throttle: 1,
@@ -1047,7 +1052,7 @@ test('late input from the current finished race is ignored but another race id i
 
   assert.equal(harness.manager.handleInput(host.participantId, input), false);
   assert.throws(
-    () => harness.manager.handleInput(host.participantId, { ...input, raceId: 'another_race_123' }),
+    () => harness.manager.handleInput(host.participantId, { ...input, wireRaceId: race.wireRaceId + 1 }),
     (error) => error.code === ERROR_CODES.RACE_MISMATCH,
   );
 

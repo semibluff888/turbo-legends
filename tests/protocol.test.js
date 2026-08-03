@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   CLIENT_MESSAGE_TYPES,
+  CLIENT_UPDATE_CLOSE_CODE,
   ERROR_CODES,
   MAX_CLIENT_BYTES_PER_SECOND,
   MAX_CLIENT_BYTE_BURST,
@@ -17,8 +18,9 @@ import {
   validateClientMessage,
 } from '../src/net/protocol.js';
 
-test('protocol v3 exports Lobby, Room, loading ACK, and matchmaking message names', () => {
-  assert.equal(PROTOCOL_VERSION, 3);
+test('protocol v4 exports Lobby, Room, loading ACK, and matchmaking message names', () => {
+  assert.equal(PROTOCOL_VERSION, 4);
+  assert.equal(CLIENT_UPDATE_CLOSE_CODE, 4006);
   assert.equal(CLIENT_MESSAGE_TYPES.ENTER_LOBBY, 'enter_lobby');
   assert.equal(CLIENT_MESSAGE_TYPES.CREATE_ROOM, 'create_room');
   assert.equal(CLIENT_MESSAGE_TYPES.QUICK_MATCH, 'quick_match');

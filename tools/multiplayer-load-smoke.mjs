@@ -4,7 +4,8 @@ import { WebSocket } from 'ws';
 
 import { createGameServer } from '../server.mjs';
 import { outgoingMessageAction } from '../server/websocket-game-server.js';
-import { PROTOCOL_VERSION, encodeKartSnapshot } from '../src/net/protocol.js';
+import { PROTOCOL_VERSION } from '../src/net/protocol.js';
+import { decodeSnapshotPacket, encodeInputPacket } from '../src/net/binary-race-codec.js';
 
 const LOBBY_CLIENTS = Math.max(3, Number(process.env.SMOKE_LOBBY_CLIENTS) || 8);
 const RECONNECT_CLIENTS = Math.max(1, Number(process.env.SMOKE_RECONNECT_CLIENTS) || 6);
@@ -46,7 +47,7 @@ class SmokeSimulation {
       countdown: 0,
       elapsed: this.elapsed,
       laps: this.laps,
-      karts: this.karts.map((kart) => encodeKartSnapshot(kart, kart.controllerKind)),
+      karts: this.karts,
       projectiles: [],
       hazards: [],
       itemBoxes: [],
@@ -62,8 +63,16 @@ async function connect(url, origin) {
   const socket = new WebSocket(url, { headers: { Origin: origin } });
   const messages = [];
   const waiters = [];
-  socket.on('message', (data) => {
-    const message = JSON.parse(data.toString('utf8'));
+  const raceIds = new Map();
+  socket.on('message', (data, isBinary) => {
+    const message = isBinary
+      ? decodeSnapshotPacket(data)
+      : JSON.parse(data.toString('utf8'));
+    if (message.type === 'prepare_race' && message.wireRaceId) {
+      raceIds.set(message.wireRaceId, message.raceId);
+    } else if (message.type === 'snapshot') {
+      message.raceId = raceIds.get(message.wireRaceId) ?? null;
+    }
     messages.push(message);
     for (let index = waiters.length - 1; index >= 0; index--) {
       if (!waiters[index].predicate(message)) continue;
@@ -150,6 +159,17 @@ try {
   host.send({ type: 'race_loaded', raceId: prepare.raceId });
   guest.send({ type: 'race_loaded', raceId: prepare.raceId });
   await host.next(message => message.type === 'snapshot');
+  host.socket.send(encodeInputPacket({
+    wireRaceId: prepare.wireRaceId,
+    seq: 1,
+    useItemSeq: 0,
+    throttle: 1,
+    brake: 0,
+    steer: 0,
+    drift: false,
+    lookBack: false,
+  }));
+  await delay(50);
 
   // Private authentication: one failed and one successful verification.
   const privateHost = await connect(url, origin);
@@ -192,6 +212,8 @@ try {
     lobbyAmplificationMeasured: metrics.lobby.broadcasts > 0
       && metrics.lobby.recipients >= LOBBY_CLIENTS - 2,
     activeRoomSnapshotsMeasured: metrics.snapshot.built > 0 && metrics.snapshot.sent > 0,
+    binaryCodecMeasured: metrics.codec.snapshotEncoded > 0 && metrics.codec.inputDecoded > 0,
+    binaryCodecClean: metrics.codec.errors === 0 && metrics.codec.invalidBinary === 0,
     reconnectTrafficMeasured: metrics.traffic.inbound.byType.enter_lobby?.count >= LOBBY_CLIENTS,
     privateAuthenticationMeasured: metrics.auth.scryptCompleted >= 3,
     slowSnapshotWouldSkip: outgoingMessageAction({

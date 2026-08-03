@@ -91,8 +91,8 @@ troubleshooting guide.
   results screen only offers `RETURN TO ROOM`.
 
 Rooms, reconnect tokens, and results are process-memory state. Restarting the
-server clears them; v2 does not include accounts, persistent results, chat, or
-cross-process room migration.
+server clears them; the current release does not include accounts, persistent
+results, chat, or cross-process room migration.
 
 Invite links may include `?room=ROOMCODE`. Public rooms are joined automatically,
 while private rooms ask for a password. Missing, full, and racing rooms report an
@@ -158,8 +158,17 @@ page is served over HTTPS. For public deployment, terminate TLS in the hosting
 platform or reverse proxy and ensure WebSocket Upgrade requests for `/ws` are
 forwarded to this process.
 
-Protocol v3 is JSON. The shared message names, validators, limits, room states,
-and error codes are defined in `src/net/protocol.js`.
+Protocol v4 keeps lobby, room, authentication, events, and results as JSON, but
+uses fixed little-endian binary packets for 20 Hz full race snapshots and the
+client's 28-byte race input. `prepare_race` announces a nonzero `wireRaceId`
+used only by those binary packets. Shared message names, validators, limits,
+room states, and error codes live in `src/net/protocol.js`; the browser/Node
+codec is `src/net/binary-race-codec.js`.
+
+Protocol v3 game traffic is intentionally incompatible. During an atomic v4
+deployment, an old page receives `client_update_required`, the socket closes
+with code `4006`, and the UI asks the player to refresh instead of reconnecting
+forever.
 
 ## Development
 
@@ -167,6 +176,7 @@ and error codes are defined in `src/net/protocol.js`.
 npm test         # Node test discovery: simulation, protocol, server, and UI contracts
 npm run check    # import every browser module under Node (syntax/contract check)
 npm run smoke:multiplayer # isolated Lobby/race/reconnect/private-auth load smoke
+npm run ab:multiplayer-phase2 # temp-extracted v3 baseline vs sustained local v4 load
 ```
 
 The authoritative simulation (`src/core`, `src/track`, `src/game`) is pure

@@ -6,6 +6,7 @@ import {
   invitationRoomCode,
   invitationRoomRequest,
   isOnlineConnectionError,
+  isTerminalOnlineProtocolError,
   onlineErrorMessage,
   shouldAcknowledgeRaceLoaded,
   shouldPresentOnlineRoom,
@@ -71,7 +72,7 @@ test('a participant who returned from results is routed to the Room independentl
   assert.equal(shouldPresentOnlineRoom(room, true, 'guest'), false);
 });
 
-test('a warmed scene submits race_loaded unless the v3 ACK is already cached', () => {
+test('a warmed scene submits race_loaded unless the current ACK is already cached', () => {
   const prepare = { raceId: 'race-id-1234', resumed: true };
   assert.equal(shouldAcknowledgeRaceLoaded(prepare, false), true);
   assert.equal(shouldAcknowledgeRaceLoaded(prepare, null), true);
@@ -92,6 +93,10 @@ test('business-rule errors preserve a healthy connection indicator', () => {
   assert.equal(isOnlineConnectionError({ code: 'not_ready' }), false);
   assert.equal(isOnlineConnectionError({ code: 'socket_error' }), true);
   assert.equal(isOnlineConnectionError({ code: 'protocol_mismatch' }), true);
+  assert.equal(isOnlineConnectionError({ code: 'client_update_required' }), true);
+  assert.equal(isTerminalOnlineProtocolError({ code: 'client_update_required' }), true);
+  assert.equal(isTerminalOnlineProtocolError({ code: 'protocol_error' }), true);
+  assert.equal(isTerminalOnlineProtocolError({ code: 'socket_error' }), false);
 });
 
 test('stable protocol codes drive Lobby and Room error copy', () => {
@@ -106,6 +111,10 @@ test('stable protocol codes drive Lobby and Room error copy', () => {
   assert.equal(
     onlineErrorMessage({ code: 'no_matching_room' }),
     'No available public rooms were found.',
+  );
+  assert.equal(
+    onlineErrorMessage({ code: 'client_update_required' }),
+    'The game was updated. Refresh the page to continue.',
   );
   assert.equal(onlineErrorMessage({ code: 'future_error', message: 'Future failure.' }), 'Future failure.');
 });

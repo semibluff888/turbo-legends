@@ -17,6 +17,7 @@ import {
   invitationRoomRequest,
   hasReturnedToOnlineRoom,
   isOnlineConnectionError,
+  isTerminalOnlineProtocolError,
   onlineErrorMessage,
   onlineRoomPhase,
   shouldAcknowledgeRaceLoaded,
@@ -596,6 +597,17 @@ function wireOnlineClient() {
     const connectionError = isOnlineConnectionError(message);
     if (connectionError) {
       networkStatus.setConnectionState('error');
+    }
+    if (isTerminalOnlineProtocolError(message)) {
+      reconnectFailurePending = false;
+      finishLocalRoomReconnect({ restoreFocus: false });
+      onlineScreens.showAlert(onlineErrorMessage(message), {
+        title: UI_COPY.online.alerts.updateRequiredTitle,
+        buttonLabel: UI_COPY.online.alerts.refreshPage,
+        restoreFocus: null,
+        onConfirm: () => window.location.reload(),
+      });
+      return;
     }
     if (reconnectFailurePending) return;
     if (connectionError && beginLocalRoomReconnect()) return;

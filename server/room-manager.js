@@ -25,6 +25,11 @@ import {
   validateRoomPassword,
   validateRoomType,
 } from '../src/net/protocol.js';
+import {
+  BinaryPacketWriter,
+  RaceCodecError,
+  encodeSnapshotPacket,
+} from '../src/net/binary-race-codec.js';
 import { GameError } from './game-error.js';
 import { defaultScryptQueue, ScryptQueueFullError } from './scrypt-queue.js';
 
@@ -48,6 +53,10 @@ function opaqueId(bytes = 16) {
 
 function randomSeed() {
   return randomBytes(4).readUInt32LE(0);
+}
+
+function randomWireRaceId() {
+  return randomSeed() || 1;
 }
 
 function requireValid(result) {
@@ -126,6 +135,38 @@ function serializeSimulation(room) {
   };
 }
 
+function prepareBinarySnapshotSource(room, serverTime) {
+  const race = room.race;
+  const simulation = race.simulation;
+  const supplied = simulation.getSnapshot?.() ?? simulation.serializeSnapshot?.();
+  const source = supplied && typeof supplied === 'object' ? supplied : simulation;
+  const items = simulation.items;
+  const track = simulation.track ?? items?.track;
+  const snapshot = race.snapshotSource;
+  snapshot.state = source.state ?? simulation.state;
+  snapshot.countdown = source.countdown ?? simulation.countdown ?? null;
+  snapshot.elapsed = source.elapsed ?? simulation.elapsed ?? 0;
+  snapshot.laps = source.laps ?? simulation.laps ?? race.laps;
+  snapshot.karts = Array.isArray(source.karts) ? source.karts : simulation.karts ?? [];
+  snapshot.controllerKinds = Array.isArray(source.controllerKinds)
+    ? source.controllerKinds
+    : simulation.controllerKinds ?? race.roster.map((entry) => entry.controllerKind);
+  snapshot.projectiles = source.projectiles ?? items?.projectiles ?? [];
+  snapshot.hazards = source.hazards ?? items?.hazards ?? [];
+  snapshot.itemBoxes = Array.isArray(source.itemBoxes)
+    ? source.itemBoxes
+    : track?.itemBoxes ?? [];
+  snapshot.tick = race.tick;
+  snapshot.serverTime = serverTime;
+  for (let index = 0; index < race.ackMembers.length; index++) {
+    const member = room.members.get(race.ackMembers[index].participantId);
+    const ack = race.ackEntries[index];
+    ack[1] = member?.lastAppliedSeq ?? -1;
+    ack[2] = member?.lastUseItemSeq ?? 0;
+  }
+  return snapshot;
+}
+
 function defaultRaceResults(room) {
   const simulation = room.race.simulation;
   const supplied = simulation.getResults?.();
@@ -184,6 +225,7 @@ export class RoomManager extends EventEmitter {
     participantIdFactory = () => opaqueId(12),
     resumeTokenFactory = () => opaqueId(24),
     raceIdFactory = () => opaqueId(12),
+    wireRaceIdFactory = randomWireRaceId,
     seedFactory = randomSeed,
     roomCodeFactory = null,
     random = Math.random,
@@ -213,6 +255,7 @@ export class RoomManager extends EventEmitter {
     this.participantIdFactory = participantIdFactory;
     this.resumeTokenFactory = resumeTokenFactory;
     this.raceIdFactory = raceIdFactory;
+    this.wireRaceIdFactory = wireRaceIdFactory;
     this.seedFactory = seedFactory;
     this.roomCodeFactory = roomCodeFactory;
     this.random = random;
@@ -306,6 +349,7 @@ export class RoomManager extends EventEmitter {
       members: new Map(),
       race: null,
       lastRaceId: null,
+      lastWireRaceId: null,
       createdAt: now,
       emptySince: null,
     };
@@ -566,6 +610,10 @@ export class RoomManager extends EventEmitter {
     const now = this.now();
     const seed = this.seedFactory() >>> 0;
     const raceId = this.raceIdFactory();
+    const wireRaceId = Number(this.wireRaceIdFactory()) >>> 0;
+    if (wireRaceId === 0) {
+      throw new GameError(ERROR_CODES.INTERNAL_ERROR, 'Could not allocate a binary race id.');
+    }
     const roster = this._buildRoster(room, seed);
     for (const member of members) {
       member.postRaceState = null;
@@ -584,11 +632,15 @@ export class RoomManager extends EventEmitter {
     room.state = ROOM_STATES.LOADING;
     room.race = {
       raceId,
+      wireRaceId,
       seed,
       roster,
       rosterByKartIndex: new Map(roster.map((entry) => [entry.kartIndex, entry])),
       rosterByParticipantId: new Map(roster.map((entry) => [entry.participantId, entry])),
-      ackRoster: roster.slice().sort((a, b) => a.kartIndex - b.kartIndex),
+      ackMembers: roster
+        .filter((entry) => room.members.has(entry.participantId))
+        .sort((a, b) => a.kartIndex - b.kartIndex),
+      ackEntries: [],
       firstInputs: new Array(roster.length).fill(null),
       secondInputs: new Array(roster.length).fill(null),
       inputPairs: Array.from({ length: roster.length }, () => ([
@@ -607,9 +659,28 @@ export class RoomManager extends EventEmitter {
       accumulatorMs: 0,
       resultsAt: null,
       results: null,
+      snapshotWriter: new BinaryPacketWriter(),
+      snapshotSource: {
+        wireRaceId,
+        tick: 0,
+        serverTime: now,
+        state: ROOM_STATES.COUNTDOWN,
+        countdown: null,
+        elapsed: 0,
+        laps: track.laps ?? 3,
+        karts: [],
+        controllerKinds: [],
+        projectiles: [],
+        hazards: [],
+        itemBoxes: [],
+        acks: [],
+      },
     };
+    room.race.ackEntries = room.race.ackMembers.map((entry) => [entry.kartIndex, -1, 0]);
+    room.race.snapshotSource.acks = room.race.ackEntries;
     this._emitToRoom(room, serverMessage(SERVER_MESSAGE_TYPES.PREPARE_RACE, {
       raceId,
+      wireRaceId,
       seed,
       trackId: track.id,
       difficulty: room.settings.difficulty,
@@ -648,10 +719,10 @@ export class RoomManager extends EventEmitter {
   handleInput(participantId, input) {
     const { room, member } = this._findParticipant(participantId);
     if (!room.race) {
-      if (input.raceId === room.lastRaceId) return false;
+      if (input.wireRaceId === room.lastWireRaceId) return false;
       throw new GameError(ERROR_CODES.RACE_MISMATCH, 'That input belongs to a different race.');
     }
-    if (input.raceId !== room.race.raceId) {
+    if (input.wireRaceId !== room.race.wireRaceId) {
       throw new GameError(ERROR_CODES.RACE_MISMATCH, 'That input belongs to a different race.');
     }
     if (!room.race.simulation
@@ -757,6 +828,7 @@ export class RoomManager extends EventEmitter {
     if (room.race && !returnedFromResults) {
       messages.push(serverMessage(SERVER_MESSAGE_TYPES.PREPARE_RACE, {
         raceId: room.race.raceId,
+        wireRaceId: room.race.wireRaceId,
         seed: room.race.seed,
         trackId: room.race.trackId,
         difficulty: room.race.difficulty,
@@ -1095,23 +1167,27 @@ export class RoomManager extends EventEmitter {
   }
 
   _snapshotFor(room) {
-    const snapshot = serializeSimulation(room);
-    const acks = room.race.ackRoster
-      .map((entry) => {
-        const member = room.members.get(entry.participantId);
-        return [
-          entry.kartIndex,
-          member?.lastAppliedSeq ?? -1,
-          member?.lastUseItemSeq ?? 0,
-        ];
+    const startedAt = performance.now();
+    try {
+      const source = prepareBinarySnapshotSource(room, this.now());
+      const binaryData = encodeSnapshotPacket(source, room.race.snapshotWriter);
+      const durationMs = performance.now() - startedAt;
+      this.metrics?.recordSnapshotEncoding?.({ bytes: binaryData.byteLength, durationMs });
+      return {
+        v: 4,
+        type: SERVER_MESSAGE_TYPES.SNAPSHOT,
+        raceId: room.race.raceId,
+        wireRaceId: room.race.wireRaceId,
+        tick: room.race.tick,
+        binaryData,
+      };
+    } catch (error) {
+      this.metrics?.recordCodecError?.({
+        kind: error instanceof RaceCodecError ? error.code : 'snapshot_encode_failed',
+        oversized: error instanceof RaceCodecError && error.code === 'packet_too_large',
       });
-    return serverMessage(SERVER_MESSAGE_TYPES.SNAPSHOT, {
-      ...snapshot,
-      raceId: room.race.raceId,
-      tick: room.race.tick,
-      serverTime: this.now(),
-      acks,
-    });
+      throw error;
+    }
   }
 
   _raceLoadedAck(room, late = room.state !== ROOM_STATES.LOADING) {
@@ -1144,6 +1220,7 @@ export class RoomManager extends EventEmitter {
     this.activeRaceRooms.delete(room);
     room.race?.simulation?.dispose?.();
     room.lastRaceId = room.race?.raceId ?? room.lastRaceId;
+    room.lastWireRaceId = room.race?.wireRaceId ?? room.lastWireRaceId;
     this._finalizeRaceMembers(room);
     room.race = null;
     room.state = ROOM_STATES.WAITING;
@@ -1357,6 +1434,7 @@ export class RoomManager extends EventEmitter {
       room.race.simulation?.dispose?.();
       this._finalizeRaceMembers(room, { resetReady: true, now });
       room.lastRaceId = room.race.raceId;
+      room.lastWireRaceId = room.race.wireRaceId;
       room.race = null;
       room.state = ROOM_STATES.WAITING;
       this._emitToRoom(room, serverMessage(SERVER_MESSAGE_TYPES.ERROR, {

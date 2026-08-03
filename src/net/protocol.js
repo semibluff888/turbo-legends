@@ -1,4 +1,4 @@
-// Turbo Legends multiplayer protocol v3.
+// Turbo Legends multiplayer protocol v4.
 //
 // This module is intentionally browser-safe: both the Node server and the
 // native browser WebSocket client import the same message names and input
@@ -6,7 +6,8 @@
 
 import { isAvatarId, isPaintId } from '../game/appearance.js';
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
+export const CLIENT_UPDATE_CLOSE_CODE = 4006;
 export const MAX_CLIENT_MESSAGE_BYTES = 2 * 1024;
 export const MAX_CLIENT_MESSAGES_PER_SECOND = 120;
 export const MAX_CLIENT_MESSAGE_BURST = 180;
@@ -71,7 +72,9 @@ export const CONTROLLER_KINDS = Object.freeze({
   TAKEOVER_AI: 'takeover-ai',
 });
 
-// Protocol v3 uses a shared compact array for every Kart in a race snapshot.
+// Legacy compact Kart helpers remain available for simulation fixtures and
+// low-level compatibility tests. Protocol v4 race traffic uses the shared
+// binary codec in binary-race-codec.js.
 // The announced prepare_race roster remains the source of static identity and
 // appearance data; snapshots only carry fields that can change during a race.
 export const SNAPSHOT_KART_FIELDS = Object.freeze([
@@ -95,7 +98,7 @@ function snapshotValue(value) {
   return value === undefined ? null : value;
 }
 
-/** Encode one authoritative Kart into the protocol-v3 compact wire shape. */
+/** Encode one authoritative Kart into the legacy compact fixture shape. */
 export function encodeKartSnapshot(kart, controllerKind = kart?.controllerKind) {
   const controls = kart?.controls || {};
   return [
@@ -161,6 +164,7 @@ export const ERROR_CODES = Object.freeze({
   RACE_MISMATCH: 'race_mismatch',
   RATE_LIMITED: 'rate_limited',
   SERVER_BUSY: 'server_busy',
+  CLIENT_UPDATE_REQUIRED: 'client_update_required',
   INTERNAL_ERROR: 'internal_error',
 });
 

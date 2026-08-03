@@ -12,7 +12,8 @@ import {
   outgoingMessageAction,
   snapshotBackpressureThreshold,
 } from '../server/websocket-game-server.js';
-import { PROTOCOL_VERSION } from '../src/net/protocol.js';
+import { CLIENT_UPDATE_CLOSE_CODE, PROTOCOL_VERSION } from '../src/net/protocol.js';
+import { decodeSnapshotPacket } from '../src/net/binary-race-codec.js';
 
 const PROJECT_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const wsModule = await import('ws').catch(() => null);
@@ -46,8 +47,16 @@ async function connectClient(WebSocket, url, origin, options = {}) {
   const socket = new WebSocket(url, { ...options, headers: { Origin: origin } });
   const messages = [];
   const waiters = [];
-  socket.on('message', data => {
-    const message = JSON.parse(data.toString('utf8'));
+  const raceIds = new Map();
+  socket.on('message', (data, isBinary) => {
+    const message = isBinary
+      ? decodeSnapshotPacket(data)
+      : JSON.parse(data.toString('utf8'));
+    if (message.type === 'prepare_race' && message.wireRaceId) {
+      raceIds.set(message.wireRaceId, message.raceId);
+    } else if (message.type === 'snapshot') {
+      message.raceId = raceIds.get(message.wireRaceId) ?? null;
+    }
     messages.push(message);
     for (let i = waiters.length - 1; i >= 0; i--) {
       if (!waiters[i].predicate(message)) continue;
@@ -545,6 +554,58 @@ test('WebSocket message limiting allows its burst budget and closes sustained ex
   }
 });
 
+test('a protocol v3 client receives a terminal update error and closes with 4006', {
+  skip: wsModule ? false : 'ws dependency is not installed in this workspace',
+}, async () => {
+  const { WebSocket } = wsModule;
+  const server = await createGameServer({
+    root: PROJECT_ROOT,
+    logger: { info() {}, warn() {}, error() {} },
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const port = server.address().port;
+  const origin = `http://127.0.0.1:${port}`;
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { Origin: origin } });
+  try {
+    const terminal = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Timed out waiting for v3 rejection')), 2_000);
+      socket.on('message', (data, isBinary) => {
+        if (isBinary) return;
+        const message = JSON.parse(data.toString('utf8'));
+        if (message.code !== 'client_update_required') return;
+        clearTimeout(timer);
+        resolve(message);
+      });
+    });
+    const closed = new Promise(resolve => socket.once('close', (code, reason) => resolve({
+      code,
+      reason: reason.toString(),
+    })));
+    await new Promise((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    socket.send(JSON.stringify({ v: 3, type: 'enter_lobby' }));
+    assert.deepEqual(await terminal, {
+      v: 3,
+      type: 'error',
+      code: 'client_update_required',
+      message: 'The game was updated. Refresh the page to continue.',
+    });
+    assert.deepEqual(await closed, {
+      code: CLIENT_UPDATE_CLOSE_CODE,
+      reason: 'Client update required',
+    });
+    assert.equal(server.runtimeMetrics.snapshot().codec.v3Rejected, 1);
+  } finally {
+    if (socket.readyState !== WebSocket.CLOSED) socket.close();
+    await server.shutdown();
+  }
+});
+
 test('two WebSocket clients can share a Racer with distinct loadouts through results', {
   skip: wsModule ? false : 'ws dependency is not installed in this workspace',
 }, async () => {
@@ -639,6 +700,8 @@ test('two WebSocket clients can share a Racer with distinct loadouts through res
     const hostPrepare = await host.next(message => message.type === 'prepare_race');
     const guestPrepare = await guest.next(message => message.type === 'prepare_race');
     assert.equal(hostPrepare.raceId, guestPrepare.raceId);
+    assert.equal(hostPrepare.wireRaceId, guestPrepare.wireRaceId);
+    assert.equal(hostPrepare.wireRaceId > 0, true);
     assert.equal(hostPrepare.roster.length, 8);
     const humanRoster = hostPrepare.roster.filter(entry => entry.controllerKind === 'human');
     assert.deepEqual(humanRoster.map(entry => entry.characterId), ['kit', 'kit']);
@@ -664,8 +727,9 @@ test('two WebSocket clients can share a Racer with distinct loadouts through res
     assert.equal(hostSnapshot.raceId, hostPrepare.raceId);
     assert.equal(hostSnapshot.tick, guestSnapshot.tick);
     assert.equal(hostSnapshot.karts.length, 8);
-    assert.equal(Array.isArray(hostSnapshot.karts[0]), true);
+    assert.equal(Array.isArray(hostSnapshot.karts[0]), false);
     assert.equal(Array.isArray(hostSnapshot.acks), true);
+    assert.equal(hostSnapshot.acks.length, 2);
     assert.equal(Object.hasOwn(hostSnapshot, 'standings'), false);
     assert.equal(hostSnapshot.state, 'racing');
 
@@ -678,7 +742,8 @@ test('two WebSocket clients can share a Racer with distinct loadouts through res
       ...host.messagesAfter().filter(message => message.type === 'snapshot'),
       ...guest.messagesAfter().filter(message => message.type === 'snapshot'),
     ].map(message => message.tick));
-    assert.equal(snapshotStringifies, snapshotTicks.size);
+    assert.equal(snapshotStringifies, 0);
+    assert.equal(server.runtimeMetrics.snapshot().codec.snapshotEncoded, snapshotTicks.size);
     assert.deepEqual(
       hostResults.results
         .filter(result => result.participantId === hostWelcome.participantId

@@ -21,6 +21,10 @@ test('runtime metrics retain aggregate counters and rolling percentiles without 
     metrics.increment('lobby', 'broadcasts');
     metrics.increment('auth', 'attempts');
     metrics.recordScrypt(12);
+    metrics.recordSnapshotEncoding({ bytes: 1_173, durationMs: 0.4 });
+    metrics.recordInputDecode(0.08);
+    metrics.recordCodecError({ oversized: true, invalidBinary: true });
+    metrics.recordProtocolV3Rejected();
 
     const snapshot = metrics.snapshot();
     assert.equal(snapshot.windowMs, 60_000);
@@ -37,6 +41,14 @@ test('runtime metrics retain aggregate counters and rolling percentiles without 
     assert.equal(snapshot.snapshot.bytes, 200);
     assert.equal(snapshot.backpressure.snapshotSkipped, 1);
     assert.equal(snapshot.auth.scryptDurationMs.p95, 12);
+    assert.equal(snapshot.codec.snapshotEncoded, 1);
+    assert.equal(snapshot.codec.inputDecoded, 1);
+    assert.equal(snapshot.codec.errors, 1);
+    assert.equal(snapshot.codec.oversized, 1);
+    assert.equal(snapshot.codec.invalidBinary, 1);
+    assert.equal(snapshot.codec.v3Rejected, 1);
+    assert.equal(snapshot.codec.snapshotEncodeDurationMs.p95, 0.4);
+    assert.equal(snapshot.codec.inputDecodeDurationMs.p95, 0.08);
     assert.ok(snapshot.process.memory.rss > 0);
 
     const serialized = JSON.stringify(snapshot);

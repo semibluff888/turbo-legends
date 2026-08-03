@@ -11,6 +11,10 @@ import {
   webSocketUrl,
 } from '../src/net/online-client.js';
 import { PROTOCOL_VERSION } from '../src/net/protocol.js';
+import {
+  decodeInputPacket,
+  encodeSnapshotPacket,
+} from '../src/net/binary-race-codec.js';
 
 class MemoryStorage {
   constructor() { this.data = new Map(); this.writes = []; }
@@ -53,7 +57,13 @@ class FakeWebSocket {
     this.emit('message', { data: JSON.stringify(message) });
   }
 
-  send(value) { this.sent.push(JSON.parse(value)); }
+  receiveBinary(value) {
+    this.emit('message', { data: value });
+  }
+
+  send(value) {
+    this.sent.push(typeof value === 'string' ? JSON.parse(value) : value);
+  }
 
   close(code = 1000, reason = '') {
     this.readyState = 3;
@@ -356,7 +366,9 @@ test('returnRoom keeps the Room session and clears race id after the local retur
   const socket = FakeWebSocket.instances[0];
   socket.open();
   boundWelcome(socket, { participantId: 'host' });
-  socket.receive({ v: PROTOCOL_VERSION, type: 'prepare_race', raceId: 'race_identifier_123' });
+  socket.receive({
+    v: PROTOCOL_VERSION, type: 'prepare_race', raceId: 'race_identifier_123', wireRaceId: 123,
+  });
 
   assert.equal(client.returnRoom(), true);
   assert.deepEqual(socket.sent.at(-1), {
@@ -414,7 +426,9 @@ test('race input waits for load ACK and is suppressed while the WebSocket buffer
   const socket = FakeWebSocket.instances[0];
   socket.open();
   boundWelcome(socket);
-  socket.receive({ v: PROTOCOL_VERSION, type: 'prepare_race', raceId: 'race_identifier_123' });
+  socket.receive({
+    v: PROTOCOL_VERSION, type: 'prepare_race', raceId: 'race_identifier_123', wireRaceId: 123,
+  });
   const before = socket.sent.length;
 
   assert.equal(client.sendInput({
@@ -438,9 +452,11 @@ test('race input waits for load ACK and is suppressed while the WebSocket buffer
 
   socket.bufferedAmount = 0;
   assert.equal(client.sendInput({ seq: 1, useItemSeq: 0, throttle: 0.5, brake: 0, steer: 0.25, drift: false, lookBack: false }), true);
-  assert.equal(socket.sent.at(-1).type, 'input');
-  assert.equal(socket.sent.at(-1).seq, 1);
-  assert.equal(socket.sent.at(-1).throttle, 0.5);
+  const sentInput = decodeInputPacket(socket.sent.at(-1));
+  assert.equal(sentInput.type, 'input');
+  assert.equal(sentInput.wireRaceId, 123);
+  assert.equal(sentInput.seq, 1);
+  assert.ok(Math.abs(sentInput.throttle - 0.5) <= 1 / 65535);
 });
 
 test('load ACK is cached before scene listeners attach and reset for the next race', () => {
@@ -451,7 +467,9 @@ test('load ACK is cached before scene listeners attach and reset for the next ra
   const socket = FakeWebSocket.instances[0];
   socket.open();
   boundWelcome(socket);
-  socket.receive({ v: PROTOCOL_VERSION, type: 'prepare_race', raceId: 'race_identifier_123' });
+  socket.receive({
+    v: PROTOCOL_VERSION, type: 'prepare_race', raceId: 'race_identifier_123', wireRaceId: 123,
+  });
   socket.receive({
     v: PROTOCOL_VERSION,
     type: 'race_loaded_ack',
@@ -470,7 +488,9 @@ test('load ACK is cached before scene listeners attach and reset for the next ra
   });
   assert.deepEqual(acks, []);
 
-  socket.receive({ v: PROTOCOL_VERSION, type: 'prepare_race', raceId: 'race_identifier_456' });
+  socket.receive({
+    v: PROTOCOL_VERSION, type: 'prepare_race', raceId: 'race_identifier_456', wireRaceId: 456,
+  });
   assert.equal(client.hasRaceLoadedAck('race_identifier_123'), false);
   socket.receive({
     v: PROTOCOL_VERSION,
@@ -480,6 +500,63 @@ test('load ACK is cached before scene listeners attach and reset for the next ra
     members: [],
   });
   assert.equal(client.hasRaceLoadedAck('race_identifier_456'), false);
+});
+
+test('binary snapshots use the announced wire race id and wrong-race packets are ignored', () => {
+  FakeWebSocket.instances.length = 0;
+  const client = makeClient();
+  const snapshots = [];
+  client.on('snapshot', message => snapshots.push(message));
+  client.enterLobby();
+  const socket = FakeWebSocket.instances[0];
+  assert.equal(socket.binaryType, 'arraybuffer');
+  socket.open();
+  boundWelcome(socket);
+  socket.receive({
+    v: PROTOCOL_VERSION, type: 'prepare_race', raceId: 'race_identifier_123', wireRaceId: 123,
+  });
+
+  const packet = (wireRaceId, tick) => encodeSnapshotPacket({
+    wireRaceId,
+    tick,
+    serverTime: 1_000,
+    countdown: 3,
+    laps: 3,
+    state: 'countdown',
+    elapsed: 0,
+    karts: [],
+    projectiles: [],
+    hazards: [],
+    itemBoxes: [],
+    acks: [],
+  });
+  socket.receiveBinary(packet(456, 1));
+  assert.equal(snapshots.length, 0);
+  socket.receiveBinary(packet(123, 2));
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0].raceId, 'race_identifier_123');
+  assert.equal(snapshots[0].wireRaceId, 123);
+  assert.equal(snapshots[0].tick, 2);
+});
+
+test('close 4006 and corrupt snapshots stop automatic reconnect and request a refresh', () => {
+  for (const mode of ['close', 'corrupt']) {
+    FakeWebSocket.instances.length = 0;
+    const client = makeClient();
+    const errors = [];
+    client.on('error', error => errors.push(error));
+    client.enterLobby();
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    if (mode === 'close') socket.close(4006, 'Client update required');
+    else socket.receiveBinary(new Uint8Array([1, 2, 3]));
+
+    assert.equal(client.state, 'disconnected');
+    assert.equal(FakeWebSocket.instances.length, 1);
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].code, mode === 'close' ? 'client_update_required' : 'protocol_error');
+    assert.match(errors[0].message, /refresh/i);
+  }
 });
 
 test('unexpected Room close schedules a resume attempt', () => {

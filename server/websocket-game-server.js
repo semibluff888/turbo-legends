@@ -1,9 +1,11 @@
 import { randomBytes } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 
 import { WebSocketServer } from 'ws';
 
 import {
   CLIENT_MESSAGE_TYPES,
+  CLIENT_UPDATE_CLOSE_CODE,
   ERROR_CODES,
   MAX_CLIENT_MESSAGE_BURST,
   MAX_CLIENT_MESSAGE_BYTES,
@@ -15,6 +17,10 @@ import {
   parseClientMessage,
   serverMessage,
 } from '../src/net/protocol.js';
+import {
+  RaceCodecError,
+  decodeInputPacket,
+} from '../src/net/binary-race-codec.js';
 import { asErrorMessage, GameError } from './game-error.js';
 
 const AUTH_ACTIONS = new Set([
@@ -31,7 +37,6 @@ const AUTH_ACTIONS = new Set([
 export const ROOM_PRESENCE_HEARTBEAT_INTERVAL_MS = 3_000;
 export const SNAPSHOT_BACKPRESSURE_FLOOR_BYTES = 16 * 1024;
 export const SLOW_CLIENT_BACKPRESSURE_BYTES = 512 * 1024;
-
 export function snapshotBackpressureThreshold(serializedBytes) {
   return Math.max(
     SNAPSHOT_BACKPRESSURE_FLOOR_BYTES,
@@ -184,6 +189,14 @@ export function attachGameWebSocket(httpServer, {
 
   function send(session, message) {
     if (!session || session.socket.readyState !== 1) return false;
+    if (message?.type === SERVER_MESSAGE_TYPES.SNAPSHOT && message.binaryData) {
+      return sendSerialized(
+        session,
+        message.binaryData,
+        message.type,
+        message.binaryData.byteLength,
+      );
+    }
     const personalized = addSelfState(message, session.participantId);
     const serialized = stringify(personalized);
     return sendSerialized(
@@ -465,8 +478,10 @@ export function attachGameWebSocket(httpServer, {
         await roomManager.markRaceLoaded(session.participantId, message.raceId);
         break;
       case CLIENT_MESSAGE_TYPES.INPUT:
-        roomManager.handleInput(session.participantId, message);
-        break;
+        throw new GameError(
+          ERROR_CODES.INVALID_MESSAGE,
+          'Protocol v4 race input must use the binary input packet.',
+        );
       case CLIENT_MESSAGE_TYPES.RETURN_ROOM:
         roomManager.returnToRoom(session.participantId);
         break;
@@ -498,13 +513,17 @@ export function attachGameWebSocket(httpServer, {
       return;
     }
     if (message.type === SERVER_MESSAGE_TYPES.SNAPSHOT) {
-      const serialized = stringify(message);
-      const serializedBytes = Buffer.byteLength(serialized);
+      const binaryData = message.binaryData;
+      const serializedBytes = binaryData?.byteLength ?? 0;
+      if (!binaryData || serializedBytes <= 0) {
+        metrics?.recordCodecError?.({ invalidBinary: true });
+        return;
+      }
       metrics?.recordSnapshot({ bytes: serializedBytes, built: true, sent: 0 });
       const recipients = roomSessions.get(roomCode);
       if (!recipients) return;
       for (const session of recipients) {
-        sendSerialized(session, serialized, message.type, serializedBytes);
+        sendSerialized(session, binaryData, message.type, serializedBytes);
       }
       return;
     }
@@ -581,7 +600,11 @@ export function attachGameWebSocket(httpServer, {
     });
     socket.on('message', (data, isBinary) => {
       const messageBytes = data.byteLength;
-      if (isBinary || messageBytes > MAX_CLIENT_MESSAGE_BYTES) {
+      if (messageBytes > MAX_CLIENT_MESSAGE_BYTES) {
+        if (isBinary) {
+          metrics?.recordTraffic('inbound', 'invalid_binary', messageBytes);
+          metrics?.recordCodecError?.({ oversized: true, invalidBinary: true });
+        }
         socket.close(1009, 'Message too large');
         return;
       }
@@ -590,7 +613,57 @@ export function attachGameWebSocket(httpServer, {
         socket.close(1008, 'Rate limit exceeded');
         return;
       }
-      const parsed = parseClientMessage(data.toString('utf8'));
+      if (isBinary) {
+        const startedAt = performance.now();
+        let input;
+        try {
+          input = decodeInputPacket(data);
+        } catch (error) {
+          metrics?.recordTraffic('inbound', 'invalid_binary', messageBytes);
+          metrics?.recordCodecError?.({ invalidBinary: true });
+          logger.warn?.(`[multiplayer] invalid binary input: ${error.message}`);
+          socket.close(1003, 'Invalid binary race input');
+          return;
+        }
+        metrics?.recordInputDecode?.(performance.now() - startedAt);
+        metrics?.recordTraffic('inbound', CLIENT_MESSAGE_TYPES.INPUT, messageBytes);
+        try {
+          if (!session.participantId) {
+            throw new GameError(ERROR_CODES.NOT_IN_ROOM, 'Join a room before sending race input.');
+          }
+          roomManager.handleInput(session.participantId, input);
+        } catch (error) {
+          if (!(error instanceof GameError) && !(error instanceof RaceCodecError)) {
+            logger.error?.('[multiplayer] binary input failed', error);
+          }
+          sendError(session, error);
+        }
+        return;
+      }
+      const raw = data.toString('utf8');
+      try {
+        const legacy = JSON.parse(raw);
+        if (legacy?.v === 3) {
+          metrics?.recordTraffic('inbound', 'protocol_v3', messageBytes);
+          metrics?.recordProtocolV3Rejected?.();
+          const terminal = stringify({
+            v: 3,
+            type: SERVER_MESSAGE_TYPES.ERROR,
+            code: ERROR_CODES.CLIENT_UPDATE_REQUIRED,
+            message: 'The game was updated. Refresh the page to continue.',
+          });
+          metrics?.recordTraffic('outbound', SERVER_MESSAGE_TYPES.ERROR, Buffer.byteLength(terminal));
+          socket.send(terminal, () => {
+            if (socket.readyState === 1) {
+              socket.close(CLIENT_UPDATE_CLOSE_CODE, 'Client update required');
+            }
+          });
+          return;
+        }
+      } catch {
+        // The shared JSON parser below returns the canonical validation error.
+      }
+      const parsed = parseClientMessage(raw);
       if (!parsed.ok) {
         metrics?.recordTraffic('inbound', 'invalid', messageBytes);
         sendError(session, new GameError(parsed.error.code, parsed.error.message));
