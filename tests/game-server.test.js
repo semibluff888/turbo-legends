@@ -688,6 +688,9 @@ test('two WebSocket clients can share a Racer with distinct loadouts through res
       'sunset-pop',
     );
 
+    host.send({ type: 'set_room', autoFillAi: true });
+    await host.next(message => message.type === 'room_state' && message.settings.autoFillAi === true);
+
     host.send({ type: 'set_ready', ready: true });
     await host.next(message => (
       message.type === 'room_state'

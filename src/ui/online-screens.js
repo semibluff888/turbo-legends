@@ -412,7 +412,7 @@ export function buildRoomView(roomState = {}, localParticipantId = '') {
     canStart: isHost && serverAllowsStart && phase === 'waiting',
     trackId: String(firstDefined(settings.trackId, roomState.trackId, TRACKS[0]?.id, '')),
     difficulty: String(firstDefined(settings.difficulty, roomState.difficulty, 'normal')),
-    autoFillAi: Boolean(firstDefined(settings.autoFillAi, roomState.autoFillAi, true)),
+    autoFillAi: Boolean(firstDefined(settings.autoFillAi, roomState.autoFillAi, false)),
   };
 }
 
@@ -1082,7 +1082,7 @@ export class OnlineScreens {
               <select class="online-select" data-room-setting="difficulty"></select>
             </label>
             <label class="online-checkbox-field">
-              <input type="checkbox" data-room-setting="autoFillAi" checked>
+              <input type="checkbox" data-room-setting="autoFillAi">
               <span class="online-checkbox-mark" aria-hidden="true"></span>
               <span class="online-checkbox-copy">
                 <strong>${copy.autoFillAi}</strong>

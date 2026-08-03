@@ -191,6 +191,16 @@ test('room view uses custom capacity and participant ids with duplicate nickname
   assert.equal(guestView.canStart, false);
 });
 
+test('room view defaults AI auto-fill to disabled when the server omits the setting', () => {
+  const view = buildRoomView({
+    roomCode: 'QRS789',
+    hostParticipantId: 'p1',
+    members: [{ participantId: 'p1', displayName: 'Host', ready: false, connected: true }],
+  }, 'p1');
+
+  assert.equal(view.autoFillAi, false);
+});
+
 test('room start remains unavailable while a reserved member is offline', () => {
   const view = buildRoomView({
     roomCode: 'QRS789',

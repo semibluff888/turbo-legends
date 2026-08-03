@@ -345,7 +345,7 @@ export class RoomManager extends EventEmitter {
       maxPlayers,
       state: ROOM_STATES.WAITING,
       hostParticipantId: null,
-      settings: { trackId: track.id, difficulty: 'normal', autoFillAi: true },
+      settings: { trackId: track.id, difficulty: 'normal', autoFillAi: false },
       members: new Map(),
       race: null,
       lastRaceId: null,

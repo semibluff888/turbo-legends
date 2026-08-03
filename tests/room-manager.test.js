@@ -101,6 +101,7 @@ async function addTwoPlayers(harness) {
 
 async function startTwoPlayerRace(harness) {
   const players = await addTwoPlayers(harness);
+  harness.manager.setRoom(players.host.participantId, { autoFillAi: true });
   harness.manager.setReady(players.host.participantId, true);
   harness.manager.setReady(players.guest.participantId, true);
   const race = harness.manager.startRace(players.host.participantId);
@@ -163,13 +164,13 @@ test('waiting room allows duplicate names and racers while loadout changes reset
   assert.equal(changed[1].paintId, 'pearl-flash');
   assert.equal(changed[1].avatarId, 'rabbit');
   harness.manager.setReady(guest.participantId, true);
-  assert.equal(harness.manager.getRoomState(host.roomCode).settings.autoFillAi, true);
-  harness.manager.setRoom(host.participantId, { difficulty: 'hard', autoFillAi: false });
+  assert.equal(harness.manager.getRoomState(host.roomCode).settings.autoFillAi, false);
+  harness.manager.setRoom(host.participantId, { difficulty: 'hard', autoFillAi: true });
   assert.deepEqual(
     harness.manager.getRoomState(host.roomCode).members.map((member) => member.ready),
     [false, false, false],
   );
-  assert.equal(harness.manager.getRoomState(host.roomCode).settings.autoFillAi, false);
+  assert.equal(harness.manager.getRoomState(host.roomCode).settings.autoFillAi, true);
 });
 
 test('duplicate human racers keep independent appearances in the announced roster', async () => {
@@ -191,7 +192,7 @@ test('duplicate human racers keep independent appearances in the announced roste
   assert.deepEqual(new Set(humans.map((entry) => entry.avatarId)), new Set(['cat', 'dog']));
 });
 
-test('AI auto-fill uses room capacity and can be disabled by the host', async () => {
+test('AI auto-fill is disabled by default and can be enabled by the host', async () => {
   const filledHarness = createHarness();
   const filledHost = await filledHarness.manager.createRoom({
     displayName: 'Host', characterId: 'pip', roomName: 'Four Kart Cup',
@@ -200,6 +201,8 @@ test('AI auto-fill uses room capacity and can be disabled by the host', async ()
   const filledGuest = await filledHarness.manager.joinRoom(filledHost.roomCode, {
     displayName: 'Guest', characterId: 'nova',
   });
+  assert.equal(filledHarness.manager.getRoomState(filledHost.roomCode).settings.autoFillAi, false);
+  filledHarness.manager.setRoom(filledHost.participantId, { autoFillAi: true });
   filledHarness.manager.setReady(filledHost.participantId, true);
   filledHarness.manager.setReady(filledGuest.participantId, true);
   const filledRace = filledHarness.manager.startRace(filledHost.participantId);
