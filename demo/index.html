@@ -113,12 +113,17 @@
           </div>
         </div>
 
-        <!-- Driver Visibility Toggle -->
+        <!-- Driver Visibility & Nitro Boost Toggles -->
         <div class="control-group">
-          <label class="control-label">赛车手显示设置</label>
-          <button id="btn-toggle-driver" class="action-btn active" style="width: 100%; text-align: center;" type="button">
-            🏎️ 赛车手显示: ON (显示驾驶员)
-          </button>
+          <label class="control-label">驾驶员与氮气特效</label>
+          <div class="button-grid" style="grid-template-columns: 1fr;">
+            <button id="btn-toggle-driver" class="action-btn active" style="margin-bottom: 0.4rem; text-align: center;" type="button">
+              🏎️ 赛车手显示: ON (显示驾驶员)
+            </button>
+            <button id="btn-toggle-nitro" class="action-btn" style="text-align: center;" type="button">
+              🚀 氮气加速特效: OFF (待机关闭)
+            </button>
+          </div>
         </div>
 
         <!-- Color Presets -->
@@ -238,6 +243,15 @@
         app.setShowDriver(!app.showDriver);
         driverBtn.classList.toggle('active', app.showDriver);
         driverBtn.textContent = `🏎️ 赛车手显示: ${app.showDriver ? 'ON (显示驾驶员)' : 'OFF (隐藏驾驶员)'}`;
+        updateUI();
+      });
+
+      // Nitro Boost Toggle
+      const nitroBtn = document.getElementById('btn-toggle-nitro');
+      nitroBtn.addEventListener('click', () => {
+        app.setNitroBoost(!app.nitroBoost);
+        nitroBtn.classList.toggle('active', app.nitroBoost);
+        nitroBtn.textContent = `🚀 氮气加速特效: ${app.nitroBoost ? 'ON (喷射中)' : 'OFF (待机关闭)'}`;
         updateUI();
       });
 

@@ -20,9 +20,10 @@ export class ShowroomApp {
     this.activeModelIndex = 0;
     this.viewMode = 'single'; // 'single' | 'grid'
 
-    // Driver & Avatar State
+    // Driver & Nitro Boost State
     this.activeAvatarId = 'cat';
     this.showDriver = true;
+    this.nitroBoost = false;
 
     // Controls & State
     this.isAutoRotate = true;
@@ -138,12 +139,12 @@ export class ShowroomApp {
     });
     this.models = [];
 
-    // Instantiate 4 Models with Driver Avatar settings
+    // Instantiate 4 Models with Driver Avatar & Nitro Boost settings
     const modelDefs = [
-      buildDefaultKart('kit'),
-      buildCyberHypercar(this.currentColor, this.currentAccent, this.activeAvatarId, this.showDriver),
-      buildChibiCuteRacer(0xff7ebb, 0xffe66d, this.activeAvatarId, this.showDriver),
-      buildFormula1RealRacer(0xd90429, 0xffb703, this.activeAvatarId, this.showDriver),
+      buildDefaultKart('kit', undefined, this.nitroBoost),
+      buildCyberHypercar(this.currentColor, this.currentAccent, this.activeAvatarId, this.showDriver, this.nitroBoost),
+      buildChibiCuteRacer(0xff7ebb, 0xffe66d, this.activeAvatarId, this.showDriver, this.nitroBoost),
+      buildFormula1RealRacer(0xd90429, 0xffb703, this.activeAvatarId, this.showDriver, this.nitroBoost),
     ];
 
     modelDefs.forEach((mod, idx) => {
@@ -209,6 +210,11 @@ export class ShowroomApp {
 
   setShowDriver(enabled) {
     this.showDriver = enabled;
+    this.loadModels();
+  }
+
+  setNitroBoost(enabled) {
+    this.nitroBoost = enabled;
     this.loadModels();
   }
 
