@@ -4,6 +4,8 @@ import {
   buildCyberHypercar,
   buildChibiCuteRacer,
   buildFormula1RealRacer,
+  buildQuantumHoverRacer,
+  buildRuggedOffroadBeast,
   disposeGroup,
 } from './car-models.js';
 
@@ -139,12 +141,14 @@ export class ShowroomApp {
     });
     this.models = [];
 
-    // Instantiate 4 Models with Driver Avatar & Nitro Boost settings
+    // Instantiate 6 Models with Driver Avatar & Nitro Boost settings
     const modelDefs = [
       buildDefaultKart('kit', undefined, this.nitroBoost),
       buildCyberHypercar(this.currentColor, this.currentAccent, this.activeAvatarId, this.showDriver, this.nitroBoost),
       buildChibiCuteRacer(0xff7ebb, 0xffe66d, this.activeAvatarId, this.showDriver, this.nitroBoost),
       buildFormula1RealRacer(0xd90429, 0xffb703, this.activeAvatarId, this.showDriver, this.nitroBoost),
+      buildQuantumHoverRacer(0x00f0ff, 0xa000ff, this.activeAvatarId, this.showDriver, this.nitroBoost),
+      buildRuggedOffroadBeast(0xd97706, 0x84cc16, this.activeAvatarId, this.showDriver, this.nitroBoost),
     ];
 
     modelDefs.forEach((mod, idx) => {
@@ -171,8 +175,8 @@ export class ShowroomApp {
 
     this.models.forEach((mod, idx) => {
       if (isGrid) {
-        const spacing = 4.2;
-        const xPos = (idx - 1.5) * spacing;
+        const spacing = 3.6;
+        const xPos = (idx - 2.5) * spacing;
         mod.wrapper.position.set(xPos, 0, 0);
         mod.wrapper.visible = true;
         mod.wrapper.scale.setScalar(0.85);
@@ -184,7 +188,7 @@ export class ShowroomApp {
     });
 
     if (isGrid) {
-      this.camera.position.set(0, 4.5, 11.5);
+      this.camera.position.set(0, 5.2, 14.0);
       this.camera.lookAt(0, 0.5, 0);
     } else {
       this.updateCameraTransform();

@@ -732,3 +732,316 @@ export function buildFormula1RealRacer(primaryColor = 0xd90429, accentColor = 0x
     }
   };
 }
+
+// ============================================================================
+// 5. QUANTUM CRYSTAL HOVER-RACER (量子晶体光轮)
+// ============================================================================
+export function buildQuantumHoverRacer(primaryColor = 0x00f0ff, accentColor = 0xa000ff, avatarId = 'raccoon', showDriver = true, nitroBoost = false) {
+  const group = new THREE.Group();
+
+  const crystalMat = new THREE.MeshPhysicalMaterial({
+    color: primaryColor,
+    transmission: 0.85,
+    opacity: 0.9,
+    transparent: true,
+    roughness: 0.1,
+    metalness: 0.2,
+    ior: 1.6,
+  });
+  const carbonMat = new THREE.MeshStandardMaterial({ color: 0x121520, roughness: 0.3, metalness: 0.9 });
+  const quantumCoreMat = new THREE.MeshStandardMaterial({ color: accentColor, emissive: accentColor, emissiveIntensity: 5.0 });
+  const cyanRingMat = new THREE.MeshStandardMaterial({ color: 0x00ffff, emissive: 0x00ffff, emissiveIntensity: 4.0 });
+
+  // Faceted Crystal Hull
+  const hullGeo = new THREE.OctahedronGeometry(1.2, 2);
+  hullGeo.scale(0.8, 0.35, 1.8);
+  createMesh(hullGeo, crystalMat, group, [0, 0.52, 0]);
+
+  // Carbon Fiber Aerodynamic Spine Frame
+  createMesh(new THREE.BoxGeometry(0.35, 0.25, 3.2), carbonMat, group, [0, 0.42, 0]);
+
+  // Floating Pulsing Quantum Core Orb
+  const coreMesh = createMesh(new THREE.SphereGeometry(0.28, 20, 20), quantumCoreMat, group, [0, 0.58, -0.6]);
+
+  // Driver Mount Point Inside Crystal Canopy
+  let avatarObj = null;
+  if (showDriver) {
+    avatarObj = buildCartoonAvatar(avatarId, 0.92);
+    avatarObj.group.position.set(0, 0.50, 0.1);
+    group.add(avatarObj.group);
+  }
+
+  // Rear Quantum Plasma Thruster Nozzles
+  const nitroFlames = [];
+  for (const side of [-1, 1]) {
+    createMesh(new THREE.TorusGeometry(0.22, 0.04, 12, 24), cyanRingMat, group, [side * 0.42, 0.52, -1.65]);
+    const flame = createInGameBoostFlame(group, side * 0.42, 0.52, -1.80, 0.95);
+    nitroFlames.push(flame);
+  }
+
+  // Hubless Floating Ring Wheels (Torus Rings)
+  const wheels = [];
+  const wPositions = [[-0.88, 0.38, 1.1], [0.88, 0.38, 1.1], [-0.88, 0.38, -1.1], [0.88, 0.38, -1.1]];
+
+  wPositions.forEach(([wx, wy, wz]) => {
+    const wGroup = new THREE.Group();
+    wGroup.position.set(wx, wy, wz);
+    group.add(wGroup);
+
+    const outwardSign = Math.sign(wx);
+    createMesh(new THREE.TorusGeometry(0.38, 0.07, 16, 32), cyanRingMat, wGroup, [0, 0, 0], [0, Math.PI / 2, 0]);
+    createMesh(new THREE.TorusGeometry(0.28, 0.03, 12, 24), quantumCoreMat, wGroup, [outwardSign * 0.02, 0, 0], [0, Math.PI / 2, 0]);
+    wheels.push(wGroup);
+  });
+
+  return {
+    group,
+    id: 'quantum',
+    name: '量子晶体光轮 (Quantum Crystal Hover-Racer)',
+    styleTag: '量子晶体光流',
+    description: '半透明晶体装甲与无轴悬浮光轮构成的未来量子赛车，核心配备脉冲量子能量球。',
+    specs: {
+      '风格类型': 'Quantum Crystal Energy Hover-Racer',
+      '轮毂技术': '无轴磁悬浮发光光轮 (Hubless Glowing Ring Wheels)',
+      '动力核心': '悬浮脉冲量子能量球 (Floating Quantum Core)',
+      '氮气特效': nitroBoost ? '🚀 游戏同款双层火焰 (In-Game Boost Active)' : '待机关闭 (Off)'
+    },
+    update(time, dt) {
+      coreMesh.scale.setScalar(1 + 0.12 * Math.sin(time * 6));
+      updateInGameBoostFlame(nitroFlames, nitroBoost, time);
+      wheels.forEach((w) => { w.children[0].rotation.z += dt * (nitroBoost ? 22 : 10); });
+      if (avatarObj) avatarObj.update(time);
+      group.position.y = 0.12 + Math.sin(time * 2.5) * 0.035;
+    },
+    dispose() {
+      disposeGroup(group);
+    }
+  };
+}
+
+// ============================================================================
+// 6. RUGGED OFF-ROAD BEAST (荒野雷霆越野装甲)
+// ============================================================================
+export function buildRuggedOffroadBeast(
+  primaryColor = 0xd97706,
+  accentColor = 0x84cc16,
+  avatarId = 'bear',
+  showDriver = true,
+  nitroBoost = false
+) {
+  const group = new THREE.Group();
+
+  // Materials
+  const bodyMat = new THREE.MeshStandardMaterial({
+    color: primaryColor,
+    roughness: 0.65,
+    metalness: 0.2,
+    envMapIntensity: 1.0,
+  });
+  const darkMetalMat = new THREE.MeshStandardMaterial({
+    color: 0x1e2430,
+    roughness: 0.5,
+    metalness: 0.85,
+  });
+  const cageMat = new THREE.MeshStandardMaterial({
+    color: 0x0f172a,
+    roughness: 0.35,
+    metalness: 0.9,
+  });
+  const springMat = new THREE.MeshStandardMaterial({
+    color: accentColor,
+    roughness: 0.3,
+    metalness: 0.7,
+    emissive: accentColor,
+    emissiveIntensity: 0.3,
+  });
+  const tireRubberMat = new THREE.MeshStandardMaterial({
+    color: 0x111318,
+    roughness: 0.95,
+    metalness: 0.05,
+  });
+  const beadlockRimMat = new THREE.MeshStandardMaterial({
+    color: 0x334155,
+    metalness: 0.85,
+    roughness: 0.25,
+  });
+  const accentRimRing = new THREE.MeshStandardMaterial({
+    color: accentColor,
+    roughness: 0.3,
+    metalness: 0.8,
+  });
+  const lightGlassMat = new THREE.MeshStandardMaterial({
+    color: 0xffea00,
+    emissive: 0xffea00,
+    emissiveIntensity: 3.0,
+  });
+
+  // 1. CHASSIS FRAME & HEAVY MUDGUARDS
+  createMesh(new THREE.BoxGeometry(1.2, 0.22, 3.4), darkMetalMat, group, [0, 0.38, 0]);
+
+  // Front Steel Bull Bar Bumper Guard
+  createMesh(new THREE.CylinderGeometry(0.06, 0.06, 1.4), darkMetalMat, group, [0, 0.42, 1.85], [0, 0, Math.PI / 2]);
+  createMesh(new THREE.BoxGeometry(1.2, 0.12, 0.25), darkMetalMat, group, [0, 0.30, 1.95], [-0.2, 0, 0]);
+
+  // Dual Front Amber Off-Road Fog Lamps
+  for (const side of [-1, 1]) {
+    createMesh(new THREE.CylinderGeometry(0.12, 0.12, 0.1, 16), darkMetalMat, group, [side * 0.4, 0.45, 1.92], [Math.PI / 2, 0, 0]);
+    createMesh(new THREE.SphereGeometry(0.1, 12, 12), lightGlassMat, group, [side * 0.4, 0.45, 1.96]);
+  }
+
+  // Rugged Bonnet / Hood with Power Bulge
+  const hoodShape = new THREE.Shape();
+  hoodShape.moveTo(-0.55, -0.6);
+  hoodShape.lineTo(-0.62, 0.6);
+  hoodShape.lineTo(-0.48, 1.5);
+  hoodShape.lineTo(0.48, 1.5);
+  hoodShape.lineTo(0.62, 0.6);
+  hoodShape.lineTo(0.55, -0.6);
+  hoodShape.closePath();
+
+  const hoodGeo = new THREE.ExtrudeGeometry(hoodShape, { depth: 0.28, bevelEnabled: true, bevelSize: 0.05, bevelThickness: 0.05 });
+  hoodGeo.center();
+  createMesh(hoodGeo, bodyMat, group, [0, 0.60, 0.85], [Math.PI / 2, 0, 0]);
+
+  // Power Scoop Air Intake on Hood
+  createMesh(new THREE.BoxGeometry(0.42, 0.12, 0.5), darkMetalMat, group, [0, 0.76, 1.0], [0.15, 0, 0]);
+
+  // Flared Wide Wheel Arches (Fenders)
+  for (const side of [-1, 1]) {
+    createMesh(new THREE.BoxGeometry(0.35, 0.18, 1.1), darkMetalMat, group, [side * 0.72, 0.60, 1.25], [0.1, 0, side * -0.1]);
+    createMesh(new THREE.BoxGeometry(0.38, 0.22, 1.2), darkMetalMat, group, [side * 0.74, 0.64, -1.15], [-0.08, 0, side * 0.1]);
+  }
+
+  // 2. CLEAN OPEN SAFARI ROLL CAGE & COCKPIT (NO FRONT CROSSBAR OR FACE-SHADOWING LIGHT BAR)
+  const cageRadius = 0.04;
+  for (const side of [-1, 1]) {
+    // Side A-Pillar (Front diagonal cage along outer sides)
+    createMesh(new THREE.CylinderGeometry(cageRadius, cageRadius, 1.0), cageMat, group, [side * 0.55, 0.95, 0.35], [-0.45, 0, side * -0.15]);
+    // Side B-Pillar (Rear cage vertical along outer sides)
+    createMesh(new THREE.CylinderGeometry(cageRadius, cageRadius, 0.95), cageMat, group, [side * 0.55, 0.95, -0.65], [0.15, 0, side * -0.1]);
+    // Side Roof Rails (Connecting A & B pillars along top of roof)
+    createMesh(new THREE.CylinderGeometry(cageRadius, cageRadius, 1.2), cageMat, group, [side * 0.55, 1.32, -0.15], [Math.PI / 2, 0, 0]);
+  }
+  // Rear Roof Crossbar (Behind driver head only, no shadow on face)
+  createMesh(new THREE.CylinderGeometry(cageRadius, cageRadius, 1.1), cageMat, group, [0, 1.32, -0.65], [0, 0, Math.PI / 2]);
+
+  // Front Hood Dashboard Edge (Low under steering line)
+  createMesh(new THREE.CylinderGeometry(cageRadius, cageRadius, 1.05), cageMat, group, [0, 0.62, 0.55], [0, 0, Math.PI / 2]);
+
+  // Ergonomic Bucket Seat (Lowered comfortable position)
+  createMesh(new THREE.BoxGeometry(0.58, 0.60, 0.48), darkMetalMat, group, [0, 0.52, -0.05]);
+
+  // Driver Mount Point (Lowered natural seating height, face receives clean key light without shadow)
+  let avatarObj = null;
+  if (showDriver) {
+    avatarObj = buildCartoonAvatar(avatarId, 0.98);
+    avatarObj.group.position.set(0, 0.56, 0.0);
+    group.add(avatarObj.group);
+  }
+
+  // 3. REAR EQUIPMENT, SPARE TIRE & REAR DUAL EXHAUST PIPES
+  const spareGroup = new THREE.Group();
+  spareGroup.position.set(0, 0.82, -1.55);
+  spareGroup.rotation.x = -0.25;
+  group.add(spareGroup);
+
+  createMesh(new THREE.TorusGeometry(0.38, 0.16, 12, 24), tireRubberMat, spareGroup);
+  createMesh(new THREE.CylinderGeometry(0.26, 0.26, 0.2, 12), beadlockRimMat, spareGroup, [0, 0, 0], [Math.PI / 2, 0, 0]);
+  createMesh(new THREE.TorusGeometry(0.26, 0.03, 8, 24), accentRimRing, spareGroup, [0, 0, 0.11]);
+
+  // Rear Equipment Mounting Rack & Steel Bumper Plate
+  createMesh(new THREE.BoxGeometry(1.0, 0.08, 0.12), darkMetalMat, group, [0, 0.65, -1.55]);
+  createMesh(new THREE.BoxGeometry(1.2, 0.15, 0.22), darkMetalMat, group, [0, 0.36, -1.70]);
+
+  // Rear Heavy Dual Off-Road Exhaust Pipes & Nitro Flames
+  const nitroFlames = [];
+  const exhaustPos = [-0.38, 0.38];
+  exhaustPos.forEach((x) => {
+    // Horizontal rear exhaust nozzle extending out from lower chassis
+    createMesh(new THREE.CylinderGeometry(0.11, 0.13, 0.48, 16), darkMetalMat, group, [x, 0.44, -1.72], [Math.PI / 2, 0, 0]);
+    createMesh(new THREE.TorusGeometry(0.12, 0.02, 8, 16), accentRimRing, group, [x, 0.44, -1.96]);
+
+    // Nitro Boost Flame shooting straight backward
+    const flame = createInGameBoostFlame(group, x, 0.44, -1.98, 0.9);
+    nitroFlames.push(flame);
+  });
+
+  // 4. HIGH-TRAVEL OFF-ROAD SUSPENSION & HEAVY KNOBBY WHEELS
+  const wheels = [];
+  const wheelPos = [
+    [-0.92, 0.42, 1.25],
+    [0.92, 0.42, 1.25],
+    [-0.96, 0.45, -1.20],
+    [0.96, 0.45, -1.20],
+  ];
+
+  wheelPos.forEach(([wx, wy, wz]) => {
+    const wGroup = new THREE.Group();
+    wGroup.position.set(wx, wy, wz);
+    group.add(wGroup);
+
+    const outwardSign = Math.sign(wx);
+
+    // Shock Absorber Coil Spring
+    const shockGroup = new THREE.Group();
+    shockGroup.position.set(wx * 0.65, wy + 0.15, wz);
+    shockGroup.rotation.z = outwardSign * -0.3;
+    group.add(shockGroup);
+
+    createMesh(new THREE.CylinderGeometry(0.03, 0.03, 0.48), darkMetalMat, shockGroup);
+    for (let s = -0.18; s <= 0.18; s += 0.07) {
+      createMesh(new THREE.TorusGeometry(0.075, 0.025, 8, 16), springMat, shockGroup, [0, s, 0], [Math.PI / 2, 0, 0]);
+    }
+
+    // Wishbone Suspension Arm
+    createMesh(new THREE.CylinderGeometry(0.03, 0.03, 0.42), darkMetalMat, group, [wx * 0.45, wy - 0.05, wz], [0, 0, Math.PI / 2 + outwardSign * -0.25]);
+
+    // Massive Off-Road Knobby Tire
+    createMesh(new THREE.CylinderGeometry(0.44, 0.44, 0.38, 24), tireRubberMat, wGroup, [0, 0, 0], [0, 0, Math.PI / 2]);
+    for (let t = 0; t < 12; t++) {
+      const angle = (t * Math.PI * 2) / 12;
+      const treadGeo = new THREE.BoxGeometry(0.39, 0.06, 0.12);
+      createMesh(treadGeo, tireRubberMat, wGroup, [0, Math.sin(angle) * 0.44, Math.cos(angle) * 0.44], [angle, 0, 0]);
+    }
+
+    // Heavy Beadlock Rim
+    createMesh(new THREE.CylinderGeometry(0.28, 0.28, 0.39, 16), beadlockRimMat, wGroup, [0, 0, 0], [0, 0, Math.PI / 2]);
+    createMesh(new THREE.TorusGeometry(0.28, 0.025, 8, 24), accentRimRing, wGroup, [outwardSign * 0.198, 0, 0], [0, Math.PI / 2, 0]);
+
+    for (let b = 0; b < 6; b++) {
+      const bAngle = (b * Math.PI) / 3;
+      createMesh(new THREE.BoxGeometry(0.04, 0.24, 0.04), darkMetalMat, wGroup, [outwardSign * 0.19, Math.sin(bAngle) * 0.12, Math.cos(bAngle) * 0.12], [bAngle, 0, 0]);
+    }
+
+    wheels.push(wGroup);
+  });
+
+  return {
+    group,
+    id: 'offroad',
+    name: '荒野雷霆越野装甲 (Wild Thunder Off-Road Beast)',
+    styleTag: '荒野越野风格',
+    description: '专为极难恶劣地形打造的荒野越野兽，具备外露刚性防滚架、高行程独立油压避震悬挂、巨型深齿轮越野胎与车顶LED探照灯阵列。',
+    specs: {
+      '风格类型': 'Rugged All-Terrain Off-Road 4x4',
+      '悬挂系统': '高行程独立油压双叉臂悬挂 (Heavy Duty Off-Road Shocks)',
+      '车身防护': '全包裹外露钢管防滚架 & 后挂全尺寸越野备胎',
+      '探照灯组': '车顶 5 连高亮度 LED 探照灯阵列',
+      '尾喷设计': '车尾防撞梁下方双出硬派大口径排气管',
+      '氮气特效': nitroBoost ? '🚀 游戏同款双层火焰 (In-Game Boost Active)' : '待机关闭 (Off)'
+    },
+    update(time, dt) {
+      updateInGameBoostFlame(nitroFlames, nitroBoost, time);
+      wheels.forEach((w) => { w.children[0].rotation.x += dt * (nitroBoost ? 18 : 8); });
+      if (avatarObj) avatarObj.update(time);
+      group.position.y = 0.04 + Math.sin(time * 3.5) * 0.018;
+      group.rotation.x = Math.sin(time * 2.5) * 0.012;
+    },
+    dispose() {
+      disposeGroup(group);
+    }
+  };
+}
+
+
+
