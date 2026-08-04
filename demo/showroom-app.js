@@ -6,6 +6,7 @@ import {
   buildFormula1RealRacer,
   buildQuantumHoverRacer,
   buildRuggedOffroadBeast,
+  buildBreezeKart,
   disposeGroup,
 } from './car-models.js';
 
@@ -141,7 +142,7 @@ export class ShowroomApp {
     });
     this.models = [];
 
-    // Instantiate 6 Models with Driver Avatar & Nitro Boost settings
+    // Instantiate 7 Models with Driver Avatar & Nitro Boost settings
     const modelDefs = [
       buildDefaultKart('kit', undefined, this.nitroBoost),
       buildCyberHypercar(this.currentColor, this.currentAccent, this.activeAvatarId, this.showDriver, this.nitroBoost),
@@ -149,6 +150,7 @@ export class ShowroomApp {
       buildFormula1RealRacer(0xd90429, 0xffb703, this.activeAvatarId, this.showDriver, this.nitroBoost),
       buildQuantumHoverRacer(0x00f0ff, 0xa000ff, this.activeAvatarId, this.showDriver, this.nitroBoost),
       buildRuggedOffroadBeast(0xd97706, 0x84cc16, this.activeAvatarId, this.showDriver, this.nitroBoost),
+      buildBreezeKart(this.currentColor || 0x1d70f5, this.currentAccent || 0x38bdf8, this.activeAvatarId, this.showDriver, this.nitroBoost),
     ];
 
     modelDefs.forEach((mod, idx) => {
@@ -163,6 +165,10 @@ export class ShowroomApp {
       });
     });
 
+    if (this.activeModelIndex >= this.models.length) {
+      this.activeModelIndex = 0;
+    }
+
     if (this.isWireframe) {
       this.toggleWireframe(true);
     }
@@ -172,11 +178,12 @@ export class ShowroomApp {
 
   updateLayout() {
     const isGrid = this.viewMode === 'grid';
+    const total = this.models.length;
 
     this.models.forEach((mod, idx) => {
       if (isGrid) {
         const spacing = 3.6;
-        const xPos = (idx - 2.5) * spacing;
+        const xPos = (idx - (total - 1) / 2) * spacing;
         mod.wrapper.position.set(xPos, 0, 0);
         mod.wrapper.visible = true;
         mod.wrapper.scale.setScalar(0.85);
@@ -188,7 +195,7 @@ export class ShowroomApp {
     });
 
     if (isGrid) {
-      this.camera.position.set(0, 5.2, 14.0);
+      this.camera.position.set(0, 5.2, 15.0);
       this.camera.lookAt(0, 0.5, 0);
     } else {
       this.updateCameraTransform();
@@ -228,6 +235,7 @@ export class ShowroomApp {
       this.hemiLight.color.setHex(0x0f172a);
       this.hemiLight.groundColor.setHex(0x1e293b);
       this.keyLight.color.setHex(0xffffff);
+      this.keyLight.intensity = 3.2;
       this.rimLight1.color.setHex(0x00f0ff);
       this.rimLight2.color.setHex(0xff007f);
       this.ringMat.color.setHex(0x00f0ff);
@@ -236,6 +244,7 @@ export class ShowroomApp {
       this.hemiLight.color.setHex(0xff7e5f);
       this.hemiLight.groundColor.setHex(0xfeb47b);
       this.keyLight.color.setHex(0xffdda1);
+      this.keyLight.intensity = 3.8;
       this.rimLight1.color.setHex(0xff4e50);
       this.rimLight2.color.setHex(0xf9d423);
       this.ringMat.color.setHex(0xff7e5f);
@@ -244,6 +253,7 @@ export class ShowroomApp {
       this.hemiLight.color.setHex(0x111111);
       this.hemiLight.groundColor.setHex(0x050505);
       this.keyLight.color.setHex(0xffffff);
+      this.keyLight.intensity = 4.0;
       this.rimLight1.color.setHex(0xffffff);
       this.rimLight2.color.setHex(0x888888);
       this.ringMat.color.setHex(0xffffff);
