@@ -151,14 +151,12 @@ export function buildCartoonAvatar(avatarId = 'cat', scaleFactor = 1.0) {
   // 3. ANIMAL-SPECIFIC FEATURES (PURE ANIMAL BODY & FUR PATTERNS)
   switch (avatarId) {
     case 'cat': {
-      // Pointed ears with inner pink
       for (const side of [-1, 1]) {
         const earGeo = new THREE.ConeGeometry(0.1, 0.22, 4);
         const ear = createMesh(earGeo, headMat, headGroup, [side * 0.16, 0.26, 0], [0, Math.PI / 4, side * -0.15]);
         const innerEarGeo = new THREE.ConeGeometry(0.06, 0.16, 4);
         createMesh(innerEarGeo, pinkMat, ear, [0, -0.01, 0.02]);
       }
-      // Cute Whiskers
       for (const side of [-1, 1]) {
         for (const y of [-0.03, -0.07]) {
           const whiskerGeo = new THREE.CylinderGeometry(0.005, 0.005, 0.16);
@@ -169,13 +167,11 @@ export function buildCartoonAvatar(avatarId = 'cat', scaleFactor = 1.0) {
     }
 
     case 'dog': {
-      // Floppy folded ears
       for (const side of [-1, 1]) {
         const earGeo = new THREE.SphereGeometry(0.12, 12, 12);
         earGeo.scale(0.6, 1.4, 0.6);
         createMesh(earGeo, detailMat, headGroup, [side * 0.24, 0.08, 0.02], [0, 0, side * 0.3]);
       }
-      // Happy tongue tip out
       const tongueGeo = new THREE.SphereGeometry(0.035, 10, 10);
       tongueGeo.scale(1, 0.5, 1.2);
       createMesh(tongueGeo, pinkMat, headGroup, [0, -0.08, 0.28]);
@@ -183,7 +179,6 @@ export function buildCartoonAvatar(avatarId = 'cat', scaleFactor = 1.0) {
     }
 
     case 'rabbit': {
-      // Long tall ears with pink interior
       for (const side of [-1, 1]) {
         const earGeo = new THREE.CylinderGeometry(0.06, 0.07, 0.45, 12);
         const ear = createMesh(earGeo, headMat, headGroup, [side * 0.12, 0.42, -0.02], [0.1, 0, side * -0.12]);
@@ -194,27 +189,22 @@ export function buildCartoonAvatar(avatarId = 'cat', scaleFactor = 1.0) {
     }
 
     case 'fox': {
-      // 🦊 BRAND NEW REDESIGNED FOX
       const foxRedMat = new THREE.MeshStandardMaterial({ color: 0xeb6123, roughness: 0.55 });
       const foxWhiteMat = new THREE.MeshStandardMaterial({ color: 0xfff8f0, roughness: 0.6 });
       const foxDarkMat = new THREE.MeshStandardMaterial({ color: 0x2b1d14, roughness: 0.4 });
 
-      // White Fluffy Cheek Patches
       for (const side of [-1, 1]) {
         const cheekPatchGeo = new THREE.SphereGeometry(0.15, 12, 12);
         cheekPatchGeo.scale(0.8, 0.7, 0.8);
         createMesh(cheekPatchGeo, foxWhiteMat, headGroup, [side * 0.18, -0.06, 0.16]);
       }
 
-      // Elegant Tapered White Muzzle Chin
       const foxMuzzleGeo = new THREE.ConeGeometry(0.13, 0.28, 12);
       createMesh(foxMuzzleGeo, foxWhiteMat, headGroup, [0, -0.06, 0.28], [Math.PI / 2 + 0.1, 0, 0]);
 
-      // Cute Shiny Dark Nose Tip
       const foxNoseGeo = new THREE.SphereGeometry(0.038, 10, 10);
       createMesh(foxNoseGeo, foxDarkMat, headGroup, [0, -0.01, 0.39]);
 
-      // Large Fluffy Fox Ears
       for (const side of [-1, 1]) {
         const earGroup = new THREE.Group();
         earGroup.position.set(side * 0.18, 0.26, 0);
@@ -318,7 +308,7 @@ export function buildDefaultKart(characterId = 'kit', loadout = DEFAULT_ONLINE_L
 }
 
 // ============================================================================
-// 2. CYBER NEON HYPERCAR (赛博酷炫超跑) - BOTH SIDES OUTWARD RIMS & IN-GAME BOOST FLAMES
+// 2. CYBER NEON HYPERCAR (赛博酷炫超跑)
 // ============================================================================
 export function buildCyberHypercar(primaryColor = 0x0f172a, accentColor = 0x00f0ff, avatarId = 'cat', showDriver = true, nitroBoost = false) {
   const group = new THREE.Group();
@@ -376,33 +366,27 @@ export function buildCyberHypercar(primaryColor = 0x0f172a, accentColor = 0x00f0
   canopyGeo.scale(1.0, 0.65, 2.2);
   createMesh(canopyGeo, glassMat, group, [0, 0.62, 0.1]);
 
-  // --------------------------------------------------------------------------
-  // QUAD JET EXHAUST NOZZLES & IN-GAME STYLE BOOST FLAMES
-  // --------------------------------------------------------------------------
+  // Quad Jet Exhaust Nozzles & In-Game Style Boost Flames
   const nitroFlames = [];
   const exhaustPositions = [-0.45, -0.18, 0.18, 0.45];
 
   exhaustPositions.forEach((x, i) => {
-    // Hexagonal Outer Titanium Heat Shield Nozzle
-    const pipeGeo = new THREE.CylinderGeometry(0.12, 0.15, 0.55, 6);
-    createMesh(pipeGeo, titaniumMat, group, [x, 0.42, -1.82], [Math.PI / 2, 0, 0]);
-
-    // Inner Glowing Energy Ring Nozzle
-    const ringGeo = new THREE.TorusGeometry(0.11, 0.02, 8, 16);
-    createMesh(ringGeo, i % 2 === 0 ? neonMat : neonMagentaMat, group, [x, 0.42, -1.85]);
-
-    // In-game style dual cone boost flame directly at exhaust pipe mouth!
+    createMesh(new THREE.CylinderGeometry(0.12, 0.15, 0.55, 6), titaniumMat, group, [x, 0.42, -1.82], [Math.PI / 2, 0, 0]);
+    createMesh(new THREE.TorusGeometry(0.11, 0.02, 8, 16), i % 2 === 0 ? neonMat : neonMagentaMat, group, [x, 0.42, -1.85]);
     const flame = createInGameBoostFlame(group, x, 0.42, -2.10, 0.9);
     nitroFlames.push(flame);
   });
 
-  // Rear Cyber Wing
+  // Rear Cyber Wing & Swan-Neck Carbon Pylons
   createMesh(new THREE.BoxGeometry(1.9, 0.05, 0.38), bodyMat, group, [0, 0.88, -1.75]);
   createMesh(new THREE.BoxGeometry(1.94, 0.06, 0.08), neonMat, group, [0, 0.88, -1.92]);
 
-  // --------------------------------------------------------------------------
-  // OPTIMIZED WHEELS: FULL OUTWARD & INWARD 3D RIMS ON ALL WHEELS
-  // --------------------------------------------------------------------------
+  for (const side of [-1, 1]) {
+    createMesh(new THREE.BoxGeometry(0.06, 0.48, 0.28), carbonMat, group, [side * 0.52, 0.65, -1.65], [0.35, 0, 0]);
+    createMesh(new THREE.BoxGeometry(0.1, 0.08, 0.32), titaniumMat, group, [side * 0.52, 0.44, -1.55]);
+  }
+
+  // Wheels
   const wheels = [];
   const wPositions = [[-0.92, 0.33, 1.25], [0.92, 0.33, 1.25], [-0.96, 0.36, -1.25], [0.96, 0.36, -1.25]];
 
@@ -411,19 +395,11 @@ export function buildCyberHypercar(primaryColor = 0x0f172a, accentColor = 0x00f0
     wGroup.position.set(wx, wy, wz);
     group.add(wGroup);
 
-    const outwardSign = Math.sign(wx); // +1 for Right, -1 for Left
+    const outwardSign = Math.sign(wx);
 
-    // Cyber Tire with Tread Grooves
-    const tireGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.34, 32);
-    createMesh(tireGeo, cyberTireMat, wGroup, [0, 0, 0], [0, 0, Math.PI / 2]);
-
-    // Outer Neon Sidewall Ring (On OUTWARD side!)
-    const treadRingGeo = new THREE.TorusGeometry(0.345, 0.015, 8, 32);
-    createMesh(treadRingGeo, neonMat, wGroup, [outwardSign * 0.165, 0, 0], [0, Math.PI / 2, 0]);
-
-    // Cyber Turbine Multi-Blade Rim (On OUTWARD side!)
-    const rimCoreGeo = new THREE.CylinderGeometry(0.25, 0.25, 0.35, 8);
-    createMesh(rimCoreGeo, carbonMat, wGroup, [0, 0, 0], [0, 0, Math.PI / 2]);
+    createMesh(new THREE.CylinderGeometry(0.35, 0.35, 0.34, 32), cyberTireMat, wGroup, [0, 0, 0], [0, 0, Math.PI / 2]);
+    createMesh(new THREE.TorusGeometry(0.345, 0.015, 8, 32), neonMat, wGroup, [outwardSign * 0.165, 0, 0], [0, Math.PI / 2, 0]);
+    createMesh(new THREE.CylinderGeometry(0.25, 0.25, 0.35, 8), carbonMat, wGroup, [0, 0, 0], [0, 0, Math.PI / 2]);
 
     for (let b = 0; b < 6; b++) {
       const bladeGeo = new THREE.BoxGeometry(0.04, 0.22, 0.02);
@@ -431,16 +407,9 @@ export function buildCyberHypercar(primaryColor = 0x0f172a, accentColor = 0x00f0
       createMesh(bladeGeo, titaniumMat, wGroup, [outwardSign * 0.17, Math.sin(bladeAngle) * 0.12, Math.cos(bladeAngle) * 0.12], [bladeAngle, 0, 0]);
     }
 
-    // Glowing Energy Rim Core (On OUTWARD side!)
-    const haloGeo = new THREE.TorusGeometry(0.14, 0.025, 8, 24);
-    createMesh(haloGeo, neonMagentaMat, wGroup, [outwardSign * 0.175, 0, 0], [0, Math.PI / 2, 0]);
-
-    // Titanium Cross-Drilled Disc Brake & Neon Caliper
-    const discGeo = new THREE.CylinderGeometry(0.24, 0.24, 0.03, 20);
-    createMesh(discGeo, titaniumMat, wGroup, [outwardSign * 0.02, 0, 0], [0, 0, Math.PI / 2]);
-
-    const caliperGeo = new THREE.BoxGeometry(0.08, 0.14, 0.12);
-    createMesh(caliperGeo, neonMat, wGroup, [outwardSign * 0.02, 0.16, 0]);
+    createMesh(new THREE.TorusGeometry(0.14, 0.025, 8, 24), neonMagentaMat, wGroup, [outwardSign * 0.175, 0, 0], [0, Math.PI / 2, 0]);
+    createMesh(new THREE.CylinderGeometry(0.24, 0.24, 0.03, 20), titaniumMat, wGroup, [outwardSign * 0.02, 0, 0], [0, 0, Math.PI / 2]);
+    createMesh(new THREE.BoxGeometry(0.08, 0.14, 0.12), neonMat, wGroup, [outwardSign * 0.02, 0.16, 0]);
 
     wheels.push(wGroup);
   });
@@ -450,11 +419,11 @@ export function buildCyberHypercar(primaryColor = 0x0f172a, accentColor = 0x00f0
     id: 'cyber',
     name: '赛博朋克超跑 (Cyber Neon Hypercar)',
     styleTag: '华丽酷炫风格',
-    description: '搭载四喷口钛合金排气管、游戏同款氮气尾焰与双侧面向外完全重构的赛博光子轮毂。',
+    description: '配备双天鹅颈碳纤维尾翼支架、四喷口钛合金排气管与游戏同款发光氮气火焰。',
     specs: {
       '风格类型': 'Futuristic Sci-Fi Speedster',
+      '尾翼结构': '双天鹅颈碳纤维气动支架 (Swan-Neck Carbon Pylons)',
       '氮气特效': nitroBoost ? '🚀 游戏同款双层火焰 (In-Game Boost Active)' : '待机关闭 (Off)',
-      '轮毂技术': '双侧外向 3D 赛博轮毂 + 钛合金打孔刹车盘',
       '尾喷设计': '四喷口钛合金排气管'
     },
     update(time, dt) {
@@ -470,7 +439,7 @@ export function buildCyberHypercar(primaryColor = 0x0f172a, accentColor = 0x00f0
 }
 
 // ============================================================================
-// 3. CHIBI SWEET RACER (Q萌糖果卡丁车) - IN-GAME STYLE BOOST FLAMES
+// 3. CHIBI SWEET RACER (Q萌糖果卡丁车) - CLEAN NO-WING SHAPE
 // ============================================================================
 export function buildChibiCuteRacer(primaryColor = 0xff7ebb, accentColor = 0xffe66d, avatarId = 'rabbit', showDriver = true, nitroBoost = false) {
   const group = new THREE.Group();
@@ -527,27 +496,14 @@ export function buildChibiCuteRacer(primaryColor = 0xff7ebb, accentColor = 0xffe
     createMesh(new THREE.SphereGeometry(0.13, 12, 12), accentMat, earGroup, [0, 0, 0.05]);
   }
 
-  // --------------------------------------------------------------------------
-  // CANDY TAILPIPES & IN-GAME STYLE BOOST FLAMES
-  // --------------------------------------------------------------------------
+  // Candy Tailpipes & In-Game Style Boost Flames
   const nitroFlames = [];
-
   for (const x of [-0.35, 0.35]) {
-    // Chrome Outer Shield Pipe
-    const outerPipe = new THREE.CylinderGeometry(0.14, 0.16, 0.4, 16);
-    createMesh(outerPipe, chromeMat, group, [x, 0.55, -1.18], [Math.PI / 2, 0, 0]);
-
-    // Pastel Candy Ring Glow Tip
-    const tipRing = new THREE.TorusGeometry(0.13, 0.03, 10, 20);
-    createMesh(tipRing, accentMat, group, [x, 0.55, -1.35]);
-
-    // In-game style dual cone boost flame directly at exhaust pipe mouth!
+    createMesh(new THREE.CylinderGeometry(0.14, 0.16, 0.4, 16), chromeMat, group, [x, 0.55, -1.18], [Math.PI / 2, 0, 0]);
+    createMesh(new THREE.TorusGeometry(0.13, 0.03, 10, 20), accentMat, group, [x, 0.55, -1.35]);
     const flame = createInGameBoostFlame(group, x, 0.55, -1.38, 0.85);
     nitroFlames.push(flame);
   }
-
-  // Heart-Shaped Spoiler
-  createMesh(new THREE.BoxGeometry(1.1, 0.08, 0.3), accentMat, group, [0, 1.1, -1.0]);
 
   // Chubby Wheels
   const wheels = [];
@@ -568,12 +524,12 @@ export function buildChibiCuteRacer(primaryColor = 0xff7ebb, accentColor = 0xffe
     id: 'chibi',
     name: 'Q萌糖果卡丁车 (Chibi Sweet Racer)',
     styleTag: '卡通可爱风格',
-    description: '圆滚滚马卡龙造型，配备抛光镀铬甜甜圈双排气管与游戏同款双层氮气喷射火焰。',
+    description: '无尾翼的纯粹圆滚滚马卡龙造型，配备抛光镀铬甜甜圈双排气管与游戏同款双层氮气喷射火焰。',
     specs: {
       '风格类型': 'Chibi Cartoon / Kawaii Style',
+      '尾翼造型': '无尾翼 (Clean Streamlined Macaron)',
       '氮气特效': nitroBoost ? '🚀 游戏同款双层火焰 (In-Game Boost Active)' : '待机关闭 (Off)',
-      '尾喷设计': '抛光镀铬甜甜圈双尾喷',
-      '车体造型': '马卡龙敞篷座舱'
+      '尾喷设计': '抛光镀铬甜甜圈双尾喷'
     },
     update(time, dt) {
       ears[0].rotation.z = Math.sin(time * 6) * 0.12;
@@ -591,7 +547,7 @@ export function buildChibiCuteRacer(primaryColor = 0xff7ebb, accentColor = 0xffe
 }
 
 // ============================================================================
-// 4. FORMULA 1 REALISTIC RACER (1:1复刻真实F1赛车) - 4 TITANIUM TAILPIPES & BOTH SIDES OUTWARD RIMS
+// 4. FORMULA 1 REALISTIC RACER (1:1复刻真实F1赛车) - SLEEK MINIMALIST REAR WING
 // ============================================================================
 export function buildFormula1RealRacer(primaryColor = 0xd90429, accentColor = 0xffb703, avatarId = 'fox', showDriver = true, nitroBoost = false) {
   const group = new THREE.Group();
@@ -657,42 +613,68 @@ export function buildFormula1RealRacer(primaryColor = 0xd90429, accentColor = 0x
   createMesh(haloRingGeo, carbonWeaveMat, f1Group, [0, 0.72, 0.15], [Math.PI / 2 + 0.3, 0, Math.PI]);
   createMesh(new THREE.CylinderGeometry(0.03, 0.03, 0.35), carbonWeaveMat, f1Group, [0, 0.68, 0.42], [-0.3, 0, 0]);
 
-  // Engine Cover & Rear Wing
+  // Engine Cover
   const engineCoverGeo = new THREE.ConeGeometry(0.38, 1.4, 16);
   createMesh(engineCoverGeo, liveryMat, f1Group, [0, 0.62, -0.9], [-Math.PI / 2, 0, 0]);
-  createMesh(new THREE.BoxGeometry(1.8, 0.06, 0.42), carbonWeaveMat, f1Group, [0, 1.15, -1.9]);
 
   // --------------------------------------------------------------------------
-  // OPTIMIZED EXHAUST: F1 QUAD TITANIUM EXHAUST CLUSTER & IN-GAME BOOST FLAMES
+  // REFERENCE IMAGE INSPIRED 2026 F1 REAR WING STRUCTURE (参考图同款弧形弯曲翼端板尾翼)
+  // --------------------------------------------------------------------------
+  const wingZ = -1.95;
+
+  // 1. Upper Wide Mainplane & DRS Flap
+  createMesh(new THREE.BoxGeometry(1.85, 0.05, 0.38), carbonWeaveMat, f1Group, [0, 1.05, wingZ]);
+  createMesh(new THREE.BoxGeometry(1.80, 0.035, 0.20), liveryMat, f1Group, [0, 1.13, wingZ + 0.04], [-0.18, 0, 0]);
+
+  // Central DRS Actuator Pod Module
+  createMesh(new THREE.BoxGeometry(0.10, 0.12, 0.16), metalMat, f1Group, [0, 1.12, wingZ]);
+
+  // Central Neck Pylon Pillar connecting Engine Deck to Mainplane
+  createMesh(new THREE.BoxGeometry(0.05, 0.45, 0.14), carbonWeaveMat, f1Group, [0, 0.82, wingZ]);
+
+  // Lower Beam Wing
+  createMesh(new THREE.BoxGeometry(1.15, 0.03, 0.22), carbonWeaveMat, f1Group, [0, 0.58, wingZ]);
+
+  // 2. Swept Curved Endplates (参考图同款: 顶部向外展宽、下部弧形向内弯曲收敛至底翼)
+  for (const side of [-1, 1]) {
+    // Upper Outer Endplate Plate
+    createMesh(new THREE.BoxGeometry(0.035, 0.24, 0.44), liveryMat, f1Group, [side * 0.92, 1.05, wingZ]);
+
+    // Sweeping Inward Curved Arch Leg (From X = +-0.92 down & inward to X = +-0.56)
+    const archGeo = new THREE.BoxGeometry(0.035, 0.48, 0.18);
+    createMesh(archGeo, carbonWeaveMat, f1Group, [side * 0.74, 0.76, wingZ], [0, 0, side * -0.48]);
+
+    // Lower Beam Mount Anchor
+    createMesh(new THREE.BoxGeometry(0.04, 0.08, 0.24), liveryMat, f1Group, [side * 0.56, 0.56, wingZ]);
+  }
+
+  // --------------------------------------------------------------------------
+  // SHIFTED REAR EXHAUST TAILPIPES (后移至贴近车尾 Z = -2.02)
   // --------------------------------------------------------------------------
   const nitroFlames = [];
 
-  // 4 Rear Exhaust Tailpipe Nozzles (Upper Main Twin + Lower Wastegate Twin)
+  // 4 Tailpipe Nozzles flush with the rear engine deck & diffuser edge!
   const f1Exhausts = [
-    [-0.14, 0.62, -1.72], [0.14, 0.62, -1.72],
-    [-0.28, 0.48, -1.75], [0.28, 0.48, -1.75],
+    [-0.14, 0.62, -2.02], [0.14, 0.62, -2.02],
+    [-0.28, 0.48, -2.02], [0.28, 0.48, -2.02],
   ];
 
   f1Exhausts.forEach(([x, y, z]) => {
-    // Titanium Tube Nozzle
-    const pipeGeo = new THREE.CylinderGeometry(0.08, 0.09, 0.42, 16);
+    const pipeGeo = new THREE.CylinderGeometry(0.08, 0.09, 0.38, 16);
     createMesh(pipeGeo, metalMat, f1Group, [x, y, z], [Math.PI / 2, 0, 0]);
 
-    // Heat Bezel Tip
     const bezelGeo = new THREE.TorusGeometry(0.085, 0.012, 8, 16);
-    createMesh(bezelGeo, carbonWeaveMat, f1Group, [x, y, z - 0.21]);
+    createMesh(bezelGeo, carbonWeaveMat, f1Group, [x, y, z - 0.19]);
 
-    // In-game style dual cone boost flame directly at exhaust pipe mouth!
-    const flame = createInGameBoostFlame(f1Group, x, y, z - 0.22, 0.75);
+    const flame = createInGameBoostFlame(f1Group, x, y, z - 0.20, 0.75);
     nitroFlames.push(flame);
   });
 
-  // Rain Light
+  // Carbon Diffuser & Red Rain Light
+  createMesh(new THREE.BoxGeometry(1.2, 0.22, 0.5), carbonWeaveMat, f1Group, [0, 0.25, -1.8]);
   const rainLight = createMesh(new THREE.BoxGeometry(0.12, 0.12, 0.06), new THREE.MeshBasicMaterial({ color: 0xff0000 }), f1Group, [0, 0.35, -2.06]);
 
-  // --------------------------------------------------------------------------
-  // OPTIMIZED WHEELS: FULL OUTWARD & INWARD 3D FORGED RIMS ON ALL WHEELS
-  // --------------------------------------------------------------------------
+  // Wheels
   const wheels = [];
   const f1WheelPositions = [[-1.02, 0.38, 1.55], [1.02, 0.38, 1.55], [-0.98, 0.42, -1.45], [0.98, 0.42, -1.45]];
 
@@ -701,24 +683,15 @@ export function buildFormula1RealRacer(primaryColor = 0xd90429, accentColor = 0x
     wGroup.position.set(wx, wy, wz);
     f1Group.add(wGroup);
 
-    const outwardSign = Math.sign(wx); // +1 for Right, -1 for Left
+    const outwardSign = Math.sign(wx);
     const isRear = idx >= 2;
     const tireRadius = isRear ? 0.42 : 0.38;
     const tireWidth = isRear ? 0.44 : 0.36;
 
-    // Competition Slick Tire
-    const tireGeo = new THREE.CylinderGeometry(tireRadius, tireRadius, tireWidth, 32);
-    createMesh(tireGeo, rubberMat, wGroup, [0, 0, 0], [0, 0, Math.PI / 2]);
+    createMesh(new THREE.CylinderGeometry(tireRadius, tireRadius, tireWidth, 32), rubberMat, wGroup, [0, 0, 0], [0, 0, Math.PI / 2]);
+    createMesh(new THREE.TorusGeometry(tireRadius * 0.78, 0.02, 8, 24), yellowSponsorMat, wGroup, [outwardSign * (tireWidth * 0.51), 0, 0], [0, Math.PI / 2, 0]);
+    createMesh(new THREE.CylinderGeometry(tireRadius * 0.62, tireRadius * 0.62, tireWidth + 0.01, 16), forgedRimMat, wGroup, [0, 0, 0], [0, 0, Math.PI / 2]);
 
-    // Pirelli Yellow Sidewall Ring (On OUTWARD side!)
-    const sidewallGeo = new THREE.TorusGeometry(tireRadius * 0.78, 0.02, 8, 24);
-    createMesh(sidewallGeo, yellowSponsorMat, wGroup, [outwardSign * (tireWidth * 0.51), 0, 0], [0, Math.PI / 2, 0]);
-
-    // Forged 5-Double-Spoke Alloy Rim Barrel
-    const rimBarrel = new THREE.CylinderGeometry(tireRadius * 0.62, tireRadius * 0.62, tireWidth + 0.01, 16);
-    createMesh(rimBarrel, forgedRimMat, wGroup, [0, 0, 0], [0, 0, Math.PI / 2]);
-
-    // 5 Double Spokes (On OUTWARD side!)
     for (let s = 0; s < 5; s++) {
       const angle = (s * Math.PI * 2) / 5;
       for (const offset of [-0.04, 0.04]) {
@@ -727,17 +700,10 @@ export function buildFormula1RealRacer(primaryColor = 0xd90429, accentColor = 0x
       }
     }
 
-    // Center Lock Nut (Red on Right / Blue on Left, on OUTWARD side!)
     const nutMat = new THREE.MeshStandardMaterial({ color: outwardSign > 0 ? 0xd90429 : 0x00f0ff, metalness: 0.9, roughness: 0.1 });
-    const nutGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.1, 6);
-    createMesh(nutGeo, nutMat, wGroup, [outwardSign * (tireWidth * 0.52), 0, 0], [0, 0, Math.PI / 2]);
-
-    // Carbon-Ceramic Ventilated Disc & Brembo Caliper
-    const brakeDiscGeo = new THREE.CylinderGeometry(tireRadius * 0.7, tireRadius * 0.7, 0.04, 24);
-    createMesh(brakeDiscGeo, brakeDiscMat, wGroup, [outwardSign * 0.02, 0, 0], [0, 0, Math.PI / 2]);
-
-    const caliperGeo = new THREE.BoxGeometry(0.08, 0.16, 0.14);
-    createMesh(caliperGeo, yellowSponsorMat, wGroup, [outwardSign * 0.02, tireRadius * 0.45, 0]);
+    createMesh(new THREE.CylinderGeometry(0.06, 0.06, 0.1, 6), nutMat, wGroup, [outwardSign * (tireWidth * 0.52), 0, 0], [0, 0, Math.PI / 2]);
+    createMesh(new THREE.CylinderGeometry(tireRadius * 0.7, tireRadius * 0.7, 0.04, 24), brakeDiscMat, wGroup, [outwardSign * 0.02, 0, 0], [0, 0, Math.PI / 2]);
+    createMesh(new THREE.BoxGeometry(0.08, 0.16, 0.14), yellowSponsorMat, wGroup, [outwardSign * 0.02, tireRadius * 0.45, 0]);
 
     wheels.push(wGroup);
   });
@@ -747,12 +713,12 @@ export function buildFormula1RealRacer(primaryColor = 0xd90429, accentColor = 0x
     id: 'f1',
     name: '1:1复刻真实F1赛车 (Formula 1 Grand Prix Bolide)',
     styleTag: '真实1:1复刻样式',
-    description: '1:1比例打造的现代F1方程式赛车。配备4喷口钛合金排气管、双侧面向外完全重构的5双辐锻造轮毂与游戏同款双层氮气喷射。',
+    description: '1:1比例打造的 F1 赛车。配备极简单翼气动尾翼、双直立支架与后移贴合车尾的四排气管。',
     specs: {
       '风格类型': '1:1 Formula 1 Grand Prix Racing Car',
-      '氮气特效': nitroBoost ? '🚀 游戏同款双层火焰 (In-Game Boost Active)' : '待机关闭 (Off)',
-      '轮毂技术': '双侧外向 3D 锻造轮毂 + 阳极防松螺母',
-      '尾喷设计': 'F1 四喷口钛合金排气管'
+      '尾翼结构': '极简单翼 + 双直立碳纤维支架 (Minimalist Pylon Wing)',
+      '尾喷设计': '后移贴合车尾 F1 四喷口钛合金排气管',
+      '氮气特效': nitroBoost ? '🚀 游戏同款双层火焰 (In-Game Boost Active)' : '待机关闭 (Off)'
     },
     update(time, dt) {
       rainLight.visible = Math.sin(time * 12) > 0;
