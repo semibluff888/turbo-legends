@@ -2,7 +2,7 @@
 // Pure logic (no THREE) so the whole race can be simulated headlessly in tests.
 
 import { ClosedSpline } from './spline.js';
-import { SURFACE, ITEM_BOX_RESPAWN } from '../core/constants.js';
+import { SURFACE, ITEM_BOX_RESPAWN, BOUNDS } from '../core/constants.js';
 import { clamp, lerp, pmod, loopDelta } from '../core/mathx.js';
 
 /**
@@ -10,11 +10,15 @@ import { clamp, lerp, pmod, loopDelta } from '../core/mathx.js';
  * @property {string} id
  * @property {string} name
  * @property {string} [subtitle]
- * @property {Array<{x:number,y?:number,z:number,w?:number}>} points control points; `w` overrides width
+ * @property {Array<{x:number,y?:number,z:number,w?:number,runoff?:number}>} points control points;
+ *   `w` overrides road width and `runoff` overrides the drivable strip beyond each road edge
  * @property {number} width default half-width is width/2
+ * @property {number} [runoff] default drivable strip beyond each road edge
  * @property {number} [laps]
  * @property {Array<{s:number, lateral?:number, width?:number, length?:number}>} [boostPads]
  * @property {Array<{s:number, lateral?:number}>} [itemBoxes] positions along the track
+ * @property {Array<{startFrac:number,endFrac:number,grip?:number,driftGrip?:number}>} [gripZones]
+ * @property {Array<object>} [structures] render-only authored tunnel/bridge ranges
  * @property {object} [theme] colors for the renderer
  */
 
@@ -32,8 +36,11 @@ export class Track {
     this.length = this.spline.length;
 
     this._buildWidthTable(def);
+    this._buildRunoffTable(def);
+    this._buildGripZones(def);
     this._buildBoostPads(def);
     this._buildItemBoxes(def);
+    this.structures = (def.structures || []).map((structure) => ({ ...structure }));
 
     // Scratch objects reused by per-frame queries to avoid GC churn.
     this._proj = {};
@@ -44,10 +51,9 @@ export class Track {
   // Width
   // -------------------------------------------------------------------------
 
-  _buildWidthTable(def) {
-    const baseHalf = (def.width ?? 20) / 2;
+  _buildPointProfile(def, baseValue, valueOf) {
     const n = this.spline.count;
-    const half = new Float64Array(n);
+    const profile = new Float64Array(n);
 
     // Control points may override width; spread those overrides smoothly around
     // the loop so the road tapers instead of stepping.
@@ -55,15 +61,16 @@ export class Track {
     const cps = def.points;
     const perCp = this.length / cps.length;
     for (let i = 0; i < cps.length; i++) {
-      if (cps[i].w != null) {
+      const value = valueOf(cps[i]);
+      if (value != null) {
         // Approximate arc position of this control point.
         const p = this.spline.project(cps[i].x, cps[i].z, {});
-        overrides.push({ s: p.s, half: cps[i].w / 2 });
+        overrides.push({ s: p.s, value });
       }
     }
 
     if (overrides.length === 0) {
-      half.fill(baseHalf);
+      profile.fill(baseValue);
     } else {
       for (let i = 0; i < n; i++) {
         const s = i * this.spline.spacing;
@@ -73,26 +80,87 @@ export class Track {
         for (const o of overrides) {
           const d = Math.abs(loopDelta(s, o.s, this.length));
           const falloff = Math.max(1e-3, Math.pow(Math.max(0, 1 - d / (perCp * 1.6)), 2));
-          num += o.half * falloff;
+          num += o.value * falloff;
           den += falloff;
         }
         const blend = clamp(den, 0, 1);
-        half[i] = lerp(baseHalf, den > 0 ? num / den : baseHalf, blend);
+        profile[i] = lerp(baseValue, den > 0 ? num / den : baseValue, blend);
       }
     }
+    return profile;
+  }
+
+  _buildWidthTable(def) {
+    const baseHalf = (def.width ?? 20) / 2;
+    const half = this._buildPointProfile(def, baseHalf, (point) => (
+      point.w == null ? null : point.w / 2
+    ));
 
     this.halfWidths = half;
     this.baseHalfWidth = baseHalf;
   }
 
-  /** Drivable half-width at arc length `s`. */
-  halfWidthAt(s) {
+  _profileAt(profile, s) {
     const n = this.spline.count;
     const fi = pmod(s, this.length) / this.spline.spacing;
     const i0 = Math.floor(fi) % n;
     const i1 = (i0 + 1) % n;
     const t = fi - Math.floor(fi);
-    return lerp(this.halfWidths[i0], this.halfWidths[i1], t);
+    return lerp(profile[i0], profile[i1], t);
+  }
+
+  /** Drivable half-width at arc length `s`. */
+  halfWidthAt(s) {
+    return this._profileAt(this.halfWidths, s);
+  }
+
+  // -------------------------------------------------------------------------
+  // Runoff / grip profiles
+  // -------------------------------------------------------------------------
+
+  _buildRunoffTable(def) {
+    this.baseRunoff = def.runoff ?? BOUNDS.offroadExtent;
+    this.runoffWidths = this._buildPointProfile(
+      def,
+      this.baseRunoff,
+      (point) => point.runoff ?? null,
+    );
+  }
+
+  /** Drivable strip beyond either road edge at arc length `s`. */
+  runoffAt(s) {
+    return this._profileAt(this.runoffWidths, s);
+  }
+
+  _rangeS(frac, absolute, isEnd = false) {
+    if (frac != null) {
+      if (isEnd && frac === 1) return this.length;
+      return pmod(frac * this.length, this.length);
+    }
+    if (isEnd && absolute === this.length) return this.length;
+    return pmod(absolute ?? 0, this.length);
+  }
+
+  _buildGripZones(def) {
+    this.gripZones = (def.gripZones || []).map((zone) => ({
+      start: this._rangeS(zone.startFrac, zone.start),
+      end: this._rangeS(zone.endFrac, zone.end, true),
+      grip: clamp(zone.grip ?? 1, 0.05, 1),
+      driftGrip: clamp(zone.driftGrip ?? zone.grip ?? 1, 0.05, 1),
+    }));
+  }
+
+  /** Grip multiplier at `s`; ice affects ordinary and drift grip independently. */
+  gripAt(s, drifting = false) {
+    const ls = pmod(s, this.length);
+    let grip = 1;
+    for (const zone of this.gripZones) {
+      const inside = zone.start <= zone.end
+        ? ls >= zone.start && ls <= zone.end
+        : ls >= zone.start || ls <= zone.end;
+      if (inside) grip = Math.min(grip, drifting ? zone.driftGrip : zone.grip);
+    }
+    return grip;
   }
 
   // -------------------------------------------------------------------------
@@ -205,6 +273,7 @@ export class Track {
     out.heading = sm.heading;
     out.curvature = sm.curvature;
     out.offTrackDepth = Math.max(0, absLat - halfWidth);
+    out.runoff = this.runoffAt(p.s);
 
     if (out.offTrackDepth > 0) {
       out.surface = SURFACE.OFFROAD;

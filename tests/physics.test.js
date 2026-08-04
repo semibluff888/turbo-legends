@@ -36,6 +36,10 @@ const padTrack = new Track(circleDef({
   id: 'test-circle-pad',
   boostPads: [{ s: 30, lateral: 0, width: 12, length: 8 }],
 }));
+const iceTrack = new Track(circleDef({
+  id: 'test-circle-ice',
+  gripZones: [{ startFrac: 0, endFrac: 1, grip: 0.70, driftGrip: 0.88 }],
+}));
 
 const NEUTRAL = {
   id: 'neutral', name: 'Neutral', color: 0xffffff,
@@ -258,6 +262,26 @@ test('an active boost powers through offroad; expiry hands it back to the drag',
   assert.equal(kart.boostTimer, 0);
   assert.ok(kart.speed < KART.maxSpeed * KART.offroadMaxSpeedMul + 0.5,
     `offroad drag reclaims the kart after expiry (speed ${kart.speed.toFixed(2)})`);
+});
+
+test('ice lowers lateral grip without changing the road surface enum', () => {
+  const roadKart = place(makeKart(), track, 20);
+  const iceKart = place(makeKart(), iceTrack, 20);
+  for (const kart of [roadKart, iceKart]) {
+    const rightX = Math.cos(kart.yaw);
+    const rightZ = -Math.sin(kart.yaw);
+    kart.vx = rightX * 7;
+    kart.vz = rightZ * 7;
+    kart.speed = 0;
+  }
+
+  stepKartPhysics(roadKart, track, DT);
+  stepKartPhysics(iceKart, iceTrack, DT);
+  const roadSlide = Math.hypot(roadKart.vx, roadKart.vz);
+  const iceSlide = Math.hypot(iceKart.vx, iceKart.vz);
+  assert.equal(iceKart.surface, SURFACE.ROAD);
+  assert.ok(iceSlide > roadSlide,
+    `ice slide ${iceSlide.toFixed(3)} should exceed road ${roadSlide.toFixed(3)}`);
 });
 
 test('boost pad triggers a pad boost and pushes past maxSpeed', () => {

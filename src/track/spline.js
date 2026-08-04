@@ -321,8 +321,12 @@ export class ClosedSpline {
         const d2 = dx * dx + dz * dz;
         if (d2 < hintBestD2) { hintBestD2 = d2; hintBest = i; }
       }
-      // Accept the hint-local candidate unless the global one is clearly better.
-      if (hintBest >= 0 && hintBestD2 < bestD2 * 4.0) {
+      // A supplied hint represents continuity from the previous simulation
+      // step. Prefer it anywhere inside a generous drivable/recovery radius;
+      // at a vertical crossover the other deck may be an exact XZ match, so
+      // geometric distance alone cannot decide which pass owns the point.
+      const continuityRadius = 42;
+      if (hintBest >= 0 && hintBestD2 <= continuityRadius * continuityRadius) {
         best = hintBest;
         bestD2 = hintBestD2;
       }

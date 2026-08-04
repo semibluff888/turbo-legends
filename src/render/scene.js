@@ -5,7 +5,6 @@
 // functions (the Node syntax check imports this file with stubs).
 
 import * as THREE from 'three';
-import { BOUNDS } from '../core/constants.js';
 import { Rng } from '../core/rng.js';
 import { clamp01, easeOutBack, damp } from '../core/mathx.js';
 import { getTrackBounds, makeCheckerTexture } from './trackMesh.js';
@@ -150,7 +149,7 @@ function scatterPoints(track, rng, count) {
     const x = samp.x + samp.rx * side * offset;
     const z = samp.z + samp.rz * side * offset;
     sp.project(x, z, proj);
-    const clearance = track.halfWidthAt(proj.s) + BOUNDS.offroadExtent + SCATTER_CLEARANCE;
+    const clearance = track.halfWidthAt(proj.s) + track.runoffAt(proj.s) + SCATTER_CLEARANCE;
     if (proj.dist < clearance) continue;
     out.push({ x, z, rot: rng.float() * Math.PI * 2, dist: proj.dist });
   }
@@ -339,7 +338,7 @@ function buildAlpineScenery(group, track, rng, bounds) {
     let z = bounds.cz + Math.cos(a) * d;
     for (let tries = 0; tries < 20; tries++) {
       track.spline.project(x, z, peakProj);
-      const clearance = track.halfWidthAt(peakProj.s) + BOUNDS.offroadExtent + r + 6;
+      const clearance = track.halfWidthAt(peakProj.s) + track.runoffAt(peakProj.s) + r + 6;
       if (peakProj.dist >= clearance) break;
       d += 20;
       x = bounds.cx + Math.sin(a) * d;
@@ -372,6 +371,198 @@ function buildAlpineScenery(group, track, rng, bounds) {
   instances += addInstancedParts(cloudPivot, [{ geometry: cloudGeo, material: cloudMat }], clouds);
   group.add(cloudPivot);
   return { instances, cloudPivot };
+}
+
+function buildAuroraRibbon(color, width, height, phase) {
+  const segments = 42;
+  const positions = new Float32Array((segments + 1) * 2 * 3);
+  const uvs = new Float32Array((segments + 1) * 2 * 2);
+  const indices = new Uint16Array(segments * 6);
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const x = (t - 0.5) * width;
+    const wave = Math.sin(t * Math.PI * 4 + phase) * 7
+      + Math.sin(t * Math.PI * 9 + phase * 0.7) * 2.5;
+    const lower = 48 + wave;
+    const upper = lower + height * (0.72 + 0.28 * Math.sin(t * Math.PI));
+    const o = i * 6;
+    positions[o] = x; positions[o + 1] = lower; positions[o + 2] = 0;
+    positions[o + 3] = x; positions[o + 4] = upper; positions[o + 5] = 0;
+    const uv = i * 4;
+    uvs[uv] = t; uvs[uv + 1] = 0;
+    uvs[uv + 2] = t; uvs[uv + 3] = 1;
+  }
+  for (let i = 0; i < segments; i++) {
+    const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+    const o = i * 6;
+    indices[o] = a; indices[o + 1] = c; indices[o + 2] = d;
+    indices[o + 3] = a; indices[o + 4] = d; indices[o + 5] = b;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geo.setIndex(new THREE.BufferAttribute(indices, 1));
+  const mat = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.13,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = -2;
+  return mesh;
+}
+
+function buildGlacierScenery(group, track, rng, bounds) {
+  let instances = 0;
+
+  // Snow-laden pines, muted so the road and structure lights stay dominant.
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x52606a, roughness: 1 });
+  const foliageMat = new THREE.MeshStandardMaterial({ color: 0x365d66, roughness: 0.96 });
+  const snowMat = new THREE.MeshStandardMaterial({ color: 0xeaf7ff, roughness: 0.86 });
+  const trunkGeo = new THREE.CylinderGeometry(0.2, 0.3, 1.4, 6);
+  trunkGeo.translate(0, 0.7, 0);
+  const foliageGeo = new THREE.ConeGeometry(1.5, 3.8, 7);
+  foliageGeo.translate(0, 3.0, 0);
+  const snowGeo = new THREE.ConeGeometry(1.18, 2.8, 7);
+  snowGeo.translate(0, 3.55, 0);
+  const pineSpots = scatterPoints(track, rng, 72).map((p) => {
+    const s = rng.range(0.78, 1.55);
+    return {
+      x: p.x, y: 0, z: p.z, rot: p.rot,
+      sx: s, sy: s * rng.range(0.9, 1.2), sz: s,
+      tint: grayTints(rng, 0.88, 1.06),
+    };
+  });
+  instances += addInstancedParts(group, [
+    { geometry: trunkGeo, material: trunkMat },
+    { geometry: foliageGeo, material: foliageMat },
+    { geometry: snowGeo, material: snowMat },
+  ], pineSpots);
+
+  // Sparse crystal clusters add colour without filling the sight line.
+  const crystalMat = new THREE.MeshStandardMaterial({
+    color: 0x83dff2, emissive: 0x185f7a, emissiveIntensity: 0.34,
+    roughness: 0.22, metalness: 0.15,
+  });
+  const crystalGeo = new THREE.OctahedronGeometry(1, 0);
+  crystalGeo.scale(0.75, 2.8, 0.75);
+  crystalGeo.translate(0, 2.2, 0);
+  const crystals = scatterPoints(track, rng, 28).map((p) => ({
+    x: p.x, y: 0, z: p.z, rot: p.rot,
+    sx: rng.range(0.55, 1.35), sy: rng.range(0.75, 1.65), sz: rng.range(0.55, 1.35),
+    tint: rng.pick([0x70cfe8, 0x8be9f5, 0x76b9e8]),
+  }));
+  instances += addInstancedParts(group, [{ geometry: crystalGeo, material: crystalMat }], crystals);
+
+  // Distant dark peaks with broad snowcaps frame the aurora.
+  const peakMat = new THREE.MeshStandardMaterial({ color: 0x334866, roughness: 1, flatShading: true });
+  const peakGeo = new THREE.ConeGeometry(1, 1, 6);
+  peakGeo.translate(0, 0.5, 0);
+  const capGeo = new THREE.ConeGeometry(0.44, 0.42, 6);
+  capGeo.translate(0, 0.78, 0);
+  const peaks = [];
+  for (let i = 0; i < 9; i++) {
+    const angle = (i / 9) * Math.PI * 2 + rng.range(-0.18, 0.18);
+    const distance = bounds.radius * rng.range(1.35, 1.85);
+    const height = rng.range(52, 92);
+    const radius = height * rng.range(0.52, 0.72);
+    peaks.push({
+      x: bounds.cx + Math.sin(angle) * distance,
+      y: -2,
+      z: bounds.cz + Math.cos(angle) * distance,
+      rot: rng.float() * Math.PI,
+      sx: radius, sy: height, sz: radius,
+    });
+  }
+  instances += addInstancedParts(group, [
+    { geometry: peakGeo, material: peakMat },
+    { geometry: capGeo, material: snowMat },
+  ], peaks);
+
+  // Mirror Lake sits beneath the technical switchbacks.
+  const lake = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 64),
+    new THREE.MeshStandardMaterial({
+      color: 0x8ed5e8, emissive: 0x194a66, emissiveIntensity: 0.16,
+      transparent: true, opacity: 0.58, roughness: 0.16, metalness: 0.18,
+    }),
+  );
+  lake.name = 'mirror-lake';
+  lake.rotation.x = -Math.PI / 2;
+  lake.scale.set(65, 48, 1);
+  lake.position.set(-92, 0.025, -54);
+  lake.receiveShadow = true;
+  group.add(lake);
+
+  // Frozen waterfall landmark on the outer loop.
+  const waterfall = new THREE.Group();
+  waterfall.name = 'frozen-waterfall';
+  waterfall.position.set(142, 0, 14);
+  waterfall.rotation.y = -0.5;
+  const cliff = new THREE.Mesh(
+    new THREE.BoxGeometry(19, 17, 7),
+    new THREE.MeshStandardMaterial({ color: 0x435970, roughness: 1, flatShading: true }),
+  );
+  cliff.position.y = 8.2;
+  cliff.castShadow = true;
+  cliff.receiveShadow = true;
+  waterfall.add(cliff);
+  const cascade = new THREE.Mesh(
+    new THREE.BoxGeometry(10.5, 14.5, 0.55),
+    new THREE.MeshStandardMaterial({
+      color: 0x9eeafa, emissive: 0x246c8a, emissiveIntensity: 0.28,
+      transparent: true, opacity: 0.76, roughness: 0.18, metalness: 0.08,
+    }),
+  );
+  cascade.position.set(0, 7.1, 3.75);
+  waterfall.add(cascade);
+  group.add(waterfall);
+
+  // Three low-opacity aurora curtains form a quiet background layer.
+  const auroraPivot = new THREE.Group();
+  auroraPivot.name = 'aurora';
+  auroraPivot.position.set(bounds.cx, 0, bounds.cz);
+  const ribbonWidth = Math.max(260, bounds.radius * 2.2);
+  const auroraA = buildAuroraRibbon(0x60ffd1, ribbonWidth, 34, 0.2);
+  auroraA.position.z = -bounds.radius * 1.05;
+  auroraA.rotation.y = 0.12;
+  const auroraB = buildAuroraRibbon(0x62b8ff, ribbonWidth * 0.9, 28, 1.8);
+  auroraB.position.z = -bounds.radius * 0.92;
+  auroraB.rotation.y = -0.42;
+  const auroraC = buildAuroraRibbon(0xb778ff, ribbonWidth * 0.78, 23, 3.1);
+  auroraC.position.z = -bounds.radius * 0.84;
+  auroraC.rotation.y = 0.58;
+  auroraPivot.add(auroraA, auroraB, auroraC);
+  group.add(auroraPivot);
+
+  // Sparse falling snow: one points draw call and a tiny per-frame position update.
+  const snowCount = 180;
+  const snowPositions = new Float32Array(snowCount * 3);
+  const snowSpeeds = new Float32Array(snowCount);
+  for (let i = 0; i < snowCount; i++) {
+    snowPositions[i * 3] = bounds.cx + rng.range(-bounds.radius, bounds.radius);
+    snowPositions[i * 3 + 1] = rng.range(3, 62);
+    snowPositions[i * 3 + 2] = bounds.cz + rng.range(-bounds.radius, bounds.radius);
+    snowSpeeds[i] = rng.range(0.8, 2.1);
+  }
+  const snowGeometry = new THREE.BufferGeometry();
+  snowGeometry.setAttribute('position', new THREE.BufferAttribute(snowPositions, 3));
+  const snowfall = new THREE.Points(
+    snowGeometry,
+    new THREE.PointsMaterial({
+      color: 0xf2fbff, size: 0.5, transparent: true, opacity: 0.58,
+      depthWrite: false, sizeAttenuation: true,
+    }),
+  );
+  snowfall.name = 'snowfall';
+  snowfall.frustumCulled = false;
+  group.add(snowfall);
+
+  return { instances, auroraPivot, snowfall, snowSpeeds };
 }
 
 // ---------------------------------------------------------------------------
@@ -493,6 +684,9 @@ export function buildScene(track) {
   scenery.name = 'scenery';
   let water = null;
   let cloudPivot = null;
+  let auroraPivot = null;
+  let snowfall = null;
+  let snowSpeeds = null;
   if (theme.scenery === 'desert') {
     buildDesertScenery(scenery, track, rng);
   } else if (isHarbor) {
@@ -510,6 +704,8 @@ export function buildScene(track) {
     scenery.add(water);
   } else if (theme.scenery === 'alpine') {
     ({ cloudPivot } = buildAlpineScenery(scenery, track, rng, bounds));
+  } else if (theme.scenery === 'glacier') {
+    ({ auroraPivot, snowfall, snowSpeeds } = buildGlacierScenery(scenery, track, rng, bounds));
   }
   scene.add(scenery);
 
@@ -624,6 +820,22 @@ export function buildScene(track) {
     }
     if (cloudPivot) {
       cloudPivot.rotation.y = t * 0.006;
+    }
+    if (auroraPivot) {
+      auroraPivot.rotation.y = Math.sin(t * 0.025) * 0.035;
+      for (let i = 0; i < auroraPivot.children.length; i++) {
+        auroraPivot.children[i].material.opacity = 0.115
+          + 0.025 * Math.sin(t * 0.18 + i * 1.7);
+      }
+    }
+    if (snowfall && snowSpeeds) {
+      const positions = snowfall.geometry.getAttribute('position');
+      for (let i = 0; i < positions.count; i++) {
+        let y = positions.getY(i) - snowSpeeds[i] * dt;
+        if (y < 1) y += 61;
+        positions.setY(i, y);
+      }
+      positions.needsUpdate = true;
     }
   }
 

@@ -478,6 +478,35 @@ export class Hud {
     g.lineWidth = roadW;
     g.stroke();
 
+    // Vertical structure cues: tunnels read as dark/dashed, bridges as bright
+    // solid spans so a 2D minimap still explains the authored crossover.
+    const drawStructureArc = (structure, strokeStyle, width, dash = []) => {
+      const start = Math.floor((structure.startFrac ?? 0) * sp.count);
+      const end = Math.ceil((structure.endFrac ?? 0) * sp.count);
+      if (end <= start) return;
+      g.beginPath();
+      g.moveTo(this._mx(sp.px[start % sp.count]), this._my(sp.pz[start % sp.count]));
+      for (let i = start + step; i <= end; i += step) {
+        const index = i % sp.count;
+        g.lineTo(this._mx(sp.px[index]), this._my(sp.pz[index]));
+      }
+      const finalIndex = end % sp.count;
+      g.lineTo(this._mx(sp.px[finalIndex]), this._my(sp.pz[finalIndex]));
+      g.setLineDash(dash);
+      g.strokeStyle = strokeStyle;
+      g.lineWidth = width;
+      g.stroke();
+      g.setLineDash([]);
+    };
+    for (const structure of track.structures || []) {
+      if (structure.kind === 'tunnel') {
+        drawStructureArc(structure, 'rgba(8,24,42,0.9)', Math.max(2.5, roadW * 0.62), [4, 3]);
+      } else if (structure.kind === 'bridge') {
+        drawStructureArc(structure, 'rgba(5,22,38,0.9)', roadW + 2.2);
+        drawStructureArc(structure, '#9befff', Math.max(3.5, roadW * 0.72));
+      }
+    }
+
     // Start/finish notch across the road at s = 0.
     const w = (track.baseHalfWidth || 10) + 1.5;
     g.beginPath();

@@ -1,4 +1,4 @@
-// Track contract tests: all 3 shipped tracks build, width tables stay inside
+// Track contract tests: all shipped tracks build, width/runoff tables stay inside
 // authored bounds, surface classification (road / offroad / boost pads), item
 // box and grid slot placement, and the racing line. Pure Node — no THREE, no DOM.
 
@@ -12,16 +12,17 @@ import { loopDelta, pmod } from '../src/core/mathx.js';
 
 const tracks = TRACKS.map((def) => new Track(def));
 
-test('all 3 shipped tracks build with sane basics', () => {
-  assert.equal(TRACKS.length, 3);
+test('all 4 shipped tracks build with sane basics', () => {
+  assert.equal(TRACKS.length, 4);
   const ids = new Set(tracks.map((t) => t.id));
-  assert.equal(ids.size, 3, 'track ids must be unique');
+  assert.equal(ids.size, TRACKS.length, 'track ids must be unique');
 
   for (const track of tracks) {
     assert.ok(track.name.length > 0);
     assert.ok(track.length > 400, `${track.id} length=${track.length.toFixed(1)}`);
     assert.ok(track.laps >= 1);
     assert.equal(track.baseHalfWidth, track.def.width / 2);
+    assert.ok(track.runoffAt(0) > 0);
     assert.ok(Math.abs(track.spline.count * track.spline.spacing - track.length) < 1e-9);
     assert.equal(track.itemBoxes.length, track.def.itemBoxes.length);
     assert.equal(track.boostPads.length, track.def.boostPads.length);
@@ -30,6 +31,32 @@ test('all 3 shipped tracks build with sane basics', () => {
       assert.equal(box.respawnAt, 0);
     }
   }
+});
+
+test('Aurora Icefall exposes authored ice, structures, and vertical crossover clearance', () => {
+  const track = tracks.find((candidate) => candidate.id === 'aurora-icefall');
+  assert.ok(track);
+  assert.ok(Math.abs(track.length - 955.8) < 0.2, `length=${track.length.toFixed(2)}`);
+  assert.equal(track.gripZones.length, 3);
+  assert.equal(track.structures.length, 2);
+  assert.equal(track.gripAt(track.length * 0.15), 0.70);
+  assert.equal(track.gripAt(track.length * 0.15, true), 0.88);
+  assert.equal(track.gripAt(track.length * 0.30), 1);
+  assert.ok(track.runoffAt(track.length * 0.72) < 2.3);
+
+  const lowerS = track.length * 0.31;
+  const upperS = track.length * 0.7165;
+  const lower = track.toWorld(lowerS, 0, {});
+  const upper = track.toWorld(upperS, 0, {});
+  assert.ok(Math.hypot(lower.x - upper.x, lower.z - upper.z) < 1.0,
+    'bridge and tunnel should cross in the XZ plane');
+  assert.ok(upper.y - lower.y >= 12,
+    `vertical clearance=${(upper.y - lower.y).toFixed(2)}`);
+
+  const lowerProjection = track.sampleWorld(lower.x, lower.z, lowerS, {});
+  const upperProjection = track.sampleWorld(upper.x, upper.z, upperS, {});
+  assert.ok(Math.abs(loopDelta(lowerS, lowerProjection.s, track.length)) < 2);
+  assert.ok(Math.abs(loopDelta(upperS, upperProjection.s, track.length)) < 2);
 });
 
 test('width table stays inside authored bounds and tapers smoothly', () => {

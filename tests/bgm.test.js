@@ -18,7 +18,7 @@ test('default race BGM follows the selected track', () => {
 });
 
 test('an explicit race BGM overrides every track', () => {
-  for (const trackId of ['sunset-circuit', 'harbor-loop', 'summit-raceway']) {
+  for (const trackId of ['sunset-circuit', 'harbor-loop', 'summit-raceway', 'aurora-icefall']) {
     assert.equal(resolveRaceBgm('rainbow-kart-dash', trackId).id, 'rainbow-kart-dash');
   }
 });

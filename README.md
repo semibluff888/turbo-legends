@@ -124,7 +124,7 @@ the server race continues while the client sends neutral controls.
 ## The game
 
 - **8 racers** with real stat trade-offs (speed / accel / handling / weight)
-- **3 tracks** — Sunset Circuit, Harbor Loop, Summit Raceway — with boost
+- **4 tracks** — Sunset Circuit, Harbor Loop, Summit Raceway, Aurora Icefall — with boost
   pads, item box rows, kerbs, elevation, and themed scenery
 - **Drift & mini-turbo** — hop into a slide, hold it through the corner,
   release for blue → orange → purple tier boosts

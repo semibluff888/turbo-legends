@@ -193,6 +193,7 @@ export class AiDriver {
     this._curvMid = 0;
     this._curvFar = 0;
     this._curvBrakeAbs = 0;
+    this._gripAhead = 1;
 
     // World-scan results (refreshed each update).
     this._aheadKart = null;
@@ -303,7 +304,9 @@ export class AiDriver {
     c.steer = clamp(steer, -1, 1);
 
     // --- Throttle / brake from the corner-speed budget -----------------------
-    let curveSpeed = Math.sqrt(this._maxLatAccel / Math.max(this._curvBrakeAbs, 1e-4));
+    let curveSpeed = Math.sqrt(
+      (this._maxLatAccel * this._gripAhead) / Math.max(this._curvBrakeAbs, 1e-4),
+    );
     if (this._mistakeLeft > 0 && this._mistakeKind === 2) {
       curveSpeed += AI.lateBrakeCurveSpeedBonus; // late braker
     }
@@ -371,6 +374,7 @@ export class AiDriver {
     const near = spline.sampleAt(kart.s + 4, this._cs).curvature;
     const mid = spline.sampleAt(kart.s + d * 0.7, this._cs).curvature;
     const far = spline.sampleAt(kart.s + d * 1.25, this._cs).curvature;
+    let gripAhead = this.track.gripAt(kart.s + 4);
     // Keep the signed value with the larger magnitude for drift direction.
     this._curvMid = Math.abs(near) > Math.abs(mid) ? near : mid;
     this._curvFar = far;
@@ -378,11 +382,14 @@ export class AiDriver {
     // sparse probes at speed, or the kart arrives 10 too fast and runs wide.
     let brakeAbs = Math.abs(near);
     for (let f = 0.35; f <= 1.3; f += 0.235) {
-      const c = spline.sampleAt(kart.s + d * f, this._cs).curvature;
+      const probeS = kart.s + d * f;
+      const c = spline.sampleAt(probeS, this._cs).curvature;
       const a = Math.abs(c);
       if (a > brakeAbs) brakeAbs = a;
+      gripAhead = Math.min(gripAhead, this.track.gripAt(probeS));
     }
     this._curvBrakeAbs = brakeAbs;
+    this._gripAhead = gripAhead;
   }
 
   /** Pure pursuit + avoidance. Returns the raw steer command (pre-mistake). */

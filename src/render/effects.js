@@ -409,6 +409,18 @@ export class Effects {
     );
   }
 
+  /** Blue-white offroad spray for snow themes. */
+  snowSpray(x, y, z) {
+    const a = Math.random() * TAU;
+    const spread = 0.65 + Math.random() * 1.05;
+    this.dustPool.spawn(
+      x + Math.cos(a) * 0.42, y + 0.12, z + Math.sin(a) * 0.42,
+      Math.cos(a) * spread, 0.85 + Math.random() * 1.0, Math.sin(a) * spread,
+      0.34, 0.48, 0.58,
+      0.5 + Math.random() * 0.45,
+    );
+  }
+
   /** Radial impact burst (collisions, shell hits). */
   burst(x, y, z, color, count = 12) {
     const c = this._color.setHex(color);

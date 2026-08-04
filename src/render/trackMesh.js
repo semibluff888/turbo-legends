@@ -4,7 +4,6 @@
 // created inside buildTrackMesh().
 
 import * as THREE from 'three';
-import { BOUNDS } from '../core/constants.js';
 import { Rng } from '../core/rng.js';
 import { pmod } from '../core/mathx.js';
 
@@ -24,6 +23,7 @@ const SKIRT_DROP_OUT = 0.12;     // ...and droops at the outer boundary
 const WALL_HEIGHT = 0.9;
 const WALL_DROP = 0.14;
 const START_LIFT = 0.045;
+const ICE_LIFT = 0.012;
 const START_HALF_LENGTH = 1.35;
 const ROAD_V_PERIOD = 6;         // metres of track per texture tile along s
 const DASH_V_PERIOD = 4.5;       // dash + gap cycle length
@@ -37,16 +37,17 @@ const KERB_V_PERIOD = 2.4;       // red+white stripe pair length
 export function getTrackBounds(track) {
   const sp = track.spline;
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-  let maxHalf = 0;
+  let maxReach = 0;
   for (let i = 0; i < sp.count; i++) {
     if (sp.px[i] < minX) minX = sp.px[i];
     if (sp.px[i] > maxX) maxX = sp.px[i];
     if (sp.pz[i] < minZ) minZ = sp.pz[i];
     if (sp.pz[i] > maxZ) maxZ = sp.pz[i];
     const hw = track.halfWidthAt(i * sp.spacing);
-    if (hw > maxHalf) maxHalf = hw;
+    const reach = hw + track.runoffAt(i * sp.spacing);
+    if (reach > maxReach) maxReach = reach;
   }
-  const margin = maxHalf + BOUNDS.offroadExtent;
+  const margin = maxReach;
   minX -= margin; maxX += margin; minZ -= margin; maxZ += margin;
   const cx = (minX + maxX) / 2;
   const cz = (minZ + maxZ) / 2;
@@ -132,6 +133,58 @@ function loopPeriod(length, target) {
   return length / Math.max(1, Math.round(length / target));
 }
 
+function rangeFromArc(track, start, end) {
+  const sp = track.spline;
+  const startS = pmod(start, track.length);
+  const endS = end === track.length ? track.length : pmod(end, track.length);
+  const arc = endS >= startS ? endS - startS : track.length - startS + endS;
+  return {
+    start: Math.floor(startS / sp.spacing),
+    count: Math.max(2, Math.ceil(arc / sp.spacing) + 1),
+  };
+}
+
+function fracToS(track, frac) {
+  return frac === 1 ? track.length : pmod(frac * track.length, track.length);
+}
+
+function makeIceTexture(rng) {
+  const size = 192;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#dffaff';
+  ctx.fillRect(0, 0, size, size);
+  const gradient = ctx.createLinearGradient(0, 0, size, size);
+  gradient.addColorStop(0, 'rgba(255,255,255,0.28)');
+  gradient.addColorStop(0.55, 'rgba(74,191,224,0.08)');
+  gradient.addColorStop(1, 'rgba(255,255,255,0.2)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 26; i++) {
+    let x = rng.range(0, size);
+    let y = rng.range(0, size);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    const steps = rng.int(2, 5);
+    for (let step = 0; step < steps; step++) {
+      x += rng.range(-22, 22);
+      y += rng.range(10, 30);
+      ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = rng.chance(0.45)
+      ? 'rgba(30,104,142,0.22)' : 'rgba(255,255,255,0.42)';
+    ctx.lineWidth = rng.range(0.7, 1.8);
+    ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2.5, 8);
+  return tex;
+}
+
 /**
  * Build a two-rail ribbon that follows the spline. Rail A must be laterally
  * left of rail B (aLat < bLat) for an upward-facing winding; vertical ribbons
@@ -145,7 +198,7 @@ function loopPeriod(length, target) {
  *   range?:{start:number,count:number}  // open run of sample rows; omitted = closed loop
  * }} opts
  */
-function buildRibbonGeometry(track, opts) {
+export function buildRibbonGeometry(track, opts) {
   const sp = track.spline;
   const n = sp.count;
   const closed = !opts.range;
@@ -198,6 +251,242 @@ function buildRibbonGeometry(track, opts) {
   geo.setIndex(new THREE.BufferAttribute(indices, 1));
   geo.computeVertexNormals();
   return geo;
+}
+
+function buildTunnelGeometry(track, startS, endS, ceiling) {
+  const arc = endS >= startS ? endS - startS : track.length - startS + endS;
+  const rows = Math.max(2, Math.ceil(arc / 2.8) + 1);
+  const cols = 14;
+  const positions = new Float32Array(rows * cols * 3);
+  const uvs = new Float32Array(rows * cols * 2);
+  const sm = {};
+
+  for (let row = 0; row < rows; row++) {
+    const t = row / (rows - 1);
+    const s = pmod(startS + arc * t, track.length);
+    track.spline.sampleAt(s, sm);
+    const radius = track.halfWidthAt(s) + track.runoffAt(s) + 1.15;
+    for (let col = 0; col < cols; col++) {
+      const u = col / (cols - 1);
+      const angle = Math.PI * (1 - u);
+      const lateral = Math.cos(angle) * radius;
+      const rise = Math.sin(angle) * ceiling;
+      const o = (row * cols + col) * 3;
+      positions[o] = sm.x + sm.rx * lateral;
+      positions[o + 1] = sm.y + rise + 0.05;
+      positions[o + 2] = sm.z + sm.rz * lateral;
+      const uv = (row * cols + col) * 2;
+      uvs[uv] = u * 3;
+      uvs[uv + 1] = (arc * t) / 9;
+    }
+  }
+
+  const IndexArray = rows * cols > 65535 ? Uint32Array : Uint16Array;
+  const indices = new IndexArray((rows - 1) * (cols - 1) * 6);
+  let io = 0;
+  for (let row = 0; row < rows - 1; row++) {
+    for (let col = 0; col < cols - 1; col++) {
+      const a = row * cols + col;
+      const b = a + 1;
+      const c = a + cols;
+      const d = c + 1;
+      indices[io++] = a; indices[io++] = c; indices[io++] = d;
+      indices[io++] = a; indices[io++] = d; indices[io++] = b;
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geo.setIndex(new THREE.BufferAttribute(indices, 1));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function inFractionRange(frac, startFrac, endFrac) {
+  return startFrac <= endFrac
+    ? frac >= startFrac && frac <= endFrac
+    : frac >= startFrac || frac <= endFrac;
+}
+
+function addTunnelStructure(group, track, structure) {
+  const startS = fracToS(track, structure.startFrac);
+  const endS = fracToS(track, structure.endFrac);
+  const openings = (structure.openings || [])
+    .map((opening) => ({
+      start: fracToS(track, opening.startFrac),
+      end: fracToS(track, opening.endFrac),
+      startFrac: opening.startFrac,
+      endFrac: opening.endFrac,
+    }))
+    .sort((a, b) => a.start - b.start);
+  const ranges = [];
+  let cursor = startS;
+  for (const opening of openings) {
+    if (opening.start > cursor) ranges.push([cursor, opening.start]);
+    cursor = Math.max(cursor, opening.end);
+  }
+  if (cursor < endS) ranges.push([cursor, endS]);
+
+  const shellMat = new THREE.MeshStandardMaterial({
+    color: 0x78cfe5,
+    emissive: 0x174d70,
+    emissiveIntensity: 0.28,
+    transparent: true,
+    opacity: 0.82,
+    roughness: 0.3,
+    metalness: 0.12,
+    side: THREE.DoubleSide,
+  });
+  for (const [a, b] of ranges) {
+    const shell = new THREE.Mesh(buildTunnelGeometry(track, a, b, structure.ceiling ?? 7), shellMat);
+    shell.name = `tunnel-shell@${a.toFixed(0)}`;
+    shell.castShadow = true;
+    shell.receiveShadow = true;
+    freeze(shell);
+    group.add(shell);
+  }
+
+  const lightMat = new THREE.MeshStandardMaterial({
+    color: 0xffd19a, emissive: 0xffa847, emissiveIntensity: 2.3,
+    roughness: 0.35, metalness: 0.15,
+  });
+  const lightGeo = new THREE.BoxGeometry(0.34, 0.24, 1.4);
+  const pos = {};
+  let lightIndex = 0;
+  for (let s = startS + 10; s < endS - 5; s += 17) {
+    const frac = s / track.length;
+    if (openings.some((opening) => inFractionRange(frac, opening.startFrac, opening.endFrac))) continue;
+    for (const side of [-1, 1]) {
+      const lateral = side * (track.halfWidthAt(s) + track.runoffAt(s) * 0.55);
+      track.toWorld(s, lateral, pos);
+      const fixture = new THREE.Mesh(lightGeo, lightMat);
+      fixture.position.set(pos.x, pos.y + 2.55, pos.z);
+      fixture.rotation.y = pos.heading;
+      fixture.castShadow = false;
+      freeze(fixture);
+      group.add(fixture);
+    }
+    if (lightIndex++ % 2 === 0) {
+      track.toWorld(s, 0, pos);
+      const lamp = new THREE.PointLight(0xffbd78, 4.5, 22, 2);
+      lamp.position.set(pos.x, pos.y + 3.5, pos.z);
+      lamp.castShadow = false;
+      group.add(lamp);
+    }
+  }
+}
+
+function addBridgeTower(group, track, s, material) {
+  const centre = track.toWorld(s, 0, {});
+  const reach = track.halfWidthAt(s) + track.runoffAt(s) - 0.45;
+  const tower = new THREE.Group();
+  tower.position.set(centre.x, centre.y, centre.z);
+  tower.rotation.y = centre.heading;
+  const pillarGeo = new THREE.BoxGeometry(0.72, 7.2, 0.72);
+  for (const side of [-1, 1]) {
+    const pillar = new THREE.Mesh(pillarGeo, material);
+    pillar.position.set(side * reach, 3.6, 0);
+    pillar.castShadow = true;
+    pillar.receiveShadow = true;
+    tower.add(pillar);
+  }
+  const beam = new THREE.Mesh(new THREE.BoxGeometry(reach * 2 + 0.8, 0.55, 0.65), material);
+  beam.position.set(0, 7.0, 0);
+  beam.castShadow = true;
+  tower.add(beam);
+  tower.updateMatrix();
+  tower.matrixAutoUpdate = false;
+  group.add(tower);
+}
+
+function addBridgeStructure(group, track, structure) {
+  const startS = fracToS(track, structure.startFrac);
+  const endS = fracToS(track, structure.endFrac);
+  const range = rangeFromArc(track, startS, endS);
+  const sp = track.spline;
+  const reach = (hw, i) => hw + track.runoffAt(i * sp.spacing);
+  const deckMat = new THREE.MeshStandardMaterial({
+    color: 0x183a5a, roughness: 0.52, metalness: 0.55, side: THREE.DoubleSide,
+  });
+  const fasciaMat = new THREE.MeshStandardMaterial({
+    color: 0x24577a, roughness: 0.45, metalness: 0.45, side: THREE.DoubleSide,
+  });
+  const railMat = new THREE.MeshStandardMaterial({
+    color: 0x8defff, emissive: 0x2da9c7, emissiveIntensity: 0.38,
+    transparent: true, opacity: 0.7, roughness: 0.18, metalness: 0.12,
+    side: THREE.DoubleSide,
+  });
+  const add = (geo, mat, name, castShadow = false) => {
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.name = name;
+    mesh.castShadow = castShadow;
+    mesh.receiveShadow = true;
+    freeze(mesh);
+    group.add(mesh);
+  };
+
+  add(buildRibbonGeometry(track, {
+    latA: (hw, i) => -reach(hw, i), latB: (hw, i) => reach(hw, i),
+    yA: -0.95, yB: -0.95, range,
+  }), deckMat, 'bridge-underdeck', true);
+  for (const side of [-1, 1]) {
+    add(buildRibbonGeometry(track, {
+      latA: (hw, i) => side * reach(hw, i),
+      latB: (hw, i) => side * reach(hw, i),
+      yA: -0.95, yB: 0.12, range,
+    }), fasciaMat, `bridge-fascia-${side}`);
+    add(buildRibbonGeometry(track, {
+      latA: (hw, i) => side * reach(hw, i),
+      latB: (hw, i) => side * reach(hw, i),
+      yA: 0.15, yB: 1.45, range,
+    }), railMat, `bridge-rail-${side}`);
+  }
+
+  const mainStartS = fracToS(track, structure.mainStartFrac ?? structure.startFrac);
+  const mainEndS = fracToS(track, structure.mainEndFrac ?? structure.endFrac);
+  const towerMat = new THREE.MeshStandardMaterial({
+    color: 0x153754, emissive: 0x0c263c, emissiveIntensity: 0.25,
+    roughness: 0.45, metalness: 0.58,
+  });
+  addBridgeTower(group, track, mainStartS, towerMat);
+  addBridgeTower(group, track, mainEndS, towerMat);
+
+  const cableMat = new THREE.MeshStandardMaterial({
+    color: 0x9af5ff, emissive: 0x42bfd4, emissiveIntensity: 0.5,
+    roughness: 0.35, metalness: 0.6,
+  });
+  const hangerPositions = [];
+  for (const side of [-1, 1]) {
+    const points = [];
+    for (let i = 0; i <= 14; i++) {
+      const t = i / 14;
+      const s = mainStartS + (mainEndS - mainStartS) * t;
+      const lateral = side * (track.halfWidthAt(s) + track.runoffAt(s) - 0.45);
+      const p = track.toWorld(s, lateral, {});
+      const cableRise = 2.2 + 4.8 * Math.pow(t * 2 - 1, 2);
+      points.push(new THREE.Vector3(p.x, p.y + cableRise, p.z));
+      if (i > 0 && i < 14 && i % 2 === 0) {
+        hangerPositions.push(p.x, p.y + 1.45, p.z, p.x, p.y + cableRise, p.z);
+      }
+    }
+    const cable = new THREE.Mesh(
+      new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 72, 0.11, 6, false),
+      cableMat,
+    );
+    cable.name = `bridge-cable-${side}`;
+    cable.castShadow = false;
+    freeze(cable);
+    group.add(cable);
+  }
+  const hangerGeo = new THREE.BufferGeometry();
+  hangerGeo.setAttribute('position', new THREE.Float32BufferAttribute(hangerPositions, 3));
+  const hangers = new THREE.LineSegments(
+    hangerGeo,
+    new THREE.LineBasicMaterial({ color: 0x8eeeff, transparent: true, opacity: 0.72 }),
+  );
+  hangers.name = 'bridge-hangers';
+  freeze(hangers);
+  group.add(hangers);
 }
 
 /**
@@ -285,6 +574,7 @@ function freeze(obj) {
  */
 export function buildTrackMesh(track) {
   const theme = track.theme || {};
+  const sp = track.spline;
   const group = new THREE.Group();
   group.name = `track:${track.id}`;
 
@@ -317,6 +607,29 @@ export function buildTrackMesh(track) {
     roadMat, 'road'
   );
 
+  // --- Local low-grip ice sheets -----------------------------------------------
+  if (track.gripZones.length > 0) {
+    const iceMat = new THREE.MeshStandardMaterial({
+      color: 0xbdefff,
+      emissive: 0x2a7896,
+      emissiveIntensity: 0.14,
+      map: makeIceTexture(texRng),
+      transparent: true,
+      opacity: 0.52,
+      depthWrite: false,
+      roughness: 0.22,
+      metalness: 0.12,
+    });
+    for (const zone of track.gripZones) {
+      addMesh(buildRibbonGeometry(track, {
+        latA: (hw) => -hw, latB: (hw) => hw,
+        yA: ICE_LIFT, yB: ICE_LIFT,
+        vPeriod: 8,
+        range: rangeFromArc(track, zone.start, zone.end),
+      }), iceMat, `ice@${zone.start.toFixed(0)}`, { shadow: false, order: 1 });
+    }
+  }
+
   // --- Offroad skirts (droop toward the outer boundary) -----------------------
   const dirtTex = makeSpeckleTexture(texRng, '#d0cec6', 700);
   dirtTex.repeat.set(4, 1);
@@ -326,17 +639,16 @@ export function buildTrackMesh(track) {
     roughness: 1,
     metalness: 0,
   });
-  const ext = BOUNDS.offroadExtent;
   addMesh(
     buildRibbonGeometry(track, {
-      latA: (hw) => -(hw + ext), latB: (hw) => -hw,
+      latA: (hw, i) => -(hw + track.runoffAt(i * sp.spacing)), latB: (hw) => -hw,
       yA: -SKIRT_DROP_OUT, yB: -SKIRT_DROP_IN, vPeriod: roadV,
     }),
     skirtMat, 'skirt-left'
   );
   addMesh(
     buildRibbonGeometry(track, {
-      latA: (hw) => hw, latB: (hw) => hw + ext,
+      latA: (hw) => hw, latB: (hw, i) => hw + track.runoffAt(i * sp.spacing),
       yA: -SKIRT_DROP_IN, yB: -SKIRT_DROP_OUT, vPeriod: roadV,
     }),
     skirtMat, 'skirt-right'
@@ -418,14 +730,16 @@ export function buildTrackMesh(track) {
   });
   addMesh(
     buildRibbonGeometry(track, {
-      latA: (hw) => -(hw + ext), latB: (hw) => -(hw + ext),
+      latA: (hw, i) => -(hw + track.runoffAt(i * sp.spacing)),
+      latB: (hw, i) => -(hw + track.runoffAt(i * sp.spacing)),
       yA: -WALL_DROP, yB: -WALL_DROP + WALL_HEIGHT, vPeriod: roadV,
     }),
     wallMat, 'wall-left'
   );
   addMesh(
     buildRibbonGeometry(track, {
-      latA: (hw) => hw + ext, latB: (hw) => hw + ext,
+      latA: (hw, i) => hw + track.runoffAt(i * sp.spacing),
+      latB: (hw, i) => hw + track.runoffAt(i * sp.spacing),
       yA: -WALL_DROP, yB: -WALL_DROP + WALL_HEIGHT, vPeriod: roadV,
     }),
     wallMat, 'wall-right'
@@ -439,6 +753,12 @@ export function buildTrackMesh(track) {
     metalness: 0,
   });
   addMesh(buildStartLineGeometry(track), startMat, 'start-line', { order: 1 });
+
+  // --- Authored large structures -------------------------------------------------
+  for (const structure of track.structures) {
+    if (structure.kind === 'tunnel') addTunnelStructure(group, track, structure);
+    else if (structure.kind === 'bridge') addBridgeStructure(group, track, structure);
+  }
 
   freeze(group);
   return group;

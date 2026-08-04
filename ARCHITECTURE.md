@@ -113,7 +113,7 @@ the existing renderer and HUD:
 | `src/core/constants.js` | Shared tuning and enums |
 | `src/core/mathx.js` | Pure math helpers |
 | `src/core/rng.js` | Seeded RNG plus named child-stream derivation |
-| `src/track/*` | Spline, Track projection/surfaces, and three authored track definitions |
+| `src/track/*` | Spline, Track projection/surfaces, and four authored track definitions |
 | `src/game/kart.js` | Complete Kart state and controls shape |
 | `src/game/physics.js` | Kart motion, drift, surfaces, status timers, collisions, drafting |
 | `src/game/items.js` | Item boxes, roulette, projectiles, hazards, and item VFX |

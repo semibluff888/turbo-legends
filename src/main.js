@@ -1042,7 +1042,7 @@ function consumeRaceEvents() {
 }
 
 function updateRaceFrame(dt) {
-  const { session, visuals, effects, chase, finishCamera, world } = race;
+  const { track, session, visuals, effects, chase, finishCamera, world } = race;
   const online = session.kind === 'online';
 
   // --- Simulation at fixed timestep ---------------------------------------
@@ -1090,7 +1090,11 @@ function updateRaceFrame(dt) {
         tier ? tier.color : 0x4fc3ff);
     }
     if (kart.surface === 'offroad' && kart.speedRatio > 0.25 && !kart.airborne) {
-      effects.dust(kart.x, kart.y + 0.2, kart.z);
+      if (track.theme?.scenery === 'glacier') {
+        effects.snowSpray(kart.x, kart.y + 0.2, kart.z);
+      } else {
+        effects.dust(kart.x, kart.y + 0.2, kart.z);
+      }
     }
   }
 

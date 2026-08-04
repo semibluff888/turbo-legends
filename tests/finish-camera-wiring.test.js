@@ -22,6 +22,17 @@ test('main switches from chase camera to the finish director exactly once', () =
   );
 });
 
+test('offroad particle selection reads the mounted race track', () => {
+  assert.match(
+    main,
+    /function updateRaceFrame\(dt\) \{\s*const \{ track, session, visuals, effects, chase, finishCamera, world \} = race;/,
+  );
+  assert.match(
+    main,
+    /kart\.surface === 'offroad'[\s\S]*track\.theme\?\.scenery === 'glacier'[\s\S]*effects\.snowSpray[\s\S]*effects\.dust/,
+  );
+});
+
 test('results wait for the intro while an explicit skip completes it early', () => {
   assert.match(
     main,

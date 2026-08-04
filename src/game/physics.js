@@ -300,8 +300,9 @@ export function stepKartPhysics(kart, track, dt) {
   const rx = fz;  // cos(yaw)
   const rz = -fx; // -sin(yaw)
   let lat = kart.vx * rx + kart.vz * rz;
-  const grip = kart.drifting ? KART.driftGrip
+  const baseGrip = kart.drifting ? KART.driftGrip
     : wasOffroad ? KART.offroadGrip : KART.grip;
+  const grip = baseGrip * (wasOffroad ? 1 : track.gripAt(kart.s, kart.drifting));
   lat = damp(lat, 0, kart.airborne ? grip * TUNE.airGripFrac : grip, dt);
   kart.vx = fx * kart.speed + rx * lat;
   kart.vz = fz * kart.speed + rz * lat;
@@ -350,7 +351,7 @@ export function stepKartPhysics(kart, track, dt) {
   }
 
   // --- Soft wall / respawn ----------------------------------------------------------
-  const limit = sw.halfWidth + BOUNDS.offroadExtent;
+  const limit = sw.halfWidth + sw.runoff;
   const absLat = Math.abs(sw.lateral);
   if (absLat > limit + TUNE.respawnMargin || kart.y < TUNE.fallY) {
     beginRespawn(kart);
