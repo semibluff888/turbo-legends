@@ -22,6 +22,7 @@ const BOX_BOB_AMPLITUDE = 0.12;
 const BOX_POP_TIME = 0.34;
 const BOX_HIDE_LAMBDA = 22;
 const PAD_LIFT = 0.045;
+const SNOW_SWAY_AMPLITUDE = 1.2;
 
 /**
  * Create the WebGL renderer with the project-wide presentation defaults.
@@ -374,17 +375,17 @@ function buildAlpineScenery(group, track, rng, bounds) {
 }
 
 function buildAuroraRibbon(color, width, height, phase) {
-  const segments = 42;
+  const segments = 50;
   const positions = new Float32Array((segments + 1) * 2 * 3);
   const uvs = new Float32Array((segments + 1) * 2 * 2);
   const indices = new Uint16Array(segments * 6);
   for (let i = 0; i <= segments; i++) {
     const t = i / segments;
     const x = (t - 0.5) * width;
-    const wave = Math.sin(t * Math.PI * 4 + phase) * 7
-      + Math.sin(t * Math.PI * 9 + phase * 0.7) * 2.5;
-    const lower = 48 + wave;
-    const upper = lower + height * (0.72 + 0.28 * Math.sin(t * Math.PI));
+    const wave = Math.sin(t * Math.PI * 5 + phase) * 9.5
+      + Math.sin(t * Math.PI * 11 + phase * 0.8) * 3.8;
+    const lower = 46 + wave;
+    const upper = lower + height * (0.80 + 0.35 * Math.sin(t * Math.PI));
     const o = i * 6;
     positions[o] = x; positions[o + 1] = lower; positions[o + 2] = 0;
     positions[o + 3] = x; positions[o + 4] = upper; positions[o + 5] = 0;
@@ -405,7 +406,7 @@ function buildAuroraRibbon(color, width, height, phase) {
   const mat = new THREE.MeshBasicMaterial({
     color,
     transparent: true,
-    opacity: 0.13,
+    opacity: 0.16,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     side: THREE.DoubleSide,
@@ -419,60 +420,120 @@ function buildAuroraRibbon(color, width, height, phase) {
 function buildGlacierScenery(group, track, rng, bounds) {
   let instances = 0;
 
-  // Snow-laden pines, muted so the road and structure lights stay dominant.
-  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x52606a, roughness: 1 });
-  const foliageMat = new THREE.MeshStandardMaterial({ color: 0x365d66, roughness: 0.96 });
-  const snowMat = new THREE.MeshStandardMaterial({ color: 0xeaf7ff, roughness: 0.86 });
-  const trunkGeo = new THREE.CylinderGeometry(0.2, 0.3, 1.4, 6);
-  trunkGeo.translate(0, 0.7, 0);
-  const foliageGeo = new THREE.ConeGeometry(1.5, 3.8, 7);
-  foliageGeo.translate(0, 3.0, 0);
-  const snowGeo = new THREE.ConeGeometry(1.18, 2.8, 7);
-  snowGeo.translate(0, 3.55, 0);
-  const pineSpots = scatterPoints(track, rng, 72).map((p) => {
-    const s = rng.range(0.78, 1.55);
+  // 1. Festive Snow Pines (圣诞树) & Crystal Spire Trees (冰晶树)
+  // Replaces standard repetitive cones with multi-tier festive trees adorned with star toppers and lights
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x3d4752, roughness: 0.95 });
+  const pineFoliageMat = new THREE.MeshStandardMaterial({ color: 0x1d4d3e, roughness: 0.9 });
+  const snowCapMat = new THREE.MeshStandardMaterial({ color: 0xf0fbff, roughness: 0.75 });
+  const starMat = new THREE.MeshStandardMaterial({
+    color: 0xffe066, emissive: 0xffaa00, emissiveIntensity: 0.9, roughness: 0.2,
+  });
+
+  const trunkGeo = new THREE.CylinderGeometry(0.18, 0.32, 1.6, 6);
+  trunkGeo.translate(0, 0.8, 0);
+
+  // 3-tiered pine branches
+  const tier1Geo = new THREE.ConeGeometry(1.6, 1.8, 7);
+  tier1Geo.translate(0, 1.9, 0);
+  const tier2Geo = new THREE.ConeGeometry(1.2, 1.6, 7);
+  tier2Geo.translate(0, 2.9, 0);
+  const tier3Geo = new THREE.ConeGeometry(0.8, 1.4, 7);
+  tier3Geo.translate(0, 3.8, 0);
+
+  // Snow caps on each tier
+  const snow1Geo = new THREE.ConeGeometry(1.35, 1.1, 7);
+  snow1Geo.translate(0, 2.35, 0);
+  const snow2Geo = new THREE.ConeGeometry(0.98, 1.0, 7);
+  snow2Geo.translate(0, 3.3, 0);
+  const snow3Geo = new THREE.ConeGeometry(0.62, 0.9, 7);
+  snow3Geo.translate(0, 4.15, 0);
+
+  // Glowing star topper
+  const starGeo = new THREE.OctahedronGeometry(0.35, 0);
+  starGeo.scale(0.8, 1.2, 0.8);
+  starGeo.translate(0, 4.75, 0);
+
+  const pineSpots = scatterPoints(track, rng, 76).map((p) => {
+    const s = rng.range(0.82, 1.6);
     return {
       x: p.x, y: 0, z: p.z, rot: p.rot,
-      sx: s, sy: s * rng.range(0.9, 1.2), sz: s,
-      tint: grayTints(rng, 0.88, 1.06),
+      sx: s, sy: s * rng.range(0.95, 1.25), sz: s,
+      tint: grayTints(rng, 0.9, 1.05),
     };
   });
+
   instances += addInstancedParts(group, [
     { geometry: trunkGeo, material: trunkMat },
-    { geometry: foliageGeo, material: foliageMat },
-    { geometry: snowGeo, material: snowMat },
+    { geometry: tier1Geo, material: pineFoliageMat },
+    { geometry: tier2Geo, material: pineFoliageMat },
+    { geometry: tier3Geo, material: pineFoliageMat },
+    { geometry: snow1Geo, material: snowCapMat },
+    { geometry: snow2Geo, material: snowCapMat },
+    { geometry: snow3Geo, material: snowCapMat },
+    { geometry: starGeo, material: starMat },
   ], pineSpots);
 
-  // Sparse crystal clusters add colour without filling the sight line.
+  // 2. Multi-Point Luminous Crystal Clusters (多角发光冰晶簇)
   const crystalMat = new THREE.MeshStandardMaterial({
-    color: 0x83dff2, emissive: 0x185f7a, emissiveIntensity: 0.34,
-    roughness: 0.22, metalness: 0.15,
+    color: 0x7dd3fc, emissive: 0x0284c7, emissiveIntensity: 0.45,
+    roughness: 0.15, metalness: 0.25,
   });
-  const crystalGeo = new THREE.OctahedronGeometry(1, 0);
-  crystalGeo.scale(0.75, 2.8, 0.75);
-  crystalGeo.translate(0, 2.2, 0);
-  const crystals = scatterPoints(track, rng, 28).map((p) => ({
-    x: p.x, y: 0, z: p.z, rot: p.rot,
-    sx: rng.range(0.55, 1.35), sy: rng.range(0.75, 1.65), sz: rng.range(0.55, 1.35),
-    tint: rng.pick([0x70cfe8, 0x8be9f5, 0x76b9e8]),
-  }));
-  instances += addInstancedParts(group, [{ geometry: crystalGeo, material: crystalMat }], crystals);
 
-  // Distant dark peaks with broad snowcaps frame the aurora.
-  const peakMat = new THREE.MeshStandardMaterial({ color: 0x334866, roughness: 1, flatShading: true });
-  const peakGeo = new THREE.ConeGeometry(1, 1, 6);
+  // Cluster geometry: 1 main tall crystal + 3 smaller tilted crystal shards around base
+  const mainCrystal = new THREE.OctahedronGeometry(1, 0);
+  mainCrystal.scale(0.7, 3.2, 0.7);
+  mainCrystal.translate(0, 2.6, 0);
+
+  const shard1 = new THREE.OctahedronGeometry(0.55, 0);
+  shard1.scale(0.5, 2.0, 0.5);
+  shard1.rotateZ(0.35);
+  shard1.translate(0.65, 1.4, 0);
+
+  const shard2 = new THREE.OctahedronGeometry(0.5, 0);
+  shard2.scale(0.45, 1.7, 0.45);
+  shard2.rotateZ(-0.4);
+  shard2.translate(-0.6, 1.2, 0.3);
+
+  const shard3 = new THREE.OctahedronGeometry(0.48, 0);
+  shard3.scale(0.4, 1.5, 0.4);
+  shard3.rotateX(-0.35);
+  shard3.translate(0, 1.1, -0.65);
+
+  const crystalSpots = scatterPoints(track, rng, 32).map((p) => ({
+    x: p.x, y: 0, z: p.z, rot: p.rot,
+    sx: rng.range(0.6, 1.4), sy: rng.range(0.7, 1.7), sz: rng.range(0.6, 1.4),
+    tint: rng.pick([0x38bdf8, 0x60efff, 0xc084fc, 0xf472b6]),
+  }));
+
+  instances += addInstancedParts(group, [
+    { geometry: mainCrystal, material: crystalMat },
+    { geometry: shard1, material: crystalMat },
+    { geometry: shard2, material: crystalMat },
+    { geometry: shard3, material: crystalMat },
+  ], crystalSpots);
+
+  // 3. Sharp Multifaceted Glacial Peaks & Mountain Horizon (冰川角峰远山)
+  const peakMat = new THREE.MeshStandardMaterial({
+    color: 0x1d2d44, roughness: 0.9, flatShading: true, emissive: 0x081526, emissiveIntensity: 0.3,
+  });
+  const peakGeo = new THREE.ConeGeometry(1, 1, 8);
   peakGeo.translate(0, 0.5, 0);
-  const capGeo = new THREE.ConeGeometry(0.44, 0.42, 6);
-  capGeo.translate(0, 0.78, 0);
+
+  const peakCapGeo = new THREE.ConeGeometry(0.48, 0.46, 8);
+  peakCapGeo.translate(0, 0.77, 0);
+
+  const subPeakGeo = new THREE.ConeGeometry(0.55, 0.7, 6);
+  subPeakGeo.translate(0.35, 0.3, 0.2);
+
   const peaks = [];
-  for (let i = 0; i < 9; i++) {
-    const angle = (i / 9) * Math.PI * 2 + rng.range(-0.18, 0.18);
-    const distance = bounds.radius * rng.range(1.35, 1.85);
-    const height = rng.range(52, 92);
-    const radius = height * rng.range(0.52, 0.72);
+  for (let i = 0; i < 11; i++) {
+    const angle = (i / 11) * Math.PI * 2 + rng.range(-0.15, 0.15);
+    const distance = bounds.radius * rng.range(1.3, 1.8);
+    const height = rng.range(65, 110);
+    const radius = height * rng.range(0.5, 0.7);
     peaks.push({
       x: bounds.cx + Math.sin(angle) * distance,
-      y: -2,
+      y: -3,
       z: bounds.cz + Math.cos(angle) * distance,
       rot: rng.float() * Math.PI,
       sx: radius, sy: height, sz: radius,
@@ -480,81 +541,158 @@ function buildGlacierScenery(group, track, rng, bounds) {
   }
   instances += addInstancedParts(group, [
     { geometry: peakGeo, material: peakMat },
-    { geometry: capGeo, material: snowMat },
+    { geometry: peakCapGeo, material: snowCapMat },
+    { geometry: subPeakGeo, material: peakMat },
   ], peaks);
 
-  // Mirror Lake sits beneath the technical switchbacks.
-  const lake = new THREE.Mesh(
+  // 4. Enchanted Mirror Ice Lake (梦幻镜面冰湖与冰裂纹)
+  const lakeGroup = new THREE.Group();
+  lakeGroup.name = 'mirror-lake';
+
+  const lakeMesh = new THREE.Mesh(
     new THREE.CircleGeometry(1, 64),
     new THREE.MeshStandardMaterial({
-      color: 0x8ed5e8, emissive: 0x194a66, emissiveIntensity: 0.16,
-      transparent: true, opacity: 0.58, roughness: 0.16, metalness: 0.18,
+      color: 0x38bdf8, emissive: 0x0c4b6e, emissiveIntensity: 0.32,
+      transparent: true, opacity: 0.75, roughness: 0.08, metalness: 0.35,
+      depthWrite: false,
     }),
   );
-  lake.name = 'mirror-lake';
-  lake.rotation.x = -Math.PI / 2;
-  lake.scale.set(65, 48, 1);
-  lake.position.set(-92, 0.025, -54);
-  lake.receiveShadow = true;
-  group.add(lake);
+  lakeMesh.name = 'mirror-lake-surface';
+  lakeMesh.rotation.x = -Math.PI / 2;
+  lakeMesh.scale.set(78, 56, 1);
+  lakeMesh.position.set(-92, 0.025, -54);
+  lakeMesh.receiveShadow = true;
+  lakeMesh.renderOrder = 1;
+  lakeGroup.add(lakeMesh);
 
-  // Frozen waterfall landmark on the outer loop.
+  // Inner crack ring highlights for ice depth
+  const crackRing = new THREE.Mesh(
+    new THREE.RingGeometry(0.3, 0.95, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0x93c5fd, transparent: true, opacity: 0.35, side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+  );
+  crackRing.name = 'mirror-lake-cracks';
+  crackRing.rotation.x = -Math.PI / 2;
+  crackRing.scale.set(50, 36, 1);
+  crackRing.position.set(-92, 0.03, -54);
+  crackRing.renderOrder = 2;
+  lakeGroup.add(crackRing);
+
+  group.add(lakeGroup);
+
+  // 5. Grand Frozen Waterfall Landmark (壮丽冰瀑地标)
   const waterfall = new THREE.Group();
   waterfall.name = 'frozen-waterfall';
   waterfall.position.set(142, 0, 14);
   waterfall.rotation.y = -0.5;
+
   const cliff = new THREE.Mesh(
-    new THREE.BoxGeometry(19, 17, 7),
-    new THREE.MeshStandardMaterial({ color: 0x435970, roughness: 1, flatShading: true }),
+    new THREE.BoxGeometry(22, 21, 9),
+    new THREE.MeshStandardMaterial({ color: 0x253545, roughness: 0.95, flatShading: true }),
   );
-  cliff.position.y = 8.2;
+  cliff.position.y = 10.2;
   cliff.castShadow = true;
   cliff.receiveShadow = true;
   waterfall.add(cliff);
-  const cascade = new THREE.Mesh(
-    new THREE.BoxGeometry(10.5, 14.5, 0.55),
+
+  // Cascading ice sheets
+  const cascade1 = new THREE.Mesh(
+    new THREE.BoxGeometry(12.5, 17.5, 0.75),
     new THREE.MeshStandardMaterial({
-      color: 0x9eeafa, emissive: 0x246c8a, emissiveIntensity: 0.28,
-      transparent: true, opacity: 0.76, roughness: 0.18, metalness: 0.08,
+      color: 0x7dd3fc, emissive: 0x0284c7, emissiveIntensity: 0.38,
+      transparent: true, opacity: 0.82, roughness: 0.12, metalness: 0.15,
+      depthWrite: false,
     }),
   );
-  cascade.position.set(0, 7.1, 3.75);
-  waterfall.add(cascade);
+  cascade1.name = 'waterfall-cascade';
+  cascade1.position.set(0, 8.75, 4.8);
+  cascade1.renderOrder = 1;
+  waterfall.add(cascade1);
+
+  // Hanging Icicles
+  const icicleMat = new THREE.MeshStandardMaterial({
+    color: 0xbae6fd, emissive: 0x0369a1, emissiveIntensity: 0.4,
+    transparent: true, opacity: 0.88, roughness: 0.1, depthWrite: false,
+  });
+  const icicleGeo = new THREE.ConeGeometry(0.45, 4.5, 6);
+  const icicleOffsets = [-4.5, -2.7, -0.9, 0.9, 2.7, 4.5];
+  const icicles = new THREE.InstancedMesh(icicleGeo, icicleMat, icicleOffsets.length);
+  icicles.name = 'waterfall-icicles';
+  icicles.renderOrder = 2;
+  const icicleTransform = new THREE.Object3D();
+  for (let i = 0; i < icicleOffsets.length; i++) {
+    icicleTransform.position.set(icicleOffsets[i] + rng.range(-0.3, 0.3), 11.5, 5.2);
+    icicleTransform.rotation.set(Math.PI, 0, 0);
+    icicleTransform.updateMatrix();
+    icicles.setMatrixAt(i, icicleTransform.matrix);
+  }
+  icicles.instanceMatrix.needsUpdate = true;
+  waterfall.add(icicles);
+
+  // Frosted pool base mist
+  const poolMist = new THREE.Mesh(
+    new THREE.CircleGeometry(8.5, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0x38bdf8, transparent: true, opacity: 0.3, side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+  );
+  poolMist.name = 'waterfall-mist';
+  poolMist.rotation.x = -Math.PI / 2;
+  poolMist.position.set(0, 0.05, 7.5);
+  poolMist.renderOrder = 1;
+  waterfall.add(poolMist);
+
   group.add(waterfall);
 
-  // Three low-opacity aurora curtains form a quiet background layer.
+  // 6. Three-Layer Rich Dynamic Aurora Ribbons (三层绚丽柔和极光)
   const auroraPivot = new THREE.Group();
   auroraPivot.name = 'aurora';
   auroraPivot.position.set(bounds.cx, 0, bounds.cz);
-  const ribbonWidth = Math.max(260, bounds.radius * 2.2);
-  const auroraA = buildAuroraRibbon(0x60ffd1, ribbonWidth, 34, 0.2);
-  auroraA.position.z = -bounds.radius * 1.05;
-  auroraA.rotation.y = 0.12;
-  const auroraB = buildAuroraRibbon(0x62b8ff, ribbonWidth * 0.9, 28, 1.8);
-  auroraB.position.z = -bounds.radius * 0.92;
-  auroraB.rotation.y = -0.42;
-  const auroraC = buildAuroraRibbon(0xb778ff, ribbonWidth * 0.78, 23, 3.1);
-  auroraC.position.z = -bounds.radius * 0.84;
-  auroraC.rotation.y = 0.58;
+  const ribbonWidth = Math.max(280, bounds.radius * 2.3);
+
+  // Layer A: Emerald Green Aurora
+  const auroraA = buildAuroraRibbon(0x34d399, ribbonWidth, 38, 0.2);
+  auroraA.position.z = -bounds.radius * 1.08;
+  auroraA.rotation.y = 0.15;
+  auroraA.userData.baseRotationY = auroraA.rotation.y;
+
+  // Layer B: Polar Cyan Aurora
+  const auroraB = buildAuroraRibbon(0x38bdf8, ribbonWidth * 0.92, 32, 1.8);
+  auroraB.position.z = -bounds.radius * 0.94;
+  auroraB.rotation.y = -0.38;
+  auroraB.userData.baseRotationY = auroraB.rotation.y;
+
+  // Layer C: Cosmic Violet / Magenta Aurora
+  const auroraC = buildAuroraRibbon(0xc084fc, ribbonWidth * 0.82, 26, 3.2);
+  auroraC.position.z = -bounds.radius * 0.82;
+  auroraC.rotation.y = 0.52;
+  auroraC.userData.baseRotationY = auroraC.rotation.y;
+
   auroraPivot.add(auroraA, auroraB, auroraC);
   group.add(auroraPivot);
 
-  // Sparse falling snow: one points draw call and a tiny per-frame position update.
-  const snowCount = 180;
+  // 7. Swirling Snow Flurries & Sparkles (风雪飘飘与发光雪花)
+  const snowCount = 320;
   const snowPositions = new Float32Array(snowCount * 3);
+  const snowBaseX = new Float32Array(snowCount);
   const snowSpeeds = new Float32Array(snowCount);
   for (let i = 0; i < snowCount; i++) {
-    snowPositions[i * 3] = bounds.cx + rng.range(-bounds.radius, bounds.radius);
-    snowPositions[i * 3 + 1] = rng.range(3, 62);
-    snowPositions[i * 3 + 2] = bounds.cz + rng.range(-bounds.radius, bounds.radius);
-    snowSpeeds[i] = rng.range(0.8, 2.1);
+    const x = bounds.cx + rng.range(-bounds.radius * 1.1, bounds.radius * 1.1);
+    snowPositions[i * 3] = x;
+    snowBaseX[i] = x;
+    snowPositions[i * 3 + 1] = rng.range(2, 68);
+    snowPositions[i * 3 + 2] = bounds.cz + rng.range(-bounds.radius * 1.1, bounds.radius * 1.1);
+    snowSpeeds[i] = rng.range(0.9, 2.6);
   }
   const snowGeometry = new THREE.BufferGeometry();
   snowGeometry.setAttribute('position', new THREE.BufferAttribute(snowPositions, 3));
   const snowfall = new THREE.Points(
     snowGeometry,
     new THREE.PointsMaterial({
-      color: 0xf2fbff, size: 0.5, transparent: true, opacity: 0.58,
+      color: 0xf0fbff, size: 0.65, transparent: true, opacity: 0.68,
       depthWrite: false, sizeAttenuation: true,
     }),
   );
@@ -562,7 +700,7 @@ function buildGlacierScenery(group, track, rng, bounds) {
   snowfall.frustumCulled = false;
   group.add(snowfall);
 
-  return { instances, auroraPivot, snowfall, snowSpeeds };
+  return { instances, auroraPivot, snowfall, snowBaseX, snowSpeeds };
 }
 
 // ---------------------------------------------------------------------------
@@ -686,6 +824,7 @@ export function buildScene(track) {
   let cloudPivot = null;
   let auroraPivot = null;
   let snowfall = null;
+  let snowBaseX = null;
   let snowSpeeds = null;
   if (theme.scenery === 'desert') {
     buildDesertScenery(scenery, track, rng);
@@ -705,7 +844,9 @@ export function buildScene(track) {
   } else if (theme.scenery === 'alpine') {
     ({ cloudPivot } = buildAlpineScenery(scenery, track, rng, bounds));
   } else if (theme.scenery === 'glacier') {
-    ({ auroraPivot, snowfall, snowSpeeds } = buildGlacierScenery(scenery, track, rng, bounds));
+    ({ auroraPivot, snowfall, snowBaseX, snowSpeeds } = buildGlacierScenery(
+      scenery, track, rng, bounds,
+    ));
   }
   scene.add(scenery);
 
@@ -822,17 +963,22 @@ export function buildScene(track) {
       cloudPivot.rotation.y = t * 0.006;
     }
     if (auroraPivot) {
-      auroraPivot.rotation.y = Math.sin(t * 0.025) * 0.035;
+      auroraPivot.rotation.y = Math.sin(t * 0.035) * 0.06;
       for (let i = 0; i < auroraPivot.children.length; i++) {
-        auroraPivot.children[i].material.opacity = 0.115
-          + 0.025 * Math.sin(t * 0.18 + i * 1.7);
+        const child = auroraPivot.children[i];
+        child.rotation.y = child.userData.baseRotationY
+          + Math.sin(t * 0.12 + i * 1.5) * 0.08;
+        child.material.opacity = 0.14
+          + 0.04 * Math.sin(t * 0.25 + i * 1.7);
       }
     }
-    if (snowfall && snowSpeeds) {
+    if (snowfall && snowBaseX && snowSpeeds) {
       const positions = snowfall.geometry.getAttribute('position');
       for (let i = 0; i < positions.count; i++) {
         let y = positions.getY(i) - snowSpeeds[i] * dt;
-        if (y < 1) y += 61;
+        if (y < 1) y += 65;
+        positions.setX(i, snowBaseX[i]
+          + Math.sin(t * 1.2 + i * 0.3) * SNOW_SWAY_AMPLITUDE);
         positions.setY(i, y);
       }
       positions.needsUpdate = true;

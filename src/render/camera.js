@@ -161,7 +161,9 @@ export class ChaseCamera {
 
     // Ground clamp: never dip the lens below track height + clearance.
     if (this.track) {
-      const g = this.track.sampleWorld(cam.position.x, cam.position.z, this._hintS, this._ground);
+      const g = this.track.sampleWorld(
+        cam.position.x, cam.position.z, this._hintS, this._ground, cam.position.y,
+      );
       this._hintS = g.s;
       const minY = g.height + CAMERA_MIN_CLEARANCE;
       if (cam.position.y < minY) cam.position.y = minY;
@@ -438,7 +440,7 @@ export class FinishCameraDirector {
   _clampDesiredToGround() {
     if (!this.track) return;
     const g = this.track.sampleWorld(
-      this._desired.x, this._desired.z, this._hintS, this._ground,
+      this._desired.x, this._desired.z, this._hintS, this._ground, this._desired.y,
     );
     this._hintS = g.s;
     this._desired.y = Math.max(this._desired.y, g.height + FINISH_MIN_CLEARANCE);
@@ -462,7 +464,9 @@ export class FinishCameraDirector {
     }
 
     if (this.track) {
-      const g = this.track.sampleWorld(this._pos.x, this._pos.z, this._hintS, this._ground);
+      const g = this.track.sampleWorld(
+        this._pos.x, this._pos.z, this._hintS, this._ground, this._pos.y,
+      );
       this._hintS = g.s;
       this._pos.y = Math.max(this._pos.y, g.height + FINISH_MIN_CLEARANCE);
     }

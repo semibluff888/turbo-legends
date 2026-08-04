@@ -502,7 +502,7 @@ export class AiDriver {
         hs = h.s;
         hl = h.lateral;
       } else {
-        const sw = track.sampleWorld(h.x, h.z, kart.s, this._sw);
+        const sw = track.sampleWorld(h.x, h.z, kart.s, this._sw, h.y);
         hs = sw.s;
         hl = sw.lateral;
       }

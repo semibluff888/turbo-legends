@@ -318,7 +318,7 @@ export function stepKartPhysics(kart, track, dt) {
   }
 
   // --- Track projection ----------------------------------------------------------
-  const sw = track.sampleWorld(kart.x, kart.z, kart.s, _sw);
+  const sw = track.sampleWorld(kart.x, kart.z, kart.s, _sw, kart.y);
   kart.s = sw.s;
   kart.lateral = sw.lateral;
   kart.surface = sw.surface;
@@ -394,7 +394,7 @@ export function stepKartPhysics(kart, track, dt) {
 /** Bullet Bill autopilot: rails along the centreline, invulnerable. */
 function stepBullet(kart, track, dt) {
   if (kart.drifting) kart.cancelDrift();
-  const sw = track.sampleWorld(kart.x, kart.z, kart.s, _sw);
+  const sw = track.sampleWorld(kart.x, kart.z, kart.s, _sw, kart.y);
 
   const targetSpeed = KART.maxSpeed * BOOST.bulletPower;
   kart.speed = moveTowards(kart.speed, targetSpeed, BOOST.attackRate * dt);
@@ -416,7 +416,7 @@ function stepBullet(kart, track, dt) {
   kart.x += kart.vx * dt;
   kart.z += kart.vz * dt;
 
-  const sw2 = track.sampleWorld(kart.x, kart.z, kart.s, _sw);
+  const sw2 = track.sampleWorld(kart.x, kart.z, kart.s, _sw, kart.y);
   kart.s = sw2.s;
   kart.lateral = sw2.lateral;
   kart.surface = sw2.surface;
@@ -458,7 +458,7 @@ function completeRespawn(kart, track) {
   kart.invulnTimer = TUNE.recoverInvuln;
   kart.wrongWay = false;
   kart._wrongWayTimer = 0;
-  const sw = track.sampleWorld(kart.x, kart.z, kart.s, _sw);
+  const sw = track.sampleWorld(kart.x, kart.z, kart.s, _sw, kart.y);
   kart.s = sw.s;
   kart.lateral = sw.lateral;
   kart.surface = sw.surface;

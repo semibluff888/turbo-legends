@@ -57,6 +57,13 @@ test('Aurora Icefall exposes authored ice, structures, and vertical crossover cl
   const upperProjection = track.sampleWorld(upper.x, upper.z, upperS, {});
   assert.ok(Math.abs(loopDelta(lowerS, lowerProjection.s, track.length)) < 2);
   assert.ok(Math.abs(loopDelta(upperS, upperProjection.s, track.length)) < 2);
+
+  const lowerByHeight = track.sampleWorld(lower.x, lower.z, null, {}, lower.y);
+  const upperByHeight = track.sampleWorld(upper.x, upper.z, null, {}, upper.y);
+  assert.ok(Math.abs(loopDelta(lowerS, lowerByHeight.s, track.length)) < 2,
+    'height-only projection should select the tunnel deck');
+  assert.ok(Math.abs(loopDelta(upperS, upperByHeight.s, track.length)) < 2,
+    'height-only projection should select the bridge deck');
 });
 
 test('width table stays inside authored bounds and tapers smoothly', () => {
@@ -130,6 +137,22 @@ test('points past the road edge classify as OFFROAD with the right depth', () =>
         `${track.id} expected offroad at s=${s} (depth ${sw.offTrackDepth.toFixed(2)})`);
       assert.ok(Math.abs(sw.offTrackDepth - DEPTH) < 1.5,
         `${track.id} offTrackDepth ${sw.offTrackDepth.toFixed(2)} at s=${s}`);
+    }
+  }
+});
+
+test('hinted projection stays continuous just beyond both road edges', () => {
+  const EDGE_DEPTH = 0.25;
+  for (const track of tracks) {
+    for (let s = 0; s < track.length; s += 2) {
+      const hw = track.halfWidthAt(s);
+      for (const side of [-1, 1]) {
+        const w = track.toWorld(s, side * (hw + EDGE_DEPTH), {});
+        const sw = track.sampleWorld(w.x, w.z, s, {}, w.y);
+        const jump = Math.abs(loopDelta(s, sw.s, track.length));
+        assert.ok(jump < 2,
+          `${track.id} ${side < 0 ? 'left' : 'right'} edge jumped ${jump.toFixed(2)}m at s=${s}`);
+      }
     }
   }
 });

@@ -64,7 +64,7 @@ export class Track {
       const value = valueOf(cps[i]);
       if (value != null) {
         // Approximate arc position of this control point.
-        const p = this.spline.project(cps[i].x, cps[i].z, {});
+        const p = this.spline.project(cps[i].x, cps[i].z, {}, null, cps[i].y ?? 0);
         overrides.push({ s: p.s, value });
       }
     }
@@ -251,14 +251,15 @@ export class Track {
   /**
    * Full surface query for a world position.
    * `hintS` should be the entity's last known arc-length — it disambiguates
-   * self-overlapping track sections.
+   * self-overlapping track sections. `worldY` additionally distinguishes
+   * vertically stacked roads when it is available.
    *
    * @returns {{s:number, lateral:number, halfWidth:number, surface:string,
    *            offTrackDepth:number, height:number, heading:number,
    *            curvature:number, cx:number, cz:number}}
    */
-  sampleWorld(x, z, hintS = null, out = {}) {
-    const p = this.spline.project(x, z, this._proj, hintS);
+  sampleWorld(x, z, hintS = null, out = {}, worldY = null) {
+    const p = this.spline.project(x, z, this._proj, hintS, worldY);
     const halfWidth = this.halfWidthAt(p.s);
     const absLat = Math.abs(p.lateral);
 

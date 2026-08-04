@@ -318,7 +318,7 @@ export class ItemSystem {
   _dropBanana(kart) {
     const x = kart.x - kart.forwardX * ITEM_PHYSICS.trailOffset;
     const z = kart.z - kart.forwardZ * ITEM_PHYSICS.trailOffset;
-    const ws = this.track.sampleWorld(x, z, kart.s, this._ws);
+    const ws = this.track.sampleWorld(x, z, kart.s, this._ws, kart.y);
     this._spawnHazard(ITEM.BANANA, x, ws.height + HAZARD_REST_HEIGHT, z, kart.yaw, kart.index, ws.s, ws.lateral);
   }
 
@@ -327,7 +327,7 @@ export class ItemSystem {
       // Plant it behind, like a banana with a fuse.
       const x = kart.x - kart.forwardX * ITEM_PHYSICS.trailOffset;
       const z = kart.z - kart.forwardZ * ITEM_PHYSICS.trailOffset;
-      const ws = this.track.sampleWorld(x, z, kart.s, this._ws);
+      const ws = this.track.sampleWorld(x, z, kart.s, this._ws, kart.y);
       this._spawnHazard(ITEM.BOMB, x, ws.height + HAZARD_REST_HEIGHT, z, kart.yaw, kart.index, ws.s, ws.lateral);
       return;
     }
@@ -405,7 +405,7 @@ export class ItemSystem {
   _stepGreen(p, dt) {
     p.x += Math.sin(p.yaw) * ITEM_PHYSICS.shellSpeed * dt;
     p.z += Math.cos(p.yaw) * ITEM_PHYSICS.shellSpeed * dt;
-    const ws = this.track.sampleWorld(p.x, p.z, p.s, this._ws);
+    const ws = this.track.sampleWorld(p.x, p.z, p.s, this._ws, p.y);
     p.s = ws.s;
     p.y = ws.height + SHELL_HEIGHT;
     const limit = ws.halfWidth + SHELL_WALL_MARGIN;
@@ -454,7 +454,7 @@ export class ItemSystem {
     }
     p.x += Math.sin(p.yaw) * ITEM_PHYSICS.shellSpeed * dt;
     p.z += Math.cos(p.yaw) * ITEM_PHYSICS.shellSpeed * dt;
-    const ws = this.track.sampleWorld(p.x, p.z, p.s, this._ws);
+    const ws = this.track.sampleWorld(p.x, p.z, p.s, this._ws, p.y);
     p.s = ws.s;
     p.y = ws.height + SHELL_HEIGHT;
     // Red shells shatter on walls instead of bouncing.
@@ -463,7 +463,7 @@ export class ItemSystem {
   }
 
   _stepBlue(p, dt, karts) {
-    const ws = this.track.sampleWorld(p.x, p.z, p.s, this._ws);
+    const ws = this.track.sampleWorld(p.x, p.z, p.s, this._ws, p.y);
     p.s = ws.s;
     const target = findLeader(karts);
     if (!target) {
@@ -500,7 +500,7 @@ export class ItemSystem {
     p.x += p.vx * dt;
     p.y += p.vy * dt;
     p.z += p.vz * dt;
-    const ws = this.track.sampleWorld(p.x, p.z, p.s, this._ws);
+    const ws = this.track.sampleWorld(p.x, p.z, p.s, this._ws, p.y);
     p.s = ws.s;
     if (p.vy <= 0 && p.y <= ws.height + HAZARD_REST_HEIGHT) {
       this._spawnHazard(
@@ -670,7 +670,7 @@ export class ItemSystem {
     p.straight = false;
     p.diving = false;
     p.armed = true;
-    const ws = this.track.sampleWorld(x, z, hintS, this._ws);
+    const ws = this.track.sampleWorld(x, z, hintS, this._ws, y);
     p.s = ws.s;
     this._projectiles.push(p);
     return p;
