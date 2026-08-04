@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Turbo Legends - 赛车模型重构 3D 展厅 (3D Racer Showroom Demo)</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🏎️</text></svg>" />
+  <link rel="stylesheet" href="./styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "../vendor/three.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app-container">
+    <!-- Navbar -->
+    <header class="navbar">
+      <div class="brand">
+        <span class="brand-icon">🏎️</span>
+        <div>
+          <h1 class="brand-title">TURBO LEGENDS</h1>
+          <div class="brand-subtitle">CUSTOMIZE RACER · 3D 赛车重构展厅</div>
+        </div>
+      </div>
+
+      <!-- View Mode Toggles -->
+      <div class="view-mode-toggle">
+        <button id="btn-mode-single" class="toggle-btn active" type="button">单车 360° 视图</button>
+        <button id="btn-mode-grid" class="toggle-btn" type="button">4 车对比矩阵</button>
+      </div>
+    </header>
+
+    <!-- Main Viewport Area -->
+    <main class="viewport-area">
+      <!-- Model Tabs Bar -->
+      <nav id="model-tabs" class="model-tabs-bar">
+        <button class="tab-btn active" data-index="0" type="button">
+          <span>01. 默认房间赛车</span>
+          <span class="tab-badge">DEFAULT</span>
+        </button>
+        <button class="tab-btn" data-index="1" type="button">
+          <span>02. 赛博朋克超跑</span>
+          <span class="tab-badge" style="background:#00f0ff; color:#000;">CYBER</span>
+        </button>
+        <button class="tab-btn" data-index="2" type="button">
+          <span>03. Q萌糖果卡丁</span>
+          <span class="tab-badge" style="background:#ff7ebb; color:#000;">KAWAII</span>
+        </button>
+        <button class="tab-btn" data-index="3" type="button">
+          <span>04. 1:1 真实 F1 赛车</span>
+          <span class="tab-badge" style="background:#d90429; color:#fff;">F1 REAL</span>
+        </button>
+      </nav>
+
+      <!-- WebGL 3D Canvas -->
+      <canvas id="showroom-canvas"></canvas>
+
+      <!-- Info Card (Left Side Overlay) -->
+      <article id="info-card" class="info-card">
+        <div class="model-header">
+          <h2 id="model-title" class="model-title">加载中...</h2>
+          <span id="style-tag" class="style-tag">TAG</span>
+        </div>
+        <p id="model-desc" class="model-desc"></p>
+        <div id="specs-grid" class="specs-grid">
+          <!-- Dynamically populated -->
+        </div>
+      </article>
+
+      <!-- Controls Card (Right Side Overlay) -->
+      <aside class="controls-card">
+        <h3 class="card-title">展厅控制台 (Controls)</h3>
+
+        <!-- Color Presets -->
+        <div class="control-group">
+          <label class="control-label">定制车漆 (Paint Color)</label>
+          <div class="color-presets">
+            <div class="color-dot active" style="background:#00f0ff" data-color="0x00f0ff" data-accent="0xff007f"></div>
+            <div class="color-dot" style="background:#ff7ebb" data-color="0xff7ebb" data-accent="0xffe66d"></div>
+            <div class="color-dot" style="background:#d90429" data-color="0xd90429" data-accent="0xffb703"></div>
+            <div class="color-dot" style="background:#36d6a0" data-color="0x36d6a0" data-accent="0xfff3b0"></div>
+            <div class="color-dot" style="background:#94a3b8" data-color="0x94a3b8" data-accent="0x38bdf8"></div>
+          </div>
+        </div>
+
+        <!-- Environment Lighting -->
+        <div class="control-group">
+          <label class="control-label">光影工作室 (Lighting Studio)</label>
+          <div class="button-grid">
+            <button id="btn-env-cyber" class="action-btn active" type="button">赛博夜景</button>
+            <button id="btn-env-sunset" class="action-btn" type="button">日落赛道</button>
+            <button id="btn-env-spot" class="action-btn" type="button">高光展厅</button>
+          </div>
+        </div>
+
+        <!-- Display Toggles -->
+        <div class="control-group">
+          <label class="control-label">视图与动画 (View Options)</label>
+          <div class="button-grid">
+            <button id="btn-toggle-rotate" class="action-btn active" type="button">自动旋转: ON</button>
+            <button id="btn-toggle-wireframe" class="action-btn" type="button">线框模式: OFF</button>
+          </div>
+        </div>
+
+        <div class="hint-text">💡 提示: 按住鼠标左键拖拽旋转 3D 视角，滚动轮缩放镜头</div>
+      </aside>
+    </main>
+  </div>
+
+  <script type="module">
+    import { ShowroomApp } from './showroom-app.js';
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const container = document.querySelector('.viewport-area');
+      const app = new ShowroomApp(container);
+
+      // DOM Elements
+      const tabBtns = document.querySelectorAll('.tab-btn');
+      const modeSingleBtn = document.getElementById('btn-mode-single');
+      const modeGridBtn = document.getElementById('btn-mode-grid');
+      const titleEl = document.getElementById('model-title');
+      const tagEl = document.getElementById('style-tag');
+      const descEl = document.getElementById('model-desc');
+      const specsContainer = document.getElementById('specs-grid');
+
+      function updateUI() {
+        const mod = app.models[app.activeModelIndex];
+        if (!mod) return;
+
+        titleEl.textContent = mod.name;
+        tagEl.textContent = mod.styleTag;
+        descEl.textContent = mod.description;
+
+        specsContainer.innerHTML = '';
+        if (mod.specs) {
+          for (const [k, v] of Object.entries(mod.specs)) {
+            const item = document.createElement('div');
+            item.className = 'spec-item';
+            item.innerHTML = `<span class="spec-label">${k}</span><span class="spec-value">${v}</span>`;
+            specsContainer.appendChild(item);
+          }
+        }
+
+        tabBtns.forEach((btn, idx) => {
+          btn.classList.toggle('active', idx === app.activeModelIndex);
+        });
+      }
+
+      // Tab Switching
+      tabBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.index, 10);
+          app.setActiveModel(idx);
+          updateUI();
+        });
+      });
+
+      // View Mode Toggle
+      modeSingleBtn.addEventListener('click', () => {
+        app.setViewMode('single');
+        modeSingleBtn.classList.add('active');
+        modeGridBtn.classList.remove('active');
+        document.getElementById('info-card').style.display = 'block';
+      });
+
+      modeGridBtn.addEventListener('click', () => {
+        app.setViewMode('grid');
+        modeGridBtn.classList.add('active');
+        modeSingleBtn.classList.remove('active');
+        document.getElementById('info-card').style.display = 'none';
+      });
+
+      // Color Dots
+      document.querySelectorAll('.color-dot').forEach((dot) => {
+        dot.addEventListener('click', () => {
+          document.querySelectorAll('.color-dot').forEach((d) => d.classList.remove('active'));
+          dot.classList.add('active');
+          const color = parseInt(dot.dataset.color, 16);
+          const accent = parseInt(dot.dataset.accent, 16);
+          app.setColors(color, accent);
+          updateUI();
+        });
+      });
+
+      // Lighting Presets
+      const envBtns = [
+        { id: 'btn-env-cyber', env: 'cyber' },
+        { id: 'btn-env-sunset', env: 'sunset' },
+        { id: 'btn-env-spot', env: 'spotlight' },
+      ];
+      envBtns.forEach(({ id, env }) => {
+        const btn = document.getElementById(id);
+        btn.addEventListener('click', () => {
+          envBtns.forEach((b) => document.getElementById(b.id).classList.remove('active'));
+          btn.classList.add('active');
+          app.setEnv(env);
+        });
+      });
+
+      // Toggles
+      const rotateBtn = document.getElementById('btn-toggle-rotate');
+      rotateBtn.addEventListener('click', () => {
+        app.isAutoRotate = !app.isAutoRotate;
+        rotateBtn.classList.toggle('active', app.isAutoRotate);
+        rotateBtn.textContent = `自动旋转: ${app.isAutoRotate ? 'ON' : 'OFF'}`;
+      });
+
+      const wireframeBtn = document.getElementById('btn-toggle-wireframe');
+      wireframeBtn.addEventListener('click', () => {
+        app.toggleWireframe(!app.isWireframe);
+        wireframeBtn.classList.toggle('active', app.isWireframe);
+        wireframeBtn.textContent = `线框模式: ${app.isWireframe ? 'ON' : 'OFF'}`;
+      });
+
+      // Initial UI update
+      updateUI();
+    });
+  </script>
+</body>
+</html>
