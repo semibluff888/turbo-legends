@@ -20,14 +20,18 @@ export class ShowroomApp {
     this.activeModelIndex = 0;
     this.viewMode = 'single'; // 'single' | 'grid'
 
+    // Driver & Avatar State
+    this.activeAvatarId = 'cat';
+    this.showDriver = true;
+
     // Controls & State
     this.isAutoRotate = true;
     this.isWireframe = false;
     this.isAnimationPlaying = true;
     this.currentEnv = 'cyber';
 
-    this.currentColor = 0x4aa8ff;
-    this.currentAccent = 0xffd166;
+    this.currentColor = 0x00f0ff;
+    this.currentAccent = 0xff007f;
 
     // Pointer Dragging
     this.isDragging = false;
@@ -77,27 +81,20 @@ export class ShowroomApp {
     this.lightGroup = new THREE.Group();
     this.scene.add(this.lightGroup);
 
-    // Ambient / Hemisphere Light
     this.hemiLight = new THREE.HemisphereLight(0x0f172a, 0x1e293b, 1.8);
     this.lightGroup.add(this.hemiLight);
 
-    // Main Key Light (Directional with Shadows)
     this.keyLight = new THREE.DirectionalLight(0xffffff, 3.2);
     this.keyLight.position.set(-4, 7, 5);
     this.keyLight.castShadow = true;
     this.keyLight.shadow.mapSize.width = 2048;
     this.keyLight.shadow.mapSize.height = 2048;
-    this.keyLight.shadow.camera.near = 0.5;
-    this.keyLight.shadow.camera.far = 25;
-    this.keyLight.shadow.bias = -0.0005;
     this.lightGroup.add(this.keyLight);
 
-    // Cyan Rim Light
     this.rimLight1 = new THREE.DirectionalLight(0x00f0ff, 2.5);
     this.rimLight1.position.set(5, 3, -4);
     this.lightGroup.add(this.rimLight1);
 
-    // Magenta Fill Light
     this.rimLight2 = new THREE.DirectionalLight(0xff007f, 2.0);
     this.rimLight2.position.set(-5, 2, -4);
     this.lightGroup.add(this.rimLight2);
@@ -107,7 +104,6 @@ export class ShowroomApp {
     this.stageGroup = new THREE.Group();
     this.scene.add(this.stageGroup);
 
-    // Showroom Circular Pedestal
     const stageGeo = new THREE.CylinderGeometry(2.4, 2.6, 0.15, 64);
     const stageMat = new THREE.MeshStandardMaterial({
       color: 0x0b0f19,
@@ -119,7 +115,6 @@ export class ShowroomApp {
     stageMesh.receiveShadow = true;
     this.stageGroup.add(stageMesh);
 
-    // Glowing Pedestal Ring
     const ringGeo = new THREE.TorusGeometry(2.38, 0.03, 16, 64);
     this.ringMat = new THREE.MeshStandardMaterial({
       color: 0x00f0ff,
@@ -131,26 +126,24 @@ export class ShowroomApp {
     ringMesh.position.y = 0.001;
     this.stageGroup.add(ringMesh);
 
-    // Grid Floor
     const gridHelper = new THREE.GridHelper(20, 20, 0x00f0ff, 0x1e293b);
     gridHelper.position.y = -0.08;
     this.stageGroup.add(gridHelper);
   }
 
   loadModels() {
-    // Clear existing
     this.models.forEach((m) => {
       this.scene.remove(m.wrapper);
       m.dispose();
     });
     this.models = [];
 
-    // Instantiate 4 Models
+    // Instantiate 4 Models with Driver Avatar settings
     const modelDefs = [
       buildDefaultKart('kit'),
-      buildCyberHypercar(this.currentColor, this.currentAccent),
-      buildChibiCuteRacer(0xff7ebb, 0xffe66d),
-      buildFormula1RealRacer(0xd90429, 0xffb703),
+      buildCyberHypercar(this.currentColor, this.currentAccent, this.activeAvatarId, this.showDriver),
+      buildChibiCuteRacer(0xff7ebb, 0xffe66d, this.activeAvatarId, this.showDriver),
+      buildFormula1RealRacer(0xd90429, 0xffb703, this.activeAvatarId, this.showDriver),
     ];
 
     modelDefs.forEach((mod, idx) => {
@@ -165,6 +158,10 @@ export class ShowroomApp {
       });
     });
 
+    if (this.isWireframe) {
+      this.toggleWireframe(true);
+    }
+
     this.updateLayout();
   }
 
@@ -173,14 +170,12 @@ export class ShowroomApp {
 
     this.models.forEach((mod, idx) => {
       if (isGrid) {
-        // Position side-by-side in 4 slots
         const spacing = 4.2;
         const xPos = (idx - 1.5) * spacing;
         mod.wrapper.position.set(xPos, 0, 0);
         mod.wrapper.visible = true;
         mod.wrapper.scale.setScalar(0.85);
       } else {
-        // Single mode: only active model visible at center
         mod.wrapper.position.set(0, 0, 0);
         mod.wrapper.visible = idx === this.activeModelIndex;
         mod.wrapper.scale.setScalar(1.0);
@@ -205,6 +200,16 @@ export class ShowroomApp {
   setViewMode(mode) {
     this.viewMode = mode;
     this.updateLayout();
+  }
+
+  setAvatar(avatarId) {
+    this.activeAvatarId = avatarId;
+    this.loadModels();
+  }
+
+  setShowDriver(enabled) {
+    this.showDriver = enabled;
+    this.loadModels();
   }
 
   setEnv(envType) {
@@ -239,7 +244,6 @@ export class ShowroomApp {
   setColors(primaryHex, accentHex) {
     this.currentColor = primaryHex;
     this.currentAccent = accentHex;
-    // Re-build custom models with new colors
     this.loadModels();
   }
 
@@ -259,7 +263,6 @@ export class ShowroomApp {
   bindEvents() {
     window.addEventListener('resize', () => this.onResize());
 
-    // Pointer dragging for rotation
     this.canvas.addEventListener('pointerdown', (e) => {
       this.isDragging = true;
       this.previousPointerPosition = { x: e.clientX, y: e.clientY };
@@ -285,7 +288,6 @@ export class ShowroomApp {
       this.isDragging = false;
     });
 
-    // Zoom on wheel
     this.canvas.addEventListener('wheel', (e) => {
       if (this.viewMode !== 'single') return;
       e.preventDefault();
@@ -326,7 +328,6 @@ export class ShowroomApp {
         this.rotationY += dt * 0.45;
         this.updateCameraTransform();
       } else {
-        // Grid mode: rotate each model wrapper
         this.models.forEach((m) => {
           m.wrapper.rotation.y += dt * 0.45;
         });

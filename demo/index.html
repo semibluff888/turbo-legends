@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Turbo Legends - 赛车模型重构 3D 展厅 (3D Racer Showroom Demo)</title>
+  <title>Turbo Legends - 赛车与 Avatar 重构 3D 展厅 (3D Racer & Driver Showroom)</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🏎️</text></svg>" />
   <link rel="stylesheet" href="./styles.css" />
   <script type="importmap">
@@ -22,7 +22,7 @@
         <span class="brand-icon">🏎️</span>
         <div>
           <h1 class="brand-title">TURBO LEGENDS</h1>
-          <div class="brand-subtitle">CUSTOMIZE RACER · 3D 赛车重构展厅</div>
+          <div class="brand-subtitle">CUSTOMIZE RACER · 3D 赛车 & 赛车手重构展厅</div>
         </div>
       </div>
 
@@ -73,6 +73,53 @@
       <!-- Controls Card (Right Side Overlay) -->
       <aside class="controls-card">
         <h3 class="card-title">展厅控制台 (Controls)</h3>
+
+        <!-- Avatar Selection Grid -->
+        <div class="control-group">
+          <label class="control-label">重构 8 款卡通 Avatar 赛车手</label>
+          <div class="avatar-grid">
+            <button class="avatar-chip active" data-avatar="cat" type="button">
+              <span class="avatar-emoji">🐱</span>
+              <span class="avatar-name">猫猫</span>
+            </button>
+            <button class="avatar-chip" data-avatar="dog" type="button">
+              <span class="avatar-emoji">🐶</span>
+              <span class="avatar-name">狗狗</span>
+            </button>
+            <button class="avatar-chip" data-avatar="rabbit" type="button">
+              <span class="avatar-emoji">🐰</span>
+              <span class="avatar-name">兔子</span>
+            </button>
+            <button class="avatar-chip" data-avatar="fox" type="button">
+              <span class="avatar-emoji">🦊</span>
+              <span class="avatar-name">狐狸</span>
+            </button>
+            <button class="avatar-chip" data-avatar="bear" type="button">
+              <span class="avatar-emoji">🐻</span>
+              <span class="avatar-name">熊熊</span>
+            </button>
+            <button class="avatar-chip" data-avatar="panda" type="button">
+              <span class="avatar-emoji">🐼</span>
+              <span class="avatar-name">熊猫</span>
+            </button>
+            <button class="avatar-chip" data-avatar="tiger" type="button">
+              <span class="avatar-emoji">🐯</span>
+              <span class="avatar-name">老虎</span>
+            </button>
+            <button class="avatar-chip" data-avatar="raccoon" type="button">
+              <span class="avatar-emoji">🦝</span>
+              <span class="avatar-name">浣熊</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Driver Visibility Toggle -->
+        <div class="control-group">
+          <label class="control-label">赛车手显示设置</label>
+          <button id="btn-toggle-driver" class="action-btn active" style="width: 100%; text-align: center;" type="button">
+            🏎️ 赛车手显示: ON (显示驾驶员)
+          </button>
+        </div>
 
         <!-- Color Presets -->
         <div class="control-group">
@@ -171,6 +218,27 @@
         modeGridBtn.classList.add('active');
         modeSingleBtn.classList.remove('active');
         document.getElementById('info-card').style.display = 'none';
+      });
+
+      // Avatar Selector Chips
+      const avatarChips = document.querySelectorAll('.avatar-chip');
+      avatarChips.forEach((chip) => {
+        chip.addEventListener('click', () => {
+          avatarChips.forEach((c) => c.classList.remove('active'));
+          chip.classList.add('active');
+          const avatarId = chip.dataset.avatar;
+          app.setAvatar(avatarId);
+          updateUI();
+        });
+      });
+
+      // Driver Visibility Toggle
+      const driverBtn = document.getElementById('btn-toggle-driver');
+      driverBtn.addEventListener('click', () => {
+        app.setShowDriver(!app.showDriver);
+        driverBtn.classList.toggle('active', app.showDriver);
+        driverBtn.textContent = `🏎️ 赛车手显示: ${app.showDriver ? 'ON (显示驾驶员)' : 'OFF (隐藏驾驶员)'}`;
+        updateUI();
       });
 
       // Color Dots

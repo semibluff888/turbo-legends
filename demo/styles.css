@@ -266,7 +266,9 @@ body {
   position: absolute;
   right: 2rem;
   bottom: 2rem;
-  width: 320px;
+  width: 340px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
   background: var(--bg-card);
   backdrop-filter: blur(20px);
   border: 1px solid var(--border-color);
@@ -294,6 +296,50 @@ body {
   color: var(--text-muted);
   margin-bottom: 0.4rem;
   display: block;
+}
+
+/* Avatar Selection Chips Grid */
+.avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.4rem;
+}
+
+.avatar-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.4rem 0.2rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.avatar-chip:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.avatar-chip.active {
+  background: rgba(0, 240, 255, 0.2);
+  border-color: var(--primary);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
+}
+
+.avatar-emoji {
+  font-size: 1.3rem;
+}
+
+.avatar-name {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.avatar-chip.active .avatar-name {
+  color: var(--primary);
 }
 
 .color-presets {
