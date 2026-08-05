@@ -58,6 +58,7 @@ export const DEFAULT_RACE_BGM_BY_TRACK = Object.freeze({
   'harbor-loop': 'rainbow-kart-parade',
   'summit-raceway': 'rainbow-kart-dash',
   'aurora-icefall': 'rainbow-lap-rush',
+  'monaco-gp': 'rainbow-kart-parade',
   'metropolis-highway': 'rainbow-kart-dash',
 });
 

@@ -219,6 +219,70 @@ export const TRACKS = [
   },
 
   {
+    id: 'monaco-gp',
+    name: 'Monaco Grand Prix',
+    subtitle: 'Iconic F1 street circuit — tight hairpins, harbor yachts, casino square, and the dark tunnel.',
+    width: 20,
+    laps: 3,
+    spacing: 1.0,
+    theme: {
+      sky: 0x3a86ff, skyHorizon: 0xbde0fe, fog: 0xc4e0ff, fogDensity: 0.0020,
+      road: 0x363a45, roadEdge: 0xffffff, offroad: 0x4a7c59, offroadDark: 0x355e40,
+      wall: 0xe33d3d, scenery: 'monaco',
+      sun: 0xfffaed, sunIntensity: 1.45, ambient: 0xe2e8f0, ambientIntensity: 0.70,
+    },
+    points: [
+      { x: 0, y: 0, z: 0, w: 22, runoff: 8 },         // Start / Finish Pit Straight
+      { x: 0, y: 0, z: 65, w: 22, runoff: 8 },
+      { x: 28, y: 0, z: 98, w: 19, runoff: 6 },        // T1 Sainte Devote
+      { x: 72, y: 2, z: 152, w: 19, runoff: 6 },       // Beau Rivage climb
+      { x: 104, y: 3.5, z: 208, w: 19, runoff: 7 },    // Massenet left curve
+      { x: 148, y: 4, z: 228, w: 19, runoff: 7 },      // Casino Square
+      { x: 195, y: 3.0, z: 215, w: 18, runoff: 6 },    // Curve 1 (Right sweeper into Upper Tunnel)
+      { x: 220, y: 2.2, z: 175, w: 18, runoff: 6 },    // Upper Tunnel Entry
+      { x: 190, y: 1.4, z: 135, w: 18, runoff: 6 },    // Curve 2 (S-bend inside Upper Tunnel)
+      { x: 215, y: 0.8, z: 95, w: 18, runoff: 6 },     // Curve 3 (Right S-bend exit)
+      { x: 205, y: 0, z: 45, w: 20, runoff: 6 },       // Coastal Tunnel entry
+      { x: 208, y: 0, z: -45, w: 21, runoff: 6 },      // Coastal Tunnel straight
+      { x: 198, y: 0, z: -122, w: 21, runoff: 6 },     // Coastal Tunnel exit approach
+      { x: 168, y: 0, z: -155, w: 19, runoff: 5 },     // Nouvelle Chicane left
+      { x: 134, y: 0, z: -142, w: 19, runoff: 5 },     // Nouvelle Chicane right
+      { x: 88, y: 0, z: -148, w: 20, runoff: 6 },      // Tabac fast left along harbor
+      { x: 38, y: 0, z: -152, w: 19, runoff: 5 },      // Swimming Pool entrance
+      { x: 6, y: 0, z: -130, w: 18, runoff: 5 },       // Swimming Pool chicane 1
+      { x: -28, y: 0, z: -146, w: 18, runoff: 5 },     // Swimming Pool chicane 2
+      { x: -70, y: 0, z: -140, w: 18, runoff: 5 },     // La Rascasse entry
+      { x: -96, y: 0, z: -108, w: 18, runoff: 5 },     // La Rascasse hairpin
+      { x: -80, y: 0, z: -68, w: 18, runoff: 5 },      // Antony Noghès right kink
+      { x: -44, y: 0, z: -32, w: 20, runoff: 7 },      // Back to Start/Finish
+    ],
+    gripZones: [],
+    structures: [
+      {
+        kind: 'tunnel', startFrac: 0.315, endFrac: 0.415, ceiling: 7.5,
+        openings: [{ startFrac: 0.355, endFrac: 0.375 }],
+      },
+      {
+        kind: 'tunnel', startFrac: 0.445, endFrac: 0.595, ceiling: 7.5,
+        openings: [{ startFrac: 0.505, endFrac: 0.535 }],
+      },
+    ],
+    boostPads: [
+      { sFrac: 0.05, lateral: 0, width: 6, length: 9 },   // Start straight launch
+      { sFrac: 0.36, lateral: 0, width: 6, length: 9 },   // Upper Tunnel S-bend boost
+      { sFrac: 0.54, lateral: 0, width: 6, length: 10 },  // Coastal Tunnel exit launch
+      { sFrac: 0.72, lateral: 0, width: 6, length: 9 },   // Harbor straight
+    ],
+    itemBoxes: [
+      ...boxRow(0.08, [-9.1, -5.46, -1.82, 1.82, 5.46, 9.1]),
+      ...boxRow(0.35, [-8.0, -4.8, -1.6, 1.6, 4.8, 8.0]),
+      ...boxRow(0.58, [-9.4, -5.64, -1.88, 1.88, 5.64, 9.4]),
+      ...boxRow(0.78, [-8.2, -4.92, -1.64, 1.64, 4.92, 8.2]),
+      ...boxRow(0.92, [-8.4, -5.04, -1.68, 1.68, 5.04, 8.4]),
+    ],
+  },
+
+  {
     id: 'metropolis-highway',
     name: 'Metropolis Highway',
     subtitle: 'High-rise overpasses, glass skyscrapers, and smooth city straights.',

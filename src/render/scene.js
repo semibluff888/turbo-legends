@@ -126,6 +126,27 @@ function buildSkyDome(theme, radius) {
   return sky;
 }
 
+const MONACO_HARBOR = Object.freeze({ x: 65, z: -50, radius: 140 });
+
+function buildGroundGeometry(bounds, radius, cutout = null) {
+  if (!cutout) return new THREE.CircleGeometry(radius, 48);
+
+  const shape = new THREE.Shape();
+  shape.absarc(0, 0, radius, 0, Math.PI * 2, false);
+  const hole = new THREE.Path();
+  // Ground geometry is rotated -90 degrees around X, so local +Y maps to world -Z.
+  hole.absarc(
+    cutout.x - bounds.cx,
+    bounds.cz - cutout.z,
+    cutout.radius,
+    0,
+    Math.PI * 2,
+    true,
+  );
+  shape.holes.push(hole);
+  return new THREE.ShapeGeometry(shape, 48);
+}
+
 // ---------------------------------------------------------------------------
 // Scenery scatter
 // ---------------------------------------------------------------------------
@@ -797,6 +818,240 @@ function buildMetropolisScenery(group, track, rng, bounds) {
   return { instances };
 }
 
+function buildYacht(hullColor = 0xffffff, accentColor = 0x2b6cb0) {
+  const yacht = new THREE.Group();
+  const hullMat = new THREE.MeshStandardMaterial({ color: hullColor, roughness: 0.3, metalness: 0.1 });
+  const accentMat = new THREE.MeshStandardMaterial({ color: accentColor, roughness: 0.4 });
+  const glassMat = new THREE.MeshStandardMaterial({ color: 0x1a202c, roughness: 0.1, metalness: 0.8 });
+
+  // Main hull
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(7, 2.2, 22), hullMat);
+  hull.position.y = 1.1;
+  hull.castShadow = true;
+  hull.receiveShadow = true;
+  yacht.add(hull);
+
+  // Tapered bow (front)
+  const bow = new THREE.Mesh(new THREE.ConeGeometry(3.5, 6, 4), hullMat);
+  bow.rotation.x = Math.PI / 2;
+  bow.rotation.y = Math.PI / 4;
+  bow.position.set(0, 1.1, 13.8);
+  bow.scale.set(1, 0.7, 1);
+  bow.castShadow = true;
+  bow.receiveShadow = true;
+  yacht.add(bow);
+
+  // Cabin Deck 1
+  const cabin1 = new THREE.Mesh(new THREE.BoxGeometry(5.4, 2.0, 12), accentMat);
+  cabin1.position.set(0, 3.2, 1);
+  cabin1.castShadow = true;
+  yacht.add(cabin1);
+
+  // Cabin Deck 2 (Flybridge)
+  const cabin2 = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.6, 7), hullMat);
+  cabin2.position.set(0, 5.0, 0);
+  cabin2.castShadow = true;
+  yacht.add(cabin2);
+
+  // Tinted windows strip
+  const windows = new THREE.Mesh(new THREE.BoxGeometry(5.48, 0.9, 10), glassMat);
+  windows.position.set(0, 3.3, 1.2);
+  yacht.add(windows);
+
+  // Radar mast
+  const mastMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.8, roughness: 0.2 });
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.15, 3.5, 6), mastMat);
+  mast.position.set(0, 6.75, -1.5);
+  yacht.add(mast);
+
+  return yacht;
+}
+
+function buildGrandstand(width = 24, depth = 9, height = 6.5, canopyColor = 0xd9381e) {
+  const stand = new THREE.Group();
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0x718096, roughness: 0.6, metalness: 0.4 });
+  const seatMat = new THREE.MeshStandardMaterial({ color: 0x2b6cb0, roughness: 0.7 });
+  const canopyMat = new THREE.MeshStandardMaterial({ color: canopyColor, roughness: 0.5 });
+
+  // Tiered seating block
+  const base = new THREE.Mesh(new THREE.BoxGeometry(width, height * 0.7, depth), seatMat);
+  base.position.set(0, height * 0.35, 0);
+  base.castShadow = true;
+  base.receiveShadow = true;
+  stand.add(base);
+
+  // Support posts for canopy
+  for (const x of [-width * 0.45, width * 0.45]) {
+    for (const z of [-depth * 0.45, depth * 0.45]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, height * 1.5, 6), frameMat);
+      post.position.set(x, height * 0.75, z);
+      post.castShadow = true;
+      stand.add(post);
+    }
+  }
+
+  // Roof / Canopy
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(width + 1.5, 0.5, depth + 1.5), canopyMat);
+  roof.position.set(0, height * 1.5, 0);
+  roof.rotation.x = -0.08;
+  roof.castShadow = true;
+  stand.add(roof);
+
+  return stand;
+}
+
+function buildCasinoBuilding() {
+  const casino = new THREE.Group();
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0xf6e05e, roughness: 0.7 });
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0x2b6cb0, roughness: 0.4, metalness: 0.2 });
+  const columnMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 });
+  const domeMat = new THREE.MeshStandardMaterial({ color: 0x319795, roughness: 0.3, metalness: 0.5 });
+
+  // Main hall body
+  const body = new THREE.Mesh(new THREE.BoxGeometry(38, 16, 24), wallMat);
+  body.position.set(0, 8, 0);
+  body.castShadow = true;
+  body.receiveShadow = true;
+  casino.add(body);
+
+  // Portico facade
+  const portico = new THREE.Mesh(new THREE.BoxGeometry(22, 14, 6), wallMat);
+  portico.position.set(0, 7, 13);
+  portico.castShadow = true;
+  casino.add(portico);
+
+  // Neoclassical Columns
+  for (let i = -8; i <= 8; i += 4) {
+    const col = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.7, 12, 10), columnMat);
+    col.position.set(i, 6, 16.2);
+    col.castShadow = true;
+    casino.add(col);
+  }
+
+  // Central Copper Dome
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(7, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2), domeMat);
+  dome.position.set(0, 16, 0);
+  dome.castShadow = true;
+  casino.add(dome);
+
+  // Corner towers with roofs
+  for (const side of [-17, 17]) {
+    const tower = new THREE.Mesh(new THREE.BoxGeometry(6, 22, 6), wallMat);
+    tower.position.set(side, 11, 10);
+    tower.castShadow = true;
+    casino.add(tower);
+
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(4.5, 7, 4), roofMat);
+    roof.position.set(side, 25.5, 10);
+    roof.rotation.y = Math.PI / 4;
+    roof.castShadow = true;
+    casino.add(roof);
+  }
+
+  return casino;
+}
+
+function buildMonacoScenery(group, track, rng, bounds) {
+  let instances = 0;
+
+  // 1. Mediterranean Palm Trees (蔚蓝海岸棕榈树)
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x7c5c43, roughness: 0.9 });
+  const frondMat = new THREE.MeshStandardMaterial({ color: 0x2e8b57, roughness: 0.8 });
+
+  const trunkGeo = new THREE.CylinderGeometry(0.28, 0.42, 6.5, 7);
+  trunkGeo.translate(0, 3.25, 0);
+
+  const frondGeo = new THREE.ConeGeometry(2.4, 1.2, 6);
+  frondGeo.scale(1.4, 0.6, 1.4);
+  frondGeo.translate(0, 6.6, 0);
+
+  const palmSpots = scatterPoints(track, rng, 65).map((p) => {
+    const s = rng.range(0.85, 1.5);
+    return {
+      x: p.x, y: 0, z: p.z, rot: p.rot,
+      sx: s, sy: s * rng.range(0.9, 1.3), sz: s,
+      tint: grayTints(rng, 0.9, 1.1),
+    };
+  });
+
+  instances += addInstancedParts(group, [
+    { geometry: trunkGeo, material: trunkMat },
+    { geometry: frondGeo, material: frondMat },
+  ], palmSpots);
+
+  // 2. Monte Carlo Casino Landmark at Casino Square
+  const casino = buildCasinoBuilding();
+  casino.name = 'monaco-casino';
+  casino.position.set(148, 0, 268);
+  casino.rotation.y = Math.PI;
+  group.add(casino);
+  instances++;
+
+  // 3. Port Hercules Harbor Water & Luxury Yacht Fleet (赫库勒斯港游艇舰队)
+  const harborWater = new THREE.Mesh(
+    new THREE.CircleGeometry(MONACO_HARBOR.radius, 48),
+    new THREE.MeshStandardMaterial({
+      color: 0x1e65a6, transparent: true, opacity: 0.88,
+      roughness: 0.12, metalness: 0.25,
+    }),
+  );
+  harborWater.name = 'monaco-harbor-water';
+  harborWater.rotation.x = -Math.PI / 2;
+  harborWater.position.set(MONACO_HARBOR.x, -0.6, MONACO_HARBOR.z);
+  harborWater.receiveShadow = true;
+  group.add(harborWater);
+
+  const yachtPositions = [
+    { x: 45, z: -40, rot: 0.4, color: 0x2b6cb0 },
+    { x: 80, z: -25, rot: -0.6, color: 0xc53030 },
+    { x: 110, z: -55, rot: 1.2, color: 0x276749 },
+    { x: 55, z: -90, rot: -1.8, color: 0xd69e2e },
+    { x: 95, z: -100, rot: 0.8, color: 0x4c51bf },
+  ];
+
+  for (const yp of yachtPositions) {
+    const yacht = buildYacht(0xffffff, yp.color);
+    yacht.position.set(yp.x, -0.5, yp.z);
+    yacht.rotation.y = yp.rot;
+    group.add(yacht);
+    instances++;
+  }
+
+  // 4. F1 Pit Lane Garages & Paddock Awnings along Start Straight
+  const pitMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.4, metalness: 0.3 });
+  const awningMat = new THREE.MeshStandardMaterial({ color: 0xe53e3e, roughness: 0.6 });
+  const pitBuilding = new THREE.Mesh(new THREE.BoxGeometry(10, 6, 50), pitMat);
+  pitBuilding.position.set(-42, 3, 25);
+  pitBuilding.castShadow = true;
+  pitBuilding.receiveShadow = true;
+  group.add(pitBuilding);
+
+  const awning = new THREE.Mesh(new THREE.BoxGeometry(4, 0.4, 48), awningMat);
+  awning.position.set(-35, 4.2, 25);
+  awning.castShadow = true;
+  group.add(awning);
+  instances += 2;
+
+  // 5. F1 Spectator Grandstands (看台)
+  const grandstandSpots = [
+    { name: 'sainte-devote', x: -22, z: 98, rot: -0.4, width: 26, color: 0xd9381e },
+    { name: 'casino-square', x: 195, z: 255, rot: 2.8, width: 30, color: 0x2b6cb0 },
+    { name: 'coastal-promenade', x: 238, z: 35, rot: 1.2, width: 24, color: 0xd9381e },
+    { name: 'swimming-pool', x: -5, z: -178, rot: 0.0, width: 34, color: 0x276749 },
+  ];
+
+  for (const gs of grandstandSpots) {
+    const stand = buildGrandstand(gs.width, 9, 6.5, gs.color);
+    stand.name = `monaco-grandstand-${gs.name}`;
+    stand.position.set(gs.x, 0, gs.z);
+    stand.rotation.y = gs.rot;
+    group.add(stand);
+    instances++;
+  }
+
+  return { instances, harborWater };
+}
+
 // ---------------------------------------------------------------------------
 // Start gate
 // ---------------------------------------------------------------------------
@@ -899,11 +1154,13 @@ export function buildScene(track) {
 
   // --- Ground ------------------------------------------------------------------
   const isHarbor = theme.scenery === 'harbor';
+  const isMonaco = theme.scenery === 'monaco';
   const groundRadius = bounds.radius + (isHarbor ? 55 : 140);
   const ground = new THREE.Mesh(
-    new THREE.CircleGeometry(groundRadius, 48),
+    buildGroundGeometry(bounds, groundRadius, isMonaco ? MONACO_HARBOR : null),
     new THREE.MeshStandardMaterial({ color: theme.offroadDark ?? 0x66794f, roughness: 1 })
   );
+  ground.name = 'ground';
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(bounds.cx, -0.05, bounds.cz);
   ground.receiveShadow = true;
@@ -943,6 +1200,8 @@ export function buildScene(track) {
     ));
   } else if (theme.scenery === 'metropolis') {
     buildMetropolisScenery(scenery, track, rng, bounds);
+  } else if (theme.scenery === 'monaco') {
+    ({ harborWater: water } = buildMonacoScenery(scenery, track, rng, bounds));
   }
   scene.add(scenery);
 

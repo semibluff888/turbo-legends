@@ -12,8 +12,8 @@ import { loopDelta, pmod } from '../src/core/mathx.js';
 
 const tracks = TRACKS.map((def) => new Track(def));
 
-test('all 5 shipped tracks build with sane basics', () => {
-  assert.equal(TRACKS.length, 5);
+test('all 6 shipped tracks build with sane basics', () => {
+  assert.equal(TRACKS.length, 6);
   const ids = new Set(tracks.map((t) => t.id));
   assert.equal(ids.size, TRACKS.length, 'track ids must be unique');
 
