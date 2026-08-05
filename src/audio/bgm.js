@@ -57,7 +57,8 @@ export const DEFAULT_RACE_BGM_BY_TRACK = Object.freeze({
   'sunset-circuit': 'rainbow-lap-rush',
   'harbor-loop': 'rainbow-kart-parade',
   'summit-raceway': 'rainbow-kart-dash',
-  'aurora-icefall': 'rainbow-kart-dash',
+  'aurora-icefall': 'rainbow-lap-rush',
+  'metropolis-highway': 'rainbow-kart-dash',
 });
 
 const MENU_TRACK_IDS = Object.freeze(MENU_BGM_CHOICES

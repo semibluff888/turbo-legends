@@ -436,8 +436,8 @@ function addBridgeStructure(group, track, structure) {
       yA: -0.95, yB: 0.12, range,
     }), fasciaMat, `bridge-fascia-${side}`);
     add(buildRibbonGeometry(track, {
-      latA: (hw, i) => side * reach(hw, i),
-      latB: (hw, i) => side * reach(hw, i),
+      latA: (hw, i) => side * (reach(hw, i) + 0.04),
+      latB: (hw, i) => side * (reach(hw, i) + 0.04),
       yA: 0.15, yB: 1.45, range,
     }), railMat, `bridge-rail-${side}`);
   }

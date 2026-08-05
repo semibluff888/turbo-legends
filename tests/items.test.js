@@ -368,6 +368,25 @@ test('item box pickup: consume, roulette starts, box respawns after the delay', 
   assert.equal(box.active, true, 'box respawned after ITEM_BOX_RESPAWN');
 });
 
+test('item boxes cannot be collected from a different overlapping track segment', () => {
+  const { track, sys, karts } = makeWorld(21, 2);
+  const kart = karts[0];
+  const box = track.itemBoxes[0];
+  kart.x = box.x;
+  kart.y = box.y - 1.1;
+  kart.z = box.z;
+  kart.s = pmod(box.s + track.length / 2, track.length);
+
+  run(sys, karts, DT);
+  assert.equal(box.active, true);
+  assert.equal(kart.rouletteTimer, 0);
+
+  kart.s = box.s;
+  run(sys, karts, DT, DT);
+  assert.equal(box.active, false);
+  assert.ok(kart.rouletteTimer > 0);
+});
+
 test('a kart already holding an item drives through boxes without consuming them', () => {
   const { track, sys, karts } = makeWorld(21, 1);
   const kart = karts[0];

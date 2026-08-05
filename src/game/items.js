@@ -19,6 +19,7 @@ const ROULETTE_DURATION = 1.1;   // pinned in ARCHITECTURE.md (~1.1 s)
 const ROULETTE_TICK = 0.07;      // HUD face-cycle interval while spinning
 const BOX_PICKUP_RADIUS = 1.7;   // xz distance to collect an item box
 const BOX_PICKUP_HEIGHT = 2.2;   // |Δy| tolerance for box pickup
+const BOX_PICKUP_ARC_WINDOW = 6; // reject nearby geometry from another lap segment
 const BOMB_ARM_TIME = 0.4;       // planted bombs are inert this long
 const SHELL_WALL_MARGIN = 1.0;   // shells ride this far past the road edge before the wall
 const SHELL_HEIGHT = 0.45;       // shells hover slightly above the road surface
@@ -212,6 +213,8 @@ export class ItemSystem {
       if (kart.state === KART_STATE.BULLET) continue;
       for (const box of boxes) {
         if (!box.active) continue;
+        const arcGap = Math.abs(loopDelta(kart.s, box.s, this.track.length));
+        if (!Number.isFinite(arcGap) || arcGap > BOX_PICKUP_ARC_WINDOW) continue;
         const dx = kart.x - box.x;
         const dz = kart.z - box.z;
         if (dx * dx + dz * dz > r2) continue;

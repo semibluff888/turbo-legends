@@ -12,8 +12,8 @@ import { loopDelta, pmod } from '../src/core/mathx.js';
 
 const tracks = TRACKS.map((def) => new Track(def));
 
-test('all 4 shipped tracks build with sane basics', () => {
-  assert.equal(TRACKS.length, 4);
+test('all 5 shipped tracks build with sane basics', () => {
+  assert.equal(TRACKS.length, 5);
   const ids = new Set(tracks.map((t) => t.id));
   assert.equal(ids.size, TRACKS.length, 'track ids must be unique');
 
@@ -31,6 +31,19 @@ test('all 4 shipped tracks build with sane basics', () => {
       assert.equal(box.respawnAt, 0);
     }
   }
+});
+
+test('Metropolis Highway exposes authored structures and pickup layout', () => {
+  const track = tracks.find((candidate) => candidate.id === 'metropolis-highway');
+  assert.ok(track);
+  assert.ok(track.length > 1000, `length=${track.length.toFixed(2)}`);
+  assert.equal(track.gripZones.length, 0);
+  assert.equal(track.structures.length, 2);
+  assert.equal(track.boostPads.length, 5);
+  assert.equal(track.itemBoxes.length, 30);
+
+  const fourthRow = track.itemBoxes.slice(18, 24);
+  assert.ok(fourthRow.every((box) => Math.abs(box.s / track.length - 0.74) < 1e-9));
 });
 
 test('Aurora Icefall exposes authored ice, structures, and vertical crossover clearance', () => {

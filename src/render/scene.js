@@ -136,7 +136,7 @@ function buildSkyDome(theme, radius) {
  * where the loop folds back on itself.
  * @returns {Array<{x:number,z:number,rot:number,dist:number}>}
  */
-function scatterPoints(track, rng, count) {
+function scatterPoints(track, rng, count, footprintRadius = 0) {
   const sp = track.spline;
   const out = [];
   const samp = {};
@@ -150,7 +150,8 @@ function scatterPoints(track, rng, count) {
     const x = samp.x + samp.rx * side * offset;
     const z = samp.z + samp.rz * side * offset;
     sp.project(x, z, proj);
-    const clearance = track.halfWidthAt(proj.s) + track.runoffAt(proj.s) + SCATTER_CLEARANCE;
+    const clearance = track.halfWidthAt(proj.s) + track.runoffAt(proj.s)
+      + SCATTER_CLEARANCE + footprintRadius;
     if (proj.dist < clearance) continue;
     out.push({ x, z, rot: rng.float() * Math.PI * 2, dist: proj.dist });
   }
@@ -703,6 +704,99 @@ function buildGlacierScenery(group, track, rng, bounds) {
   return { instances, auroraPivot, snowfall, snowBaseX, snowSpeeds };
 }
 
+function makeWindowTexture() {
+  const w = 128, h = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillRect(0, 0, w, h);
+  const cols = 4, rows = 12;
+  const pw = 16, ph = 10;
+  const padX = 12, padY = 10;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      ctx.fillStyle = (r + c) % 3 === 0 ? '#38bdf8' : '#f1f5f9';
+      ctx.fillRect(padX + c * (pw + padX), padY + r * (ph + padY), pw, ph);
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2, 6);
+  return tex;
+}
+
+function buildMetropolisScenery(group, track, rng, bounds) {
+  let instances = 0;
+
+  const windowTex = makeWindowTexture();
+
+  // 1. High-Rise Skyscrapers & Commercial Towers (适中柔和都市摩天大楼)
+  const towerMat = new THREE.MeshStandardMaterial({
+    color: 0xd9e2ec, map: windowTex, roughness: 0.5, metalness: 0.2,
+  });
+  const towerGeo = new THREE.BoxGeometry(10, 38, 10);
+  towerGeo.translate(0, 19, 0);
+
+  const roofGeo = new THREE.BoxGeometry(6, 4, 6);
+  roofGeo.translate(0, 40, 0);
+
+  // The largest rotated tower footprint has a roughly 12 m corner radius.
+  const towerSpots = scatterPoints(track, rng, 48, 12.5).map((p) => {
+    const s = rng.range(0.85, 1.7);
+    return {
+      x: p.x, y: 0, z: p.z, rot: p.rot,
+      sx: s, sy: s * rng.range(0.8, 1.8), sz: s,
+      tint: rng.pick([0xe2e8f0, 0xd9e2ec, 0xbcccdc, 0x9fb3c8, 0xf0e6d2]),
+    };
+  });
+  instances += addInstancedParts(group, [
+    { geometry: towerGeo, material: towerMat },
+    { geometry: roofGeo, material: towerMat },
+  ], towerSpots);
+
+  // 2. Modern Low-Rise Buildings (适中中景建筑块)
+  const midMat = new THREE.MeshStandardMaterial({
+    color: 0xd9e2ec, roughness: 0.5, metalness: 0.2,
+  });
+  const midGeo = new THREE.BoxGeometry(12, 16, 12);
+  midGeo.translate(0, 8, 0);
+
+  const midSpots = scatterPoints(track, rng, 40, 12.5).map((p) => ({
+    x: p.x, y: 0, z: p.z, rot: p.rot,
+    sx: rng.range(0.7, 1.4), sy: rng.range(0.7, 1.5), sz: rng.range(0.7, 1.4),
+    tint: rng.pick([0xe2e8f0, 0xd9e2ec, 0xbcccdc, 0x9fb3c8]),
+  }));
+  instances += addInstancedParts(group, [{ geometry: midGeo, material: midMat }], midSpots);
+
+  // 3. Urban Overpass Bridge Landmark (日间都市高架天桥)
+  const overpassGroup = new THREE.Group();
+  overpassGroup.name = 'city-overpass';
+  // Place the full 24x8 m footprint beyond the drivable ribbon, not just its centre.
+  overpassGroup.position.set(bounds.maxX + 30, 0, bounds.cz + 60);
+
+  const pillarMat = new THREE.MeshStandardMaterial({
+    color: 0x9fb3c8, roughness: 0.5, metalness: 0.2,
+  });
+  const pillar = new THREE.Mesh(new THREE.BoxGeometry(24, 22, 8), pillarMat);
+  pillar.name = 'city-overpass-pillar';
+  pillar.position.y = 11;
+  overpassGroup.add(pillar);
+
+  const deckMat = new THREE.MeshStandardMaterial({
+    color: 0x38bdf8, emissive: 0x0284c7, emissiveIntensity: 0.15,
+    transparent: true, opacity: 0.85, roughness: 0.25, depthWrite: false,
+  });
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(16, 18, 1.2), deckMat);
+  deck.name = 'city-overpass-deck';
+  deck.position.set(0, 10, 4.2);
+  overpassGroup.add(deck);
+  group.add(overpassGroup);
+
+  return { instances };
+}
+
 // ---------------------------------------------------------------------------
 // Start gate
 // ---------------------------------------------------------------------------
@@ -847,6 +941,8 @@ export function buildScene(track) {
     ({ auroraPivot, snowfall, snowBaseX, snowSpeeds } = buildGlacierScenery(
       scenery, track, rng, bounds,
     ));
+  } else if (theme.scenery === 'metropolis') {
+    buildMetropolisScenery(scenery, track, rng, bounds);
   }
   scene.add(scenery);
 

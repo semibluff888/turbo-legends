@@ -15,10 +15,15 @@ test('default race BGM follows the selected track', () => {
   assert.equal(resolveRaceBgm('default', 'sunset-circuit').id, 'rainbow-lap-rush');
   assert.equal(resolveRaceBgm('default', 'harbor-loop').id, 'rainbow-kart-parade');
   assert.equal(resolveRaceBgm('default', 'summit-raceway').id, 'rainbow-kart-dash');
+  assert.equal(resolveRaceBgm('default', 'aurora-icefall').id, 'rainbow-lap-rush');
+  assert.equal(resolveRaceBgm('default', 'metropolis-highway').id, 'rainbow-kart-dash');
 });
 
 test('an explicit race BGM overrides every track', () => {
-  for (const trackId of ['sunset-circuit', 'harbor-loop', 'summit-raceway', 'aurora-icefall']) {
+  for (const trackId of [
+    'sunset-circuit', 'harbor-loop', 'summit-raceway', 'aurora-icefall',
+    'metropolis-highway',
+  ]) {
     assert.equal(resolveRaceBgm('rainbow-kart-dash', trackId).id, 'rainbow-kart-dash');
   }
 });

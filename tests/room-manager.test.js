@@ -303,6 +303,27 @@ test('room metadata, capacity, and list status use each room human-seat limit', 
   );
 });
 
+test('multiplayer room creation and track changes accept Metropolis Highway', async () => {
+  const harness = createHarness();
+  const host = await harness.manager.createRoom({
+    displayName: 'Host', characterId: 'pip', roomName: 'City Sprint',
+    roomType: ROOM_TYPES.PUBLIC, maxPlayers: 8, trackId: 'metropolis-highway',
+  });
+
+  assert.equal(
+    harness.manager.getRoomState(host.roomCode).settings.trackId,
+    'metropolis-highway',
+  );
+
+  harness.manager.setRoom(host.participantId, { trackId: 'sunset-circuit' });
+  harness.manager.setRoom(host.participantId, { trackId: 'metropolis-highway' });
+
+  assert.equal(
+    harness.manager.getRoomState(host.roomCode).settings.trackId,
+    'metropolis-highway',
+  );
+});
+
 test('private rooms hash case-sensitive passwords and expose no verifier data', async () => {
   const harness = createHarness();
   const host = await harness.manager.createRoom({
