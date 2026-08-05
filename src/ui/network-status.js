@@ -39,6 +39,7 @@ export class NetworkStatus {
     `;
 
     const q = (selector) => root.querySelector(selector);
+    this._summary = q('.network-summary');
     this._connection = q('[data-network-connection]');
     this._state = q('[data-network-state]');
     this._online = q('[data-network-online]');
@@ -52,6 +53,7 @@ export class NetworkStatus {
   showDetails() {
     this.root.dataset.context = 'details';
     this.root.hidden = false;
+    this._summary.hidden = false;
     this._online.hidden = false;
     this._onlineSeparator.hidden = false;
     this._version.hidden = false;
@@ -60,9 +62,17 @@ export class NetworkStatus {
   showRace() {
     this.root.dataset.context = 'race';
     this.root.hidden = false;
+    this._summary.hidden = false;
     this._online.hidden = true;
     this._onlineSeparator.hidden = true;
     this._version.hidden = true;
+  }
+
+  showVersion() {
+    this.root.dataset.context = 'version';
+    this.root.hidden = false;
+    this._summary.hidden = true;
+    this._version.hidden = false;
   }
 
   hide() {

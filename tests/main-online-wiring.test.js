@@ -85,22 +85,24 @@ test('kicked players return to the Lobby and receive an information alert', () =
   assert.match(source, /onKickPlayer\(\{ participantId \}\)[\s\S]*onlineClient\.kickPlayer\(participantId\)/);
 });
 
-test('title and single-player use HTTP stats without keeping a Lobby WebSocket alive', () => {
+test('title and single-player show only the version without keeping a Lobby WebSocket alive', () => {
   assert.match(source, /onBackToTitle\(\) \{\s*clearOnlineRoomUrl\(\);\s*goToTitle\(\);\s*\}/);
   assert.match(
     source,
     /onlineClient\.on\('lobby_state',[\s\S]*onlineLobbyState = message \|\| \{ rooms: \[\] \};[\s\S]*if \(mode === 'online-lobby'\) showOnlineLobby\(onlineLobbyState\);/,
   );
-  assert.match(source, /function goToTitle\(\)[\s\S]*onlineClient\.disconnect\(\);[\s\S]*publicStatsPoller\.start\(\);/);
-  assert.match(source, /function openOnlineLobby[\s\S]*publicStatsPoller\.stop\(\);[\s\S]*onlineClient\.startTelemetry\(\)/);
+  assert.match(source, /onSinglePlayer\(\) \{[\s\S]*networkStatus\.showVersion\(\);[\s\S]*screens\.showCharacter/);
+  assert.match(source, /function goToTitle\(\)[\s\S]*networkStatus\.showVersion\(\);[\s\S]*onlineClient\.disconnect\(\);/);
+  assert.match(source, /function openOnlineLobby[\s\S]*onlineClient\.startTelemetry\(\)/);
   assert.doesNotMatch(source, /function goToTitle\(\)[\s\S]*onlineClient\.enterLobby\(\)/);
+  assert.doesNotMatch(source, /PublicServerStatsPoller|publicStatsPoller/);
 });
 
-test('network telemetry shows full details off-track and compact details during races', () => {
+test('network telemetry is limited to online screens and online races', () => {
   assert.match(source, /function openOnlineLobby[\s\S]*networkStatus\.showDetails\(\)/);
   assert.match(source, /function showOnlineRoom[\s\S]*networkStatus\.showDetails\(\)/);
-  assert.match(source, /function mountRace[\s\S]*networkStatus\.showRace\(\)/);
-  assert.match(source, /session\.state === RACE_STATE\.RESULTS[\s\S]*networkStatus\.showDetails\(\)/);
+  assert.match(source, /function mountRace[\s\S]*if \(session\.kind === 'online'\) networkStatus\.showRace\(\);[\s\S]*else networkStatus\.hide\(\);/);
+  assert.match(source, /function presentRaceResults[\s\S]*if \(online\) \{\s*networkStatus\.showDetails\(\);[\s\S]*\} else \{\s*networkStatus\.showVersion\(\);/);
   assert.match(source, /void networkStatus\.loadVersion\(\)/);
 });
 

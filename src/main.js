@@ -9,7 +9,6 @@ import { CHARACTERS, isPlayableCharacterId } from './game/characters.js';
 import { LocalRaceSession } from './session/local-race-session.js';
 import { OnlineClient } from './net/online-client.js';
 import { OnlineRaceSession } from './net/online-race-session.js';
-import { PublicServerStatsPoller } from './net/public-server-stats.js';
 import { prewarmRaceRenderer } from './net/online-race-loader.js';
 import { ERROR_CODES } from './net/protocol.js';
 import {
@@ -65,13 +64,6 @@ audio.applySettings(gameSettings);
 const hud = new Hud(document.getElementById('hud'), document.getElementById('minimap'));
 const networkStatus = new NetworkStatus(document.getElementById('network-status-overlay'));
 const onlineClient = new OnlineClient();
-const publicStatsPoller = new PublicServerStatsPoller({
-  onUpdate({ available, latencyMs, onlineCount, version }) {
-    networkStatus.setConnectionState(available ? 'connected' : 'disconnected');
-    networkStatus.setMetrics({ latencyMs, onlineCount });
-    if (version) networkStatus.setVersion(version);
-  },
-});
 
 /** Player selections, persisted across races in this session. */
 const selection = {
@@ -138,7 +130,7 @@ const screens = new Screens({
   },
   onSinglePlayer() {
     mode = 'character';
-    networkStatus.showDetails();
+    networkStatus.showVersion();
     screens.showCharacter(CHARACTERS);
     playUi('confirm');
   },
@@ -313,7 +305,6 @@ function clearOnlineRoomUrl() {
 }
 
 function openOnlineLobby({ tryResume = true } = {}) {
-  publicStatsPoller.stop();
   onlineClient.startTelemetry();
   const inviteRequest = invitationRoomRequest(window.location.search);
   const invalidInviteError = inviteRequest.present && !inviteRequest.valid
@@ -655,13 +646,12 @@ function goToTitle() {
   onlineScreens.hideAll();
   screens.showTitle();
   hud.hide();
-  networkStatus.showDetails();
+  networkStatus.showVersion();
   audio.setGameplaySfxPaused(true);
   audio.playMenuMusic();
   buildAttract();
   onlineClient.stopTelemetry();
   onlineClient.disconnect();
-  publicStatsPoller.start();
 }
 
 function ensureAudio() {
@@ -683,7 +673,11 @@ function openPanel(name) {
     ? mode
     : race && paused ? 'pause' : 'title';
   mode = name;
-  if (panelReturn !== 'pause') networkStatus.showDetails();
+  if (panelReturn === 'online-lobby' || panelReturn === 'online-room') {
+    networkStatus.showDetails();
+  } else if (panelReturn !== 'pause') {
+    networkStatus.showVersion();
+  }
   if (name === 'settings') screens.showSettings(gameSettings);
   else screens.showHelp('controls');
   playUi('confirm');
@@ -917,7 +911,8 @@ function mountRace(track, session, def, { onlineLoading = false, loadToken = nul
   screens.hideAll();
   onlineScreens.hideAll();
   hud.showRace(session);
-  networkStatus.showRace();
+  if (session.kind === 'online') networkStatus.showRace();
+  else networkStatus.hide();
   audio.setGameplaySfxPaused(onlineLoading);
   if (onlineLoading) {
     audio.stopEngine();
@@ -1149,8 +1144,8 @@ function presentRaceResults() {
   setFinishCinematic(false);
   finishCamera.reset();
   hud.hide(); // the results panel owns the screen now
-  networkStatus.showDetails();
   if (online) {
+    networkStatus.showDetails();
     mode = 'online-results';
     screens.hideAll();
     const fallback = {
@@ -1177,6 +1172,7 @@ function presentRaceResults() {
       ...(error ? { error: error.message } : {}),
     });
   } else {
+    networkStatus.showVersion();
     mode = 'results';
     screens.showResults(session.standings, session.player, race.track.name);
   }
@@ -1366,7 +1362,7 @@ ensureAudio();
 {
   const q = new URLSearchParams(window.location.search);
   const devScreen = q.get('screen');
-  if (devScreen) networkStatus.showDetails();
+  if (devScreen) networkStatus.showVersion();
   if (devScreen === 'character') { mode = 'character'; screens.showCharacter(CHARACTERS); }
   else if (devScreen === 'track') { mode = 'track'; screens.showTrack(TRACKS); }
   else if (devScreen === 'difficulty') { mode = 'difficulty'; screens.showDifficulty(); }

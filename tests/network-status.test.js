@@ -9,6 +9,7 @@ function node() {
 
 function makeRoot() {
   const nodes = new Map([
+    ['.network-summary', node()],
     ['[data-network-connection]', node()],
     ['[data-network-state]', node()],
     ['[data-network-online]', node()],
@@ -40,6 +41,7 @@ test('network status switches detailed and race fields without retaining stale m
   const root = makeRoot();
   const view = new NetworkStatus(root);
   const online = root.nodes.get('[data-network-online]');
+  const summary = root.nodes.get('.network-summary');
   const separator = root.nodes.get('[data-network-online-separator]');
   const latency = root.nodes.get('[data-network-latency]');
   const version = root.nodes.get('[data-game-version]');
@@ -57,6 +59,15 @@ test('network status switches detailed and race fields without retaining stale m
   assert.equal(latency.textContent, '43 ms');
   assert.equal(latency.dataset.level, 'good');
   assert.equal(version.textContent, 'VERSION 1.2.3');
+
+  view.showVersion();
+  assert.equal(root.dataset.context, 'version');
+  assert.equal(root.hidden, false);
+  assert.equal(summary.hidden, true);
+  assert.equal(version.hidden, false);
+
+  view.showDetails();
+  assert.equal(summary.hidden, false);
 
   view.setMetrics({ latencyMs: null, onlineCount: null });
   assert.equal(online.textContent, 'ONLINE PLAYERS —');
