@@ -243,6 +243,7 @@ export const UI_COPY = Object.freeze({
       PASSWORD_INVALID: 'That room password is incorrect.',
       NO_MATCHING_ROOM: 'No joinable public room is available right now.',
       CHARACTER_INVALID: 'Choose a valid Racer.',
+      CHARACTER_LOCKED: 'That Racer is not unlocked yet.',
       PAINT_INVALID: 'Choose a valid paint theme.',
       AVATAR_INVALID: 'Choose a valid avatar.',
       generic: 'Something went wrong. Please try again.',

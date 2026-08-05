@@ -492,4 +492,9 @@ test('Room loadout UI uses a staged three-tab dialog and no taken-racer lock', (
   assert.match(onlineScreensSource, /_pendingLoadout = \{ \.\.\.this\._loadoutDraft \}/);
   assert.match(onlineScreensSource, /onSetLoadout/);
   assert.doesNotMatch(onlineScreensSource, /occupiedByOther|online-character-lock/);
+  assert.match(onlineScreensSource, /character\.availability === 'locked'/);
+  assert.match(onlineScreensSource, /racer-secret-silhouette/);
+  assert.match(onlineScreensSource, /button\.disabled = locked/);
+  assert.match(onlineStylesSource, /\.online-loadout-racer-option\.is-locked/);
+  assert.match(onlineStylesSource, /\.online-loadout-stat-value\.is-overcap/);
 });

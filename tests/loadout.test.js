@@ -34,7 +34,7 @@ test('online appearance catalogs expose the planned paints, avatars and defaults
     characterId: 'kit', paintId: 'turbo-blue', avatarId: 'cat',
   });
   assert.deepEqual(defaultLoadoutForCharacter('tundra'), {
-    characterId: 'tundra', paintId: 'ice-cyan', avatarId: 'panda',
+    characterId: 'kit', paintId: 'turbo-blue', avatarId: 'cat',
   });
 });
 
@@ -98,4 +98,11 @@ test('online loadout storage sanitizes invalid values and persists valid choices
   assert.deepEqual(loadOnlineLoadout(storage, () => {
     throw new Error('valid saved choices must not be randomized');
   }), saved);
+
+  const lockedFallback = saveOnlineLoadout({
+    characterId: 'tundra', paintId: 'ice-cyan', avatarId: 'panda',
+  }, storage);
+  assert.deepEqual(lockedFallback, {
+    characterId: 'kit', paintId: 'ice-cyan', avatarId: 'panda',
+  });
 });

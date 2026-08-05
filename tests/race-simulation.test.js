@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { FIXED_DT, RACE_STATE } from '../src/core/constants.js';
-import { CHARACTERS } from '../src/game/characters.js';
+import { PLAYABLE_CHARACTERS } from '../src/game/characters.js';
 import {
   RaceSimulation,
   CONTROLLER_KIND,
@@ -12,12 +12,15 @@ import { Track } from '../src/track/track.js';
 import { getTrackDef } from '../src/track/tracks.js';
 
 function makeRoster(kinds = []) {
-  return CHARACTERS.map((character, index) => ({
+  return Array.from({ length: 8 }, (_, index) => {
+    const character = PLAYABLE_CHARACTERS[index % PLAYABLE_CHARACTERS.length];
+    return ({
     participantId: `participant-${index}`,
     displayName: `Racer ${index}`,
     characterId: character.id,
     controllerKind: kinds[index] || CONTROLLER_KIND.AI,
-  }));
+    });
+  });
 }
 
 function makeSimulation({ kinds, seed = 123, mode = 'local', difficulty = 'normal' } = {}) {
@@ -201,7 +204,7 @@ test('authoritative race state remains racing after one finisher and only ends g
 });
 
 test('a finished kart releases controls and coasts to a stop', () => {
-  const simulation = makeSimulation({ kinds: CHARACTERS.map(() => CONTROLLER_KIND.HUMAN) });
+  const simulation = makeSimulation({ kinds: Array(8).fill(CONTROLLER_KIND.HUMAN) });
   const kart = simulation.karts[0];
   simulation.state = RACE_STATE.RACING;
   kart.speed = 20;
@@ -236,6 +239,10 @@ test('roster validation allows duplicate racers but rejects duplicate participan
   const duplicateParticipant = makeRoster();
   duplicateParticipant[1].participantId = duplicateParticipant[0].participantId;
   assert.throws(() => new RaceSimulation(track, { roster: duplicateParticipant }), /duplicate participantId/);
+
+  const lockedCharacter = makeRoster();
+  lockedCharacter[0].characterId = 'tundra';
+  assert.throws(() => new RaceSimulation(track, { roster: lockedCharacter }), /locked characterId/);
 
   const simulation = makeSimulation();
   assert.throws(() => simulation.setController(8, CONTROLLER_KIND.AI), /invalid kart index/);

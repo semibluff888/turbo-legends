@@ -478,11 +478,17 @@ export class OnlineScreens {
     this.paints = options.paints || PAINT_THEMES;
     this.avatars = options.avatars || AVATARS;
     this.characterById = new Map(this.characters.map((character) => [character.id, character]));
+    this.playableCharacterIds = new Set(
+      this.characters
+        .filter((character) => character.availability !== 'locked')
+        .map((character) => character.id),
+    );
     this.paintById = new Map(this.paints.map((paint) => [paint.id, paint]));
     this.avatarById = new Map(this.avatars.map((avatar) => [avatar.id, avatar]));
     this.defaultLoadout = {
-      characterId: this.characterById.has(DEFAULT_ONLINE_LOADOUT.characterId)
-        ? DEFAULT_ONLINE_LOADOUT.characterId : this.characters[0]?.id,
+      characterId: this.playableCharacterIds.has(DEFAULT_ONLINE_LOADOUT.characterId)
+        ? DEFAULT_ONLINE_LOADOUT.characterId
+        : this.characters.find((character) => character.availability !== 'locked')?.id,
       paintId: this.paintById.has(DEFAULT_ONLINE_LOADOUT.paintId)
         ? DEFAULT_ONLINE_LOADOUT.paintId : this.paints[0]?.id,
       avatarId: this.avatarById.has(DEFAULT_ONLINE_LOADOUT.avatarId)
@@ -1160,15 +1166,27 @@ export class OnlineScreens {
 
     const racerGrid = root.querySelector('[data-loadout-racer-grid]');
     for (const character of this.characters) {
-      const button = createNode(this.doc, 'button', 'online-loadout-racer-option', racerGrid);
+      const locked = character.availability === 'locked';
+      const button = createNode(this.doc, 'button',
+        `online-loadout-racer-option${locked ? ' is-locked' : ''}`, racerGrid);
       button.type = 'button';
       button.dataset.loadoutCharacterId = character.id;
-      const swatch = createNode(this.doc, 'span', 'online-loadout-racer-swatch', button, '\u{1F3CE}\u{FE0F}');
-      swatch.style.background = `linear-gradient(135deg, ${cssColor(character.color)}, ${cssColor(character.accentColor)})`;
+      button.disabled = locked;
+      button.setAttribute('aria-label', locked
+        ? `${character.name}, locked, coming soon` : character.name);
+      const swatch = createNode(this.doc, 'span', 'online-loadout-racer-swatch', button,
+        locked ? '' : '\u{1F3CE}\u{FE0F}');
+      if (locked) {
+        createNode(this.doc, 'span', 'racer-secret-silhouette', swatch);
+        createNode(this.doc, 'span', 'racer-lock-mark', swatch, '\u{1F512}');
+      } else {
+        swatch.style.background = `linear-gradient(135deg, ${cssColor(character.color)}, ${cssColor(character.accentColor)})`;
+      }
       const body = createNode(this.doc, 'span', 'online-loadout-racer-body', button);
       const nameRow = createNode(this.doc, 'span', 'online-loadout-racer-name-row', body);
       createNode(this.doc, 'strong', '', nameRow, character.name);
-      createNode(this.doc, 'span', `chip chip-${character.weightClass}`, nameRow, character.weightClass);
+      createNode(this.doc, 'span', locked ? 'chip chip-locked' : `chip chip-${character.weightClass}`,
+        nameRow, locked ? 'COMING SOON' : character.weightClass);
       createNode(this.doc, 'span', 'online-loadout-racer-blurb', body, character.blurb);
       const stats = createNode(this.doc, 'span', 'online-loadout-racer-stats', body);
       for (const [key, label] of LOADOUT_STAT_ROWS) {
@@ -1177,10 +1195,16 @@ export class OnlineScreens {
         const bar = createNode(this.doc, 'span', 'online-loadout-stat-bar', row);
         const fill = createNode(this.doc, 'span', 'online-loadout-stat-fill', bar);
         const [minimum, maximum] = CHARACTER_STAT_RANGE[key];
+        const overcap = character.stats[key] > maximum;
         fill.style.width = `${Math.max(8, Math.min(100,
           ((character.stats[key] - minimum) / (maximum - minimum)) * 100)).toFixed(0)}%`;
+        fill.classList.toggle('is-overcap', overcap);
+        createNode(this.doc, 'span', `online-loadout-stat-value${overcap ? ' is-overcap' : ''}`,
+          row, `${Math.round(character.stats[key] * 100)}${overcap ? ' MAX+' : ''}`);
       }
-      this._listen(button, 'click', () => this._updateLoadoutDraft({ characterId: character.id }));
+      if (!locked) {
+        this._listen(button, 'click', () => this._updateLoadoutDraft({ characterId: character.id }));
+      }
     }
 
     const paintGrid = root.querySelector('[data-loadout-paint-grid]');
@@ -1275,7 +1299,7 @@ export class OnlineScreens {
   _sanitizeLoadout(value) {
     const source = value && typeof value === 'object' ? value : {};
     return {
-      characterId: this.characterById.has(source.characterId)
+      characterId: this.playableCharacterIds.has(source.characterId)
         ? source.characterId : this.defaultLoadout.characterId,
       paintId: this.paintById.has(source.paintId)
         ? source.paintId : this.defaultLoadout.paintId,
@@ -1360,9 +1384,10 @@ export class OnlineScreens {
     }
     for (const button of node.querySelectorAll('[data-loadout-character-id]')) {
       const selected = button.dataset.loadoutCharacterId === this._loadoutDraft.characterId;
+      const locked = !this.playableCharacterIds.has(button.dataset.loadoutCharacterId);
       button.classList.toggle('is-selected', selected);
       button.setAttribute('aria-pressed', String(selected));
-      button.disabled = Boolean(this._pendingLoadout);
+      button.disabled = locked || Boolean(this._pendingLoadout);
     }
     for (const button of node.querySelectorAll('[data-loadout-paint-id]')) {
       const selected = button.dataset.loadoutPaintId === this._loadoutDraft.paintId;

@@ -5,7 +5,7 @@ import {
   isAvatarId,
   isPaintId,
 } from '../game/appearance.js';
-import { CHARACTERS_BY_ID } from '../game/characters.js';
+import { isPlayableCharacterId } from '../game/characters.js';
 
 export const ONLINE_LOADOUT_STORAGE_KEY = 'turbo-kart.online-loadout.v1';
 
@@ -26,7 +26,7 @@ function randomCatalogId(entries, random, fallback) {
 export function sanitizeStoredOnlineLoadout(value, random = Math.random) {
   const source = value && typeof value === 'object' ? value : {};
   return {
-    characterId: Object.hasOwn(CHARACTERS_BY_ID, source.characterId)
+    characterId: isPlayableCharacterId(source.characterId)
       ? source.characterId : DEFAULT_ONLINE_LOADOUT.characterId,
     paintId: isPaintId(source.paintId)
       ? source.paintId

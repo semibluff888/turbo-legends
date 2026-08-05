@@ -9,32 +9,49 @@
 import { RACE } from '../core/constants.js';
 import { deriveRng } from '../core/rng.js';
 import {
-  AVATARS,
-  PAINT_THEMES,
   defaultLoadoutForCharacter,
+  pickDistinctAppearance,
 } from './appearance.js';
-import { CHARACTERS, getCharacter } from './characters.js';
+import { PLAYABLE_CHARACTERS, getPlayableCharacter } from './characters.js';
 import { RaceSimulation, CONTROLLER_KIND } from './race-simulation.js';
 
-function randomAiAppearance(characterId, seed) {
-  const appearanceRng = deriveRng(seed, `local-appearance:${characterId}`);
-  return {
-    paintId: appearanceRng.pick(PAINT_THEMES)?.id,
-    avatarId: appearanceRng.pick(AVATARS)?.id,
-  };
+function randomAiAppearance(characterId, seed, slot, usedByCharacter) {
+  const appearanceRng = deriveRng(seed, `local-appearance:${slot}:${characterId}`);
+  const used = usedByCharacter.get(characterId) || [];
+  const appearance = pickDistinctAppearance(appearanceRng, used);
+  used.push(appearance);
+  usedByCharacter.set(characterId, used);
+  return appearance;
 }
 
 function makeSinglePlayerRoster(playerCharacterId, seed, autopilot) {
-  const playerCharacter = getCharacter(playerCharacterId);
-  const rosterRng = deriveRng(seed, 'roster-grid');
-  const aiCharacters = CHARACTERS.filter((character) => character.id !== playerCharacter.id);
-  rosterRng.shuffle(aiCharacters);
+  const playerCharacter = getPlayableCharacter(playerCharacterId);
+  const playerLoadout = defaultLoadoutForCharacter(playerCharacter.id);
+  const usedAppearances = new Map([
+    [playerCharacter.id, [{
+      paintId: playerLoadout.paintId,
+      avatarId: playerLoadout.avatarId,
+    }]],
+  ]);
+  const aiCharacters = [];
+  let cycle = 0;
+  while (aiCharacters.length < RACE.totalKarts - 1) {
+    const pool = PLAYABLE_CHARACTERS
+      .filter((character) => cycle > 0 || character.id !== playerCharacter.id)
+      .slice();
+    deriveRng(seed, `local-roster-cycle:${cycle}`).shuffle(pool);
+    for (const character of pool) {
+      if (aiCharacters.length >= RACE.totalKarts - 1) break;
+      aiCharacters.push(character);
+    }
+    cycle += 1;
+  }
 
-  const roster = aiCharacters.slice(0, RACE.totalKarts - 1).map((character) => ({
-    participantId: `ai:${character.id}`,
+  const roster = aiCharacters.map((character, index) => ({
+    participantId: `ai:${index}:${character.id}`,
     displayName: character.name,
     characterId: character.id,
-    ...randomAiAppearance(character.id, seed),
+    ...randomAiAppearance(character.id, seed, index, usedAppearances),
     controllerKind: CONTROLLER_KIND.AI,
   }));
 
@@ -44,7 +61,7 @@ function makeSinglePlayerRoster(playerCharacterId, seed, autopilot) {
     participantId: 'local-player',
     displayName: playerCharacter.name,
     characterId: playerCharacter.id,
-    ...defaultLoadoutForCharacter(playerCharacter.id),
+    ...playerLoadout,
     controllerKind: autopilot ? CONTROLLER_KIND.AI : CONTROLLER_KIND.HUMAN,
     rubberBandEligible: false,
     aiBaseSpeedEligible: false,
@@ -74,7 +91,7 @@ export class RaceDirector extends RaceSimulation {
     super(track, { roster, difficulty, laps, seed, mode: 'local' });
 
     this.autopilot = autopilot;
-    this._playerCharacter = getCharacter(playerCharacterId);
+    this._playerCharacter = getPlayableCharacter(playerCharacterId);
     this._player = this.karts[RACE.totalKarts - 1];
     this._singlePlayerControls = new Array(RACE.totalKarts).fill(null);
   }

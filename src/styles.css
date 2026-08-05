@@ -447,6 +447,7 @@ kbd {
 .chip-light  { background: #36d6a066; border-color: #36d6a0; }
 .chip-medium { background: #4aa8ff66; border-color: #4aa8ff; }
 .chip-heavy  { background: #e8442e66; border-color: #e8442e; }
+.chip-locked { color: #f4e9ff; background: #8d5cff44; border-color: #ba8cff; }
 .chip-laps   { background: #ffd23f33; border-color: var(--accent); align-self: flex-start; }
 .chip-you    { background: var(--accent); border-color: #fff; color: #221a04; margin-left: 8px; }
 
@@ -464,6 +465,12 @@ kbd {
 }
 
 .char-card { padding: 0; }
+.char-card.is-locked {
+  cursor: default;
+  border-color: rgba(186, 140, 255, 0.42);
+  background: linear-gradient(160deg, rgba(25, 19, 39, 0.96), rgba(12, 15, 28, 0.96));
+  opacity: 0.9;
+}
 
 .char-swatch {
   height: 58px;
@@ -473,6 +480,50 @@ kbd {
   border-bottom: 3px solid rgba(255, 255, 255, 0.25);
 }
 .char-helmet { filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.4)); }
+.char-card.is-locked .char-swatch {
+  position: relative;
+  background:
+    radial-gradient(circle at 50% 80%, rgba(152, 98, 255, 0.28), transparent 52%),
+    linear-gradient(145deg, #171523, #080a11);
+}
+.racer-secret-silhouette {
+  position: relative;
+  width: 64px;
+  height: 24px;
+  border-radius: 70% 48% 25% 24%;
+  background: #020307;
+  filter: drop-shadow(0 0 9px rgba(174, 119, 255, 0.82));
+}
+.racer-secret-silhouette::before {
+  content: '';
+  position: absolute;
+  left: 17px;
+  bottom: 15px;
+  width: 31px;
+  height: 13px;
+  border-radius: 70% 80% 12% 12%;
+  background: #020307;
+  transform: skewX(-16deg);
+}
+.racer-secret-silhouette::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  bottom: -5px;
+  width: 14px;
+  height: 14px;
+  border: 3px solid #05060b;
+  border-radius: 50%;
+  background: #111323;
+  box-shadow: 35px 0 0 -3px #111323, 35px 0 0 0 #05060b;
+}
+.racer-lock-mark {
+  position: absolute;
+  top: 6px;
+  right: 9px;
+  font-size: 15px;
+  filter: grayscale(1) brightness(1.8);
+}
 
 .char-body {
   display: flex;
@@ -507,7 +558,7 @@ kbd {
 
 .stat-row {
   display: grid;
-  grid-template-columns: 52px 1fr;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
 }
@@ -534,6 +585,19 @@ kbd {
   background: linear-gradient(90deg, #4fc3ff, #36d6a0 55%, #ffe14d);
   transition: width 0.3s ease-out;
 }
+.stat-fill.is-overcap,
+.online-loadout-stat-fill.is-overcap {
+  background: linear-gradient(90deg, #8d5cff, #ff6bd6 70%, #fff3a6);
+  box-shadow: 0 0 10px rgba(255, 107, 214, 0.9);
+}
+.stat-value {
+  min-width: 22px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 9px;
+  font-weight: 900;
+  text-align: right;
+}
+.stat-value.is-overcap { color: #ff9ee4; text-shadow: 0 0 8px rgba(255, 75, 198, 0.75); }
 
 /* ---------------------------------------------------------------------------
    Track select
@@ -1939,16 +2003,27 @@ kbd {
   background: rgba(255, 255, 255, 0.065);
   transition: transform 0.12s, border-color 0.12s, background 0.12s;
 }
-.online-loadout-racer-swatch { display: grid; place-items: center; min-height: 130px; font-size: 28px; }
+.online-loadout-racer-swatch { position: relative; display: grid; place-items: center; min-height: 130px; font-size: 28px; }
+.online-loadout-racer-option.is-locked {
+  border-color: rgba(186, 140, 255, 0.34);
+  background: linear-gradient(155deg, rgba(29, 22, 45, 0.94), rgba(10, 12, 22, 0.96));
+}
+.online-loadout-racer-option.is-locked .online-loadout-racer-swatch {
+  background:
+    radial-gradient(circle at 50% 72%, rgba(152, 98, 255, 0.3), transparent 50%),
+    linear-gradient(145deg, #171523, #080a11);
+}
 .online-loadout-racer-body { min-width: 0; display: flex; flex-direction: column; gap: 5px; padding: 9px; }
 .online-loadout-racer-name-row { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
 .online-loadout-racer-name-row strong { font-size: 15px; font-weight: 900; }
 .online-loadout-racer-name-row .chip { padding: 2px 5px; font-size: 7px; }
 .online-loadout-racer-blurb { min-height: 2.4em; color: rgba(255, 255, 255, 0.6); font-size: 9px; font-weight: 700; line-height: 1.2; }
 .online-loadout-racer-stats { display: flex; flex-direction: column; gap: 3px; }
-.online-loadout-stat-row { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 5px; color: rgba(255, 255, 255, 0.55); font-size: 7px; font-weight: 900; letter-spacing: 0.05em; text-transform: uppercase; }
+.online-loadout-stat-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 5px; color: rgba(255, 255, 255, 0.55); font-size: 7px; font-weight: 900; letter-spacing: 0.05em; text-transform: uppercase; }
 .online-loadout-stat-bar { height: 6px; overflow: hidden; border-radius: 999px; background: rgba(255, 255, 255, 0.11); }
 .online-loadout-stat-fill { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #4aa8ff, #77f0be, #ffd23f); }
+.online-loadout-stat-value { min-width: 20px; color: rgba(255, 255, 255, 0.7); text-align: right; }
+.online-loadout-stat-value.is-overcap { color: #ff9ee4; text-shadow: 0 0 7px rgba(255, 75, 198, 0.78); }
 .online-loadout-paint-grid { display: grid; grid-template-columns: repeat(3, minmax(110px, 1fr)); gap: 9px; }
 .online-loadout-paint-option,
 .online-loadout-avatar-option {
@@ -1981,6 +2056,7 @@ kbd {
 .online-loadout-racer-option:disabled,
 .online-loadout-paint-option:disabled,
 .online-loadout-avatar-option:disabled { cursor: default; opacity: 0.62; }
+.online-loadout-racer-option.is-locked:disabled { opacity: 0.92; }
 .online-loadout-actions { margin-top: auto; }
 
 /* Pre-race room ---------------------------------------------------------- */
@@ -3868,9 +3944,10 @@ body.touch #hud:not([hidden]) #minimap {
   #screen-character .char-name-row { align-items: flex-start; gap: 5px; }
   #screen-character .char-name { font-size: 14px; }
   #screen-character .chip { padding: 2px 5px; font-size: 7px; }
-  #screen-character .stat-row { grid-template-columns: 38px minmax(0, 1fr); gap: 5px; }
+  #screen-character .stat-row { grid-template-columns: 38px minmax(0, 1fr) auto; gap: 5px; }
   #screen-character .stat-label { font-size: 8px; }
   #screen-character .stat-bar { height: 7px; }
+  #screen-character .stat-value { font-size: 7px; }
 
   #screen-track .track-row,
   #screen-difficulty .diff-row {

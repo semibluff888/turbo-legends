@@ -3,11 +3,13 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 
 import { CHARACTERS } from '../src/game/characters.js';
+import { deriveRng } from '../src/core/rng.js';
 import {
   AVATARS,
   DEFAULT_ONLINE_LOADOUT,
   PAINT_THEMES,
   defaultLoadoutForCharacter,
+  pickDistinctAppearance,
 } from '../src/game/appearance.js';
 import { shuffleRosterForGrid } from '../src/game/race-simulation.js';
 import { TRACKS } from '../src/track/tracks.js';
@@ -240,6 +242,10 @@ export class RoomManager extends EventEmitter {
     this.tracks = new Map(tracks.map((track) => [track.id, track]));
     this.characters = characters.slice();
     this.characterIds = new Set(characters.map((character) => character.id));
+    this.playableCharacters = characters.filter((character) => character.availability !== 'locked');
+    this.playableCharacterIds = new Set(this.playableCharacters.map((character) => character.id));
+    this.paints = paints.slice();
+    this.avatars = avatars.slice();
     this.paintIds = new Set(paints.map((paint) => paint.id));
     this.avatarIds = new Set(avatars.map((avatar) => avatar.id));
     this.difficulties = new Set(difficulties);
@@ -505,6 +511,9 @@ export class RoomManager extends EventEmitter {
     const nextAvatarId = avatarId ?? member.avatarId;
     if (!this.characterIds.has(nextCharacterId)) {
       throw new GameError(ERROR_CODES.CHARACTER_INVALID, 'That character does not exist.');
+    }
+    if (!this.playableCharacterIds.has(nextCharacterId)) {
+      throw new GameError(ERROR_CODES.CHARACTER_LOCKED, 'That Racer is not unlocked yet.');
     }
     if (!this.paintIds.has(nextPaintId)) {
       throw new GameError(ERROR_CODES.PAINT_INVALID, 'That paint does not exist.');
@@ -917,9 +926,12 @@ export class RoomManager extends EventEmitter {
     }
     displayName = validatedName.value;
     const selectedCharacter = characterId
-      ?? (this.characterIds.has('kit') ? 'kit' : this.characters[0]?.id);
+      ?? (this.playableCharacterIds.has('kit') ? 'kit' : this.playableCharacters[0]?.id);
     if (!this.characterIds.has(selectedCharacter)) {
       throw new GameError(ERROR_CODES.CHARACTER_INVALID, 'That character does not exist.');
+    }
+    if (!this.playableCharacterIds.has(selectedCharacter)) {
+      throw new GameError(ERROR_CODES.CHARACTER_LOCKED, 'That Racer is not unlocked yet.');
     }
     const selectedPaint = paintId ?? DEFAULT_ONLINE_LOADOUT.paintId;
     const selectedAvatar = avatarId ?? DEFAULT_ONLINE_LOADOUT.avatarId;
@@ -976,20 +988,35 @@ export class RoomManager extends EventEmitter {
       }));
     if (room.settings.autoFillAi) {
       const used = new Set(roster.map((entry) => entry.characterId));
+      const usedAppearances = new Map();
+      for (const entry of roster) {
+        const appearances = usedAppearances.get(entry.characterId) || [];
+        appearances.push({ paintId: entry.paintId, avatarId: entry.avatarId });
+        usedAppearances.set(entry.characterId, appearances);
+      }
       const orderedCharacters = [
-        ...this.characters.filter((character) => !used.has(character.id)),
-        ...this.characters.filter((character) => used.has(character.id)),
+        ...this.playableCharacters.filter((character) => !used.has(character.id)),
+        ...this.playableCharacters.filter((character) => used.has(character.id)),
       ];
       let aiIndex = 0;
       while (roster.length < room.maxPlayers && orderedCharacters.length > 0) {
         const character = orderedCharacters[aiIndex % orderedCharacters.length];
         const defaults = defaultLoadoutForCharacter(character.id);
+        const appearanceRng = deriveRng(
+          seed, `online-ai-appearance:${roster.length}:${character.id}`,
+        );
+        const appearances = usedAppearances.get(character.id) || [];
+        const appearance = pickDistinctAppearance(
+          appearanceRng, appearances, this.paints, this.avatars,
+        );
+        appearances.push(appearance);
+        usedAppearances.set(character.id, appearances);
         roster.push({
           participantId: `ai-${roster.length}-${character.id}`,
           displayName: character.name,
           characterId: character.id,
-          paintId: defaults.paintId,
-          avatarId: defaults.avatarId,
+          paintId: appearance.paintId || defaults.paintId,
+          avatarId: appearance.avatarId || defaults.avatarId,
           controllerKind: CONTROLLER_KINDS.AI,
         });
         used.add(character.id);

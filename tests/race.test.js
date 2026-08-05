@@ -116,10 +116,16 @@ test('roster: player uses the Racer default look while AI appearances are seeded
   assert.equal(race.player.paintId, 'turbo-blue');
   assert.equal(race.player.avatarId, 'cat');
   const ids = new Set(race.karts.map((k) => k.character.id));
-  assert.equal(ids.size, RACE.totalKarts, 'duplicate characters in the field');
+  assert.equal(ids.size, 6, 'only the six available Racers should enter the field');
   for (const kart of race.karts.filter((candidate) => !candidate.isPlayer)) {
     assert.ok(PAINT_THEMES_BY_ID[kart.paintId], `${kart.name} has an invalid paint`);
     assert.ok(AVATARS_BY_ID[kart.avatarId], `${kart.name} has an invalid avatar`);
+  }
+  for (const characterId of ids) {
+    const repeated = race.karts.filter((kart) => kart.character.id === characterId);
+    const looks = repeated.map((kart) => `${kart.paintId}:${kart.avatarId}`);
+    assert.equal(new Set(looks).size, looks.length,
+      `${characterId} duplicates should have distinct appearances`);
   }
   assert.deepEqual(
     runA.race.karts.map(({ paintId, avatarId }) => ({ paintId, avatarId })),

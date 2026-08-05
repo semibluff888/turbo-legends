@@ -6,7 +6,8 @@
 import * as THREE from 'three';
 import { KART, ITEM_PHYSICS } from '../core/constants.js';
 import { TAU, clamp, damp, smoothstep } from '../core/mathx.js';
-import { resolveKartAppearance } from '../game/appearance.js';
+import { getAvatar, resolveKartAppearance } from '../game/appearance.js';
+import { buildRacerModel } from './racer-models.js';
 
 // --- Visual layout (design values, derived from the physics body dims) ------
 const BODY_L = KART.bodyLength;
@@ -76,6 +77,9 @@ function getShared() {
       }),
     },
   };
+  for (const geometry of Object.values(_shared.geo)) {
+    geometry.userData.sharedRuntimeAsset = true;
+  }
   return _shared;
 }
 
@@ -184,16 +188,48 @@ function buildAnimalDriver(parent, S, avatar, headY, headZ) {
   return [headMat, muzzleMat, detailMat, eyeMat];
 }
 
+function buildAnimalDriverRig(parent, S, appearance) {
+  const torsoMat = new THREE.MeshStandardMaterial({
+    color: appearance.accentColor, roughness: 0.55, metalness: 0.18,
+  });
+  addMesh(parent, S.geo.torso, torsoMat, 0, 0.18, 0);
+  return [
+    torsoMat,
+    ...buildAnimalDriver(parent, S, appearance.avatar || getAvatar(appearance.avatarId), 0.48, 0),
+  ];
+}
+
 /**
  * Build the kart group for one character. Shared by the in-race visual and
  * the character-select preview.
  * @returns {{group: THREE.Group, refs: object}}
  */
-function buildKart(character, loadout = {}) {
+function buildKart(character, loadout = {}, { quality = 'race' } = {}) {
   const S = getShared();
+  const appearance = resolveKartAppearance(character, loadout);
+  if (character.modelId) {
+    const model = buildRacerModel(character, appearance, {
+      quality,
+      buildDriver: (mount) => buildAnimalDriverRig(mount, S, appearance),
+    });
+    model.group.rotation.order = 'YXZ';
+    return {
+      group: model.group,
+      refs: {
+        ...model.refs,
+        appearance,
+        avatarMats: [],
+        paintMaterials: model.refs.paintMaterials,
+        badgeY: model.badgeY,
+        updateModel: (time, dt) => model.update(time, dt),
+        modelDispose: () => model.dispose(),
+        metrics: model.metrics,
+      },
+    };
+  }
+
   const group = new THREE.Group();
   group.rotation.order = 'YXZ';
-  const appearance = resolveKartAppearance(character, loadout);
 
   // Per-kart materials (star mode mutates these, so they cannot be shared).
   const bodyMat = new THREE.MeshStandardMaterial({
@@ -288,6 +324,8 @@ function buildKart(character, loadout = {}) {
     group,
     refs: {
       bodyMat, accentMat, brakeMat, avatarMats, appearance,
+      paintMaterials: [bodyMat, accentMat], badgeY: BADGE_Y,
+      updateModel: null, modelDispose: null,
       frontPivots, spinGroups, flames, anchorL, anchorR,
     },
   };
@@ -370,7 +408,7 @@ export class KartVisual {
     this._refs = refs;
 
     // Star mode caches the original emissive so it can be restored exactly.
-    this._starMats = [refs.bodyMat, refs.accentMat].map((m) => ({
+    this._starMats = refs.paintMaterials.filter((m) => m?.emissive).map((m) => ({
       m,
       emissive: m.emissive.clone(),
       intensity: m.emissiveIntensity,
@@ -381,7 +419,7 @@ export class KartVisual {
     this.badge = null;
     if (!kart.isPlayer) {
       this.badge = makeNameBadge(kart.name, kart.accentColor);
-      this.badge.position.y = BADGE_Y;
+      this.badge.position.y = refs.badgeY || BADGE_Y;
       group.add(this.badge);
     }
 
@@ -435,6 +473,7 @@ export class KartVisual {
     const dt = this._lastNow > 0 ? clamp(now - this._lastNow, 0, 0.1) : 1 / 60;
     this._lastNow = now;
     this._time += dt;
+    refs.updateModel?.(this._time, dt);
 
     // Transform. Rotation order YXZ: yaw first, then pitch, then roll.
     g.position.set(kart.x, kart.y, kart.z);
@@ -510,10 +549,14 @@ export class KartVisual {
   /** Remove from scene and free per-kart GPU resources (shared assets stay). */
   dispose() {
     this.scene.remove(this.group);
-    this._refs.bodyMat.dispose();
-    this._refs.accentMat.dispose();
-    this._refs.brakeMat.dispose();
-    for (const material of this._refs.avatarMats) material.dispose();
+    if (this._refs.modelDispose) {
+      this._refs.modelDispose();
+    } else {
+      this._refs.bodyMat.dispose();
+      this._refs.accentMat.dispose();
+      this._refs.brakeMat.dispose();
+      for (const material of this._refs.avatarMats) material.dispose();
+    }
     if (this.badge) {
       this.badge.material.map?.dispose();
       this.badge.material.dispose();
@@ -527,7 +570,7 @@ export class KartVisual {
  * @returns {{group: THREE.Group}}
  */
 export function makeKartPreview(character, loadout = {}) {
-  const { group, refs } = buildKart(character, loadout);
+  const { group, refs } = buildKart(character, loadout, { quality: 'showroom' });
   // A little showroom personality: wheels turned, hidden flames.
   for (const pivot of refs.frontPivots) pivot.rotation.y = 0.30;
   for (const spin of refs.spinGroups) spin.rotation.x = 0.7;
@@ -535,11 +578,16 @@ export function makeKartPreview(character, loadout = {}) {
   return {
     group,
     appearance: refs.appearance,
+    metrics: refs.metrics || null,
+    update(time, dt) { refs.updateModel?.(time, dt); },
     dispose() {
-      refs.bodyMat.dispose();
-      refs.accentMat.dispose();
-      refs.brakeMat.dispose();
-      for (const material of refs.avatarMats) material.dispose();
+      if (refs.modelDispose) refs.modelDispose();
+      else {
+        refs.bodyMat.dispose();
+        refs.accentMat.dispose();
+        refs.brakeMat.dispose();
+        for (const material of refs.avatarMats) material.dispose();
+      }
     },
   };
 }

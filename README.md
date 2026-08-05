@@ -65,7 +65,8 @@ troubleshooting guide.
 - Nicknames are display-only and may repeat. A racing-themed nickname is chosen
   on first use and can be edited in the lobby; participant IDs remain the sole
   identity for permissions, reconnects, input, and results. Players may select
-  the same Racer and independently choose one of 12 paints and 8 animal avatars.
+  the same one of six available Racers and independently choose one of 12 paints
+  and 8 animal avatars. Two additional prototype Racers are shown as locked previews.
 - The Room shows the local choice as a rotating 3D kart; the customization dialog
   previews Racer stats, paint, and avatar before saving the complete loadout.
 - Single-player keeps its Racer-only selection flow: the chosen Racer receives
@@ -123,7 +124,8 @@ the server race continues while the client sends neutral controls.
 
 ## The game
 
-- **8 racers** with real stat trade-offs (speed / accel / handling / weight)
+- **8 Racer cards**: 6 race-ready models with real stat trade-offs, plus 2 locked
+  prototype previews with aspirational speed / accel / handling / weight figures
 - **4 tracks** — Sunset Circuit, Harbor Loop, Summit Raceway, Aurora Icefall — with boost
   pads, item box rows, kerbs, elevation, and themed scenery
 - **Drift & mini-turbo** — hop into a slide, hold it through the corner,

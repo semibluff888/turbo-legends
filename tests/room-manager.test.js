@@ -133,6 +133,16 @@ test('waiting room allows duplicate names and racers while loadout changes reset
     }),
     (error) => error.code === ERROR_CODES.AVATAR_INVALID,
   );
+  assert.throws(
+    () => harness.manager.setLoadout(guest.participantId, { characterId: 'tundra' }),
+    (error) => error.code === ERROR_CODES.CHARACTER_LOCKED,
+  );
+  await assert.rejects(
+    harness.manager.joinRoom(host.roomCode, {
+      displayName: 'Prototype', characterId: 'gearbox',
+    }),
+    (error) => error.code === ERROR_CODES.CHARACTER_LOCKED,
+  );
   assert.deepEqual(
     harness.manager.getRoomState(host.roomCode).members[1],
     initialMembers[1],
@@ -434,7 +444,14 @@ test('start prepares one deterministic eight-kart roster and launches after all 
   assert.equal(harness.manager.listRooms()[0].status, 'in_game');
   assert.equal(harness.manager.listRooms()[0].joinable, false);
   assert.equal(prepare.roster.length, 8);
-  assert.equal(new Set(prepare.roster.map((entry) => entry.characterId)).size, 8);
+  assert.equal(new Set(prepare.roster.map((entry) => entry.characterId)).size, 6);
+  assert.equal(prepare.roster.some((entry) => ['tundra', 'gearbox'].includes(entry.characterId)), false);
+  for (const characterId of new Set(prepare.roster.map((entry) => entry.characterId))) {
+    const repeated = prepare.roster.filter((entry) => entry.characterId === characterId);
+    const looks = repeated.map((entry) => `${entry.paintId}:${entry.avatarId}`);
+    assert.equal(new Set(looks).size, looks.length,
+      `${characterId} duplicates should have distinct appearances`);
+  }
   assert.deepEqual(prepare.roster, simulation.args.roster);
   assert.deepEqual(prepare.roster.map((entry) => entry.kartIndex), [0, 1, 2, 3, 4, 5, 6, 7]);
   assert.equal(race.seed, 424242);

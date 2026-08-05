@@ -296,17 +296,26 @@ export class Screens {
     root.innerHTML = `<h2 class="screen-heading">${UI_COPY.character.heading}</h2>`;
     const grid = el('div', 'char-grid', root);
     for (const ch of characters) {
-      const card = el('button', 'card char-card menu-option', grid);
+      const locked = ch.availability === 'locked';
+      const card = el('button', `card char-card${locked ? ' is-locked' : ' menu-option'}`, grid);
       card.type = 'button';
       card.dataset.value = ch.id;
+      card.disabled = locked;
+      card.setAttribute('aria-label', locked ? `${ch.name}, locked, coming soon` : ch.name);
       const swatch = el('div', 'char-swatch', card);
-      swatch.style.background =
-        `linear-gradient(135deg, ${cssColor(ch.color)}, ${cssColor(ch.accentColor ?? ch.color)})`;
-      el('span', 'char-helmet', swatch, '🏎️');
+      if (locked) {
+        el('span', 'racer-secret-silhouette', swatch);
+        el('span', 'racer-lock-mark', swatch, '🔒');
+      } else {
+        swatch.style.background =
+          `linear-gradient(135deg, ${cssColor(ch.color)}, ${cssColor(ch.accentColor ?? ch.color)})`;
+        el('span', 'char-helmet', swatch, '🏎️');
+      }
       const body = el('div', 'char-body', card);
       const nameRow = el('div', 'char-name-row', body);
       el('span', 'char-name', nameRow, ch.name);
-      el('span', `chip chip-${ch.weightClass}`, nameRow, ch.weightClass);
+      el('span', locked ? 'chip chip-locked' : `chip chip-${ch.weightClass}`,
+        nameRow, locked ? 'COMING SOON' : ch.weightClass);
       el('p', 'char-blurb', body, ch.blurb);
       const stats = el('div', 'char-stats', body);
       for (const [key, label] of STAT_ROWS) {
@@ -315,10 +324,14 @@ export class Screens {
         const bar = el('div', 'stat-bar', stat);
         const fill = el('div', 'stat-fill', bar);
         const [lo, hi] = CHARACTER_STAT_RANGE[key];
+        const overcap = ch.stats[key] > hi;
         const pct = Math.max(8, Math.min(100, ((ch.stats[key] - lo) / (hi - lo)) * 100));
         fill.style.width = pct.toFixed(0) + '%';
+        fill.classList.toggle('is-overcap', overcap);
+        el('span', `stat-value${overcap ? ' is-overcap' : ''}`, stat,
+          `${Math.round(ch.stats[key] * 100)}${overcap ? ' MAX+' : ''}`);
       }
-      this._wireOption(card, 'character');
+      if (!locked) this._wireOption(card, 'character');
     }
     el('p', 'screen-hint', root, UI_COPY.character.hint);
   }

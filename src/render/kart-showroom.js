@@ -30,6 +30,7 @@ export class KartShowroom {
     this._lastPointerX = 0;
     this._width = 0;
     this._height = 0;
+    this._previewCenter = new THREE.Vector3(0, 0.72, 0);
     this._reducedMotion = Boolean(window?.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
     this._wirePointer();
   }
@@ -136,6 +137,16 @@ export class KartShowroom {
     this.preview.group.rotation.y = this.rotation;
     this.preview.group.position.y = 0.03;
     this.scene.add(this.preview.group);
+    const bounds = new THREE.Box3().setFromObject(this.preview.group);
+    const sphere = bounds.getBoundingSphere(new THREE.Sphere());
+    this._previewCenter.copy(sphere.center);
+    const distance = Math.max(3.5, sphere.radius * 3.35);
+    this.camera?.position.set(
+      sphere.center.x + distance * 0.48,
+      sphere.center.y + distance * 0.30,
+      sphere.center.z + distance * 0.78,
+    );
+    this.camera?.lookAt(this._previewCenter);
   }
 
   attach(host) {
@@ -186,6 +197,7 @@ export class KartShowroom {
     if (!this._dragging && !this._reducedMotion && this._autoPause <= 0) {
       this.rotation += dt * 0.48;
     }
+    this.preview.update?.(performance.now() * 0.001, dt);
     this.preview.group.rotation.y = this.rotation;
     this.preview.group.position.y = 0.03 + Math.sin(performance.now() * 0.0018) * 0.025;
     this.renderer.render(this.scene, this.camera);
@@ -211,4 +223,3 @@ export class KartShowroom {
     this.camera = null;
   }
 }
-

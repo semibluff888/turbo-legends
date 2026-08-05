@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { FIXED_DT, MAX_FRAME_TIME, RACE_STATE, CAMERA, RACE } from './core/constants.js';
 import { Track } from './track/track.js';
 import { TRACKS, TRACKS_BY_ID, getTrackDef } from './track/tracks.js';
-import { CHARACTERS } from './game/characters.js';
+import { CHARACTERS, isPlayableCharacterId } from './game/characters.js';
 import { LocalRaceSession } from './session/local-race-session.js';
 import { OnlineClient } from './net/online-client.js';
 import { OnlineRaceSession } from './net/online-race-session.js';
@@ -119,6 +119,7 @@ const screens = new Screens({
   results: document.getElementById('screen-results'),
 }, {
   onCharacter(id) {
+    if (!isPlayableCharacterId(id)) return;
     selection.characterId = id;
     mode = 'track';
     screens.showTrack(TRACKS);
@@ -1372,7 +1373,7 @@ ensureAudio();
   else if (devScreen === 'settings') { mode = 'settings'; screens.showSettings(gameSettings); }
   else if (devScreen === 'help') { mode = 'help'; screens.showHelp(); }
   if (q.get('autostart')) {
-    if (q.get('char')) selection.characterId = q.get('char');
+    if (isPlayableCharacterId(q.get('char'))) selection.characterId = q.get('char');
     if (q.get('track')) selection.trackId = q.get('track');
     if (q.get('diff')) selection.difficulty = q.get('diff');
     startRace();

@@ -115,6 +115,8 @@ the existing renderer and HUD:
 | `src/core/rng.js` | Seeded RNG plus named child-stream derivation |
 | `src/track/*` | Spline, Track projection/surfaces, and four authored track definitions |
 | `src/game/kart.js` | Complete Kart state and controls shape |
+| `src/game/characters.js` | Stable eight-Racer catalog, six-playable allowlist, locked prototypes, and safe fallback |
+| `src/game/appearance.js` | Paint/avatar catalogs plus loadout defaults and sanitization |
 | `src/game/physics.js` | Kart motion, drift, surfaces, status timers, collisions, drafting |
 | `src/game/items.js` | Item boxes, roulette, projectiles, hazards, and item VFX |
 | `src/game/ai.js` | `AiDriver`, which writes controls and AI speed pacing only |
@@ -129,7 +131,9 @@ the existing renderer and HUD:
 | `server/room-manager.js` | Room lifecycle, scheduler, authoritative input and snapshot flow |
 | `server/websocket-game-server.js` | Upgrade/origin checks, connection limits, routing, and heartbeat |
 | `server/race-factory.js` | Builds a Track and `RaceSimulation` for an online room |
-| `src/render/*` | Three.js scene, track/kart visuals, particles, and camera |
+| `src/render/racer-model-builders.js` | Shared procedural bodies for the six available Racers; reused by production and Demo |
+| `src/render/racer-models.js` | Normalizes shared bodies into the live wheel/effect/material/disposal contract |
+| `src/render/*` | Three.js scene, track/kart visuals, particles, showroom, and camera |
 | `src/ui/*` | Menus, multiplayer lobby/room views, HUD, settings, and local/online results |
 | `src/audio/*` | WebAudio gameplay/UI SFX and local MP3 background music |
 | `src/input/*` | Keyboard, gamepad, and touch controls |
@@ -191,7 +195,8 @@ simulation.setController(kartIndex, controllerKind);
 
 The roster contains two to eight unique participant identities. Multiple human
 or AI seats may use the same racer; `characterId` selects stats, while paint and
-avatar fields are cosmetic:
+avatar fields are cosmetic. Only the six IDs in `PLAYABLE_CHARACTERS` are valid
+for simulation; the two locked prototype IDs are rejected before Kart creation:
 
 ```js
 {
@@ -243,10 +248,10 @@ new RaceDirector(track, {
 director.update(dt, playerControls);
 ```
 
-It keeps the player in the final grid slot, fills the other seven slots with
-distinct AI characters, applies the selected Racer's default cosmetic loadout,
-and gives each AI a seeded-random paint/avatar pair. It exposes `player` and
-supports deterministic `reset()`.
+It keeps the player in the final grid slot, fills the other seven slots by
+deterministically cycling the six available Racers, applies the selected Racer's
+default cosmetic loadout, and gives each AI a slot-seeded paint/avatar pair. It
+exposes `player` and supports deterministic `reset()`.
 `autopilot: true` is used by headless full-race tests.
 
 Presentation code receives either `LocalRaceSession` or `OnlineRaceSession`
@@ -280,8 +285,9 @@ waiting → loading → countdown → racing → results → waiting
 - Nicknames are 1–20 visible characters, may repeat, and reject control or
   bidirectional formatting characters. `participantId` is the only identity
   used for host permissions, reconnects, input ownership, and results.
-- Human racer, paint, and avatar selections may repeat. AI prefers unused racers
-  for visual variety, then cycles the catalog if more seats are needed.
+- Human racer, paint, and avatar selections may repeat. Locked prototype IDs are
+  rejected with `character_locked`. AI prefers unused available Racers for visual
+  variety, then deterministically cycles the six-Racer playable catalog.
 - The first member is host. If the host disconnects or leaves, ownership moves
   to the earliest joined connected, non-abandoned member.
 - Only the host can change track/difficulty or start the room. Any player loadout

@@ -151,6 +151,7 @@ export const ERROR_CODES = Object.freeze({
   NO_MATCHING_ROOM: 'no_matching_room',
   NAME_INVALID: 'name_invalid',
   CHARACTER_INVALID: 'character_invalid',
+  CHARACTER_LOCKED: 'character_locked',
   CHARACTER_TAKEN: 'character_taken',
   PAINT_INVALID: 'paint_invalid',
   AVATAR_INVALID: 'avatar_invalid',

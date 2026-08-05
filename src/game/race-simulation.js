@@ -10,7 +10,7 @@ import { RACE, RACE_STATE, DIFFICULTY, SURFACE } from '../core/constants.js';
 import { clamp, clamp01, loopDelta } from '../core/mathx.js';
 import { deriveRng } from '../core/rng.js';
 import { Kart, resetControls } from './kart.js';
-import { CHARACTERS_BY_ID } from './characters.js';
+import { CHARACTERS_BY_ID, isPlayableCharacterId } from './characters.js';
 import { stepKartPhysics, resolveKartCollisions, updateDrafting } from './physics.js';
 import { AiDriver } from './ai.js';
 import { ItemSystem } from './items.js';
@@ -77,6 +77,9 @@ function normalizeRoster(roster) {
     const characterId = String(entry.characterId || '');
     const character = CHARACTERS_BY_ID[characterId];
     if (!character) throw new TypeError(`unknown characterId: ${characterId}`);
+    if (!isPlayableCharacterId(characterId)) {
+      throw new TypeError(`locked characterId: ${characterId}`);
+    }
 
     const controllerKind = entry.controllerKind;
     if (!CONTROLLER_KINDS.has(controllerKind)) {

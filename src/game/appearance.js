@@ -2,6 +2,8 @@
 // characters.js; paints and avatars are presentation-only and are safe to use
 // from both the browser and the authoritative Node server.
 
+import { isPlayableCharacterId } from './characters.js';
+
 export const PAINT_THEMES = Object.freeze([
   { id: 'turbo-blue', name: 'Turbo Blue', color: 0x4aa8ff, accentColor: 0xffffff },
   { id: 'sunset-pop', name: 'Sunset Pop', color: 0xff5fa2, accentColor: 0x2b1b4a },
@@ -92,11 +94,49 @@ export function getAvatar(id) {
   return AVATARS_BY_ID[id] || AVATARS_BY_ID[DEFAULT_ONLINE_LOADOUT.avatarId];
 }
 
+/** Pick a deterministic cosmetic pair that stays distinct for repeated bodies. */
+export function pickDistinctAppearance(
+  rng,
+  usedAppearances = [],
+  paints = PAINT_THEMES,
+  avatars = AVATARS,
+) {
+  if (!paints.length || !avatars.length) {
+    return {
+      paintId: paints[0]?.id || DEFAULT_ONLINE_LOADOUT.paintId,
+      avatarId: avatars[0]?.id || DEFAULT_ONLINE_LOADOUT.avatarId,
+    };
+  }
+
+  const total = paints.length * avatars.length;
+  const start = typeof rng?.int === 'function' ? rng.int(0, total - 1) : 0;
+  const usedPairs = new Set(usedAppearances.map(({ paintId, avatarId }) => `${paintId}:${avatarId}`));
+  const usedPaints = new Set(usedAppearances.map(({ paintId }) => paintId));
+  const usedAvatars = new Set(usedAppearances.map(({ avatarId }) => avatarId));
+  let pairFallback = null;
+
+  for (let offset = 0; offset < total; offset++) {
+    const index = (start + offset) % total;
+    const paintId = paints[index % paints.length].id;
+    const avatarId = avatars[Math.floor(index / paints.length) % avatars.length].id;
+    const candidate = { paintId, avatarId };
+    if (!usedPairs.has(`${paintId}:${avatarId}`) && !pairFallback) pairFallback = candidate;
+    if (!usedPaints.has(paintId) && !usedAvatars.has(avatarId)) return candidate;
+  }
+
+  return pairFallback || {
+    paintId: paints[start % paints.length].id,
+    avatarId: avatars[Math.floor(start / paints.length) % avatars.length].id,
+  };
+}
+
 export function defaultLoadoutForCharacter(characterId) {
-  const defaults = DEFAULT_CHARACTER_LOADOUTS[characterId]
+  const playableCharacterId = isPlayableCharacterId(characterId)
+    ? characterId : DEFAULT_ONLINE_LOADOUT.characterId;
+  const defaults = DEFAULT_CHARACTER_LOADOUTS[playableCharacterId]
     || DEFAULT_CHARACTER_LOADOUTS[DEFAULT_ONLINE_LOADOUT.characterId];
   return {
-    characterId: String(characterId || DEFAULT_ONLINE_LOADOUT.characterId),
+    characterId: playableCharacterId,
     paintId: defaults.paintId,
     avatarId: defaults.avatarId,
   };
@@ -106,7 +146,7 @@ export function defaultLoadoutForCharacter(characterId) {
 export function sanitizeOnlineLoadout(value) {
   const source = value && typeof value === 'object' ? value : {};
   return {
-    characterId: typeof source.characterId === 'string' && source.characterId
+    characterId: isPlayableCharacterId(source.characterId)
       ? source.characterId : DEFAULT_ONLINE_LOADOUT.characterId,
     paintId: isPaintId(source.paintId) ? source.paintId : DEFAULT_ONLINE_LOADOUT.paintId,
     avatarId: isAvatarId(source.avatarId) ? source.avatarId : DEFAULT_ONLINE_LOADOUT.avatarId,
@@ -125,4 +165,3 @@ export function resolveKartAppearance(character, loadout = {}) {
     avatar,
   };
 }
-
