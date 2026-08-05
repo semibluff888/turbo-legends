@@ -39,7 +39,8 @@ test('each available Racer builds the live render contract within production bud
     assert.equal(model.refs.spinGroups.length, 4, `${character.id} wheel groups`);
     assert.ok(model.refs.flames.length >= 2, `${character.id} boost flames`);
     assert.ok(model.refs.driverMount?.isObject3D, `${character.id} driver mount`);
-    assert.ok(model.refs.brakeMat?.isMaterial, `${character.id} brake material`);
+    assert.deepEqual(model.refs.brakeMaterials, [],
+      `${character.id} must not receive a synthetic floating brake strip`);
     assert.ok(model.refs.anchorL?.isObject3D && model.refs.anchorR?.isObject3D);
     assert.ok(model.bounds.min.y >= -1e-6, `${character.id} should sit on the ground`);
     assert.ok(model.bounds.max.z - model.bounds.min.z >= 2.5, `${character.id} visual length`);
@@ -80,7 +81,7 @@ test('each available Racer builds the live render contract within production bud
     assert.ok(visual._refs.spinGroups.every((wheel) => wheel.rotation.x === 1.25));
     assert.ok(visual._refs.frontPivots.every((pivot) => pivot.rotation.y === -0.22));
     assert.ok(visual._refs.flames.every((flame) => flame.visible));
-    assert.equal(visual._refs.brakeMat.emissiveIntensity, 2.4);
+    assert.deepEqual(visual._refs.brakeMaterials, []);
     assert.ok(visual._starMats.every(({ m }) => m.emissiveIntensity === 0.85));
     assert.ok(Number.isFinite(visual.getSparkAnchor(-1).x));
 
@@ -89,7 +90,6 @@ test('each available Racer builds the live render contract within production bud
     kart.starTimer = 0;
     visual.sync(new THREE.Vector3(0, 3, 5));
     assert.ok(visual._refs.flames.every((flame) => !flame.visible));
-    assert.equal(visual._refs.brakeMat.emissiveIntensity, 0.15);
     for (let index = 0; index < starBaseline.length; index++) {
       assert.ok(visual._starMats[index].m.emissive.equals(starBaseline[index].emissive));
       assert.equal(visual._starMats[index].m.emissiveIntensity, starBaseline[index].intensity);

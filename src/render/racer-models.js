@@ -116,24 +116,6 @@ function wrapWheels(wheels) {
   return { frontPivots, spinGroups };
 }
 
-function addBrakeLight(root, bounds) {
-  const size = bounds.getSize(new THREE.Vector3());
-  const material = new THREE.MeshStandardMaterial({
-    color: 0x3a0508,
-    emissive: 0xff2a2a,
-    emissiveIntensity: 0.15,
-    roughness: 0.4,
-  });
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(Math.min(0.55, size.x * 0.34), 0.08, 0.055),
-    material,
-  );
-  mesh.position.set(0, bounds.min.y + size.y * 0.34, bounds.min.z + 0.035);
-  mesh.castShadow = false;
-  root.add(mesh);
-  return material;
-}
-
 function addDriftAnchors(root, bounds) {
   const size = bounds.getSize(new THREE.Vector3());
   const left = new THREE.Object3D();
@@ -182,7 +164,6 @@ export function buildRacerModel(character, appearance, { quality = 'race', build
   if (quality === 'race') paintMaterials = replacePhysicalMaterials(model.group, paintMaterials);
 
   const rawBounds = new THREE.Box3().setFromObject(model.group);
-  const brakeMat = addBrakeLight(model.group, rawBounds);
   const anchors = addDriftAnchors(model.group, rawBounds);
   const { frontPivots, spinGroups } = wrapWheels(runtime.wheels || []);
   instanceRepeatedMeshes(model.group);
@@ -218,7 +199,7 @@ export function buildRacerModel(character, appearance, { quality = 'race', build
     badgeY: bounds.max.y + 0.52,
     refs: {
       paintMaterials,
-      brakeMat,
+      brakeMaterials: [...(runtime.brakeMaterials || [])],
       frontPivots,
       spinGroups,
       flames: runtime.flames || [],

@@ -326,7 +326,7 @@ function buildKart(character, loadout = {}, { quality = 'race' } = {}) {
       bodyMat, accentMat, brakeMat, avatarMats, appearance,
       paintMaterials: [bodyMat, accentMat], badgeY: BADGE_Y,
       updateModel: null, modelDispose: null,
-      frontPivots, spinGroups, flames, anchorL, anchorR,
+      frontPivots, spinGroups, flames, brakeMaterials: [brakeMat], anchorL, anchorR,
     },
   };
 }
@@ -509,8 +509,11 @@ export class KartVisual {
       for (const flame of refs.flames) flame.visible = false;
     }
 
-    // Brake light.
-    refs.brakeMat.emissiveIntensity = kart.controls.brake > 0 ? 2.4 : 0.15;
+    // Model-authored brake lights only. The shared adapter must not invent a
+    // generic rear strip because exhausts and wings make bounds-based placement float.
+    for (const material of refs.brakeMaterials) {
+      material.emissiveIntensity = kart.controls.brake > 0 ? 2.4 : 0.15;
+    }
 
     // Star mode: fast HSL rainbow on the body materials, restored exactly after.
     if (kart.starTimer > 0) {
