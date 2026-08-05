@@ -91,6 +91,21 @@ test('the main menu tagline remains English in both languages', () => {
   assert.equal(getUiCopy('en').title.tagline, 'START YOUR ENGINES');
 });
 
+test('racer identity distinguishes its kart from human racer labels', () => {
+  const zh = getUiCopy('zh-CN');
+  const en = getUiCopy('en');
+  assert.equal(zh.character.heading, '选择你的赛车');
+  assert.equal(en.character.heading, 'PICK YOUR KART');
+  assert.equal(zh.online.room.yourRacer, '你的车手');
+  assert.equal(en.online.room.yourRacer, 'YOUR RACER');
+  assert.equal(zh.online.room.racerTab, '赛车');
+  assert.equal(en.online.room.racerTab, 'KART');
+  assert.equal(zh.online.room.racers, '车手');
+  assert.equal(en.online.room.racers, 'RACERS');
+  assert.match(zh.online.errors.CHARACTER_INVALID, /赛车/);
+  assert.match(en.online.errors.CHARACTER_INVALID, /kart/i);
+});
+
 test('proper names stay English while descriptive and generic entity copy localizes', () => {
   const character = localizeCharacter(CHARACTERS[0], 'zh-CN');
   const track = localizeTrack(TRACKS[0], 'zh-CN');
