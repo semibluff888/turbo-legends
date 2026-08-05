@@ -2,15 +2,9 @@
 // The browser fetches the game version from the server so package.json remains
 // the single source of truth without exposing the package manifest itself.
 
-const CONNECTION_LABELS = Object.freeze({
-  connected: 'CONNECTED',
-  connecting: 'CONNECTING',
-  reconnecting: 'RECONNECTING',
-  disconnected: 'OFFLINE',
-  error: 'ERROR',
-});
+import { formatCopy, getUiCopy, sanitizeLanguage } from './copy.js';
 
-const CONNECTION_STATES = new Set(Object.keys(CONNECTION_LABELS));
+const CONNECTION_STATES = new Set(['connected', 'connecting', 'reconnecting', 'disconnected', 'error']);
 
 export function latencyLevel(value) {
   if (value === null || value === undefined || value === '') return 'unknown';
@@ -22,8 +16,10 @@ export function latencyLevel(value) {
 }
 
 export class NetworkStatus {
-  constructor(root) {
+  constructor(root, options = {}) {
     this.root = root;
+    this.language = sanitizeLanguage(options.language);
+    this.copy = getUiCopy(this.language);
     root.innerHTML = `
       <div class="network-summary">
         <span class="network-online" data-network-online>ONLINE PLAYERS —</span>
@@ -47,7 +43,21 @@ export class NetworkStatus {
     this._latency = q('[data-network-latency]');
     this._version = q('[data-game-version]');
     this._connectionState = 'disconnected';
+    this._lastMetrics = { latencyMs: null, onlineCount: null };
+    this._versionValue = '';
     this.setConnectionState('disconnected');
+    this.setVersion(null);
+  }
+
+  setLanguage(language) {
+    const next = sanitizeLanguage(language);
+    if (next === this.language) return false;
+    this.language = next;
+    this.copy = getUiCopy(next);
+    this._state.textContent = this.copy.network.states[this._connectionState];
+    this.setMetrics(this._lastMetrics);
+    this.setVersion(this._versionValue);
+    return true;
   }
 
   showDetails() {
@@ -83,13 +93,14 @@ export class NetworkStatus {
     const normalized = state === 'idle' ? 'disconnected' : String(state || 'disconnected');
     this._connectionState = CONNECTION_STATES.has(normalized) ? normalized : 'disconnected';
     this._connection.dataset.state = this._connectionState;
-    this._state.textContent = CONNECTION_LABELS[this._connectionState];
+    this._state.textContent = this.copy.network.states[this._connectionState];
     if (this._connectionState !== 'connected') {
       this.setMetrics({ latencyMs: null, onlineCount: null });
     }
   }
 
   setMetrics({ latencyMs = null, onlineCount = null } = {}) {
+    this._lastMetrics = { latencyMs, onlineCount };
     const level = this._connectionState === 'connected' ? latencyLevel(latencyMs) : 'unknown';
     const latency = level === 'unknown' ? null : Math.round(Number(latencyMs));
     const hasCount = onlineCount !== null && onlineCount !== undefined && onlineCount !== '';
@@ -99,12 +110,17 @@ export class NetworkStatus {
       : null;
     this._latency.dataset.level = level;
     this._latency.textContent = latency === null ? '— ms' : `${latency} ms`;
-    this._online.textContent = count === null ? 'ONLINE PLAYERS —' : `ONLINE PLAYERS ${count}`;
+    this._online.textContent = count === null
+      ? this.copy.network.onlinePlayersUnknown
+      : formatCopy(this.copy.network.onlinePlayers, { count });
   }
 
   setVersion(version) {
     const value = String(version || '').trim();
-    this._version.textContent = value ? `VERSION ${value}` : 'VERSION —';
+    this._versionValue = value;
+    this._version.textContent = value
+      ? formatCopy(this.copy.network.version, { version: value })
+      : this.copy.network.versionUnknown;
   }
 
   async loadVersion(fetchImpl = globalThis.fetch) {

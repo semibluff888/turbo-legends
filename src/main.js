@@ -35,7 +35,7 @@ import { Hud } from './ui/hud.js';
 import { NetworkStatus } from './ui/network-status.js';
 import { Screens } from './ui/screens.js';
 import { buildInviteUrl, buildLobbyUrl, OnlineScreens } from './ui/online-screens.js';
-import { UI_COPY } from './ui/copy.js';
+import { applyDocumentLanguage, formatCopy } from './ui/copy.js';
 import {
   loadOnlineDisplayName,
   saveOnlineDisplayName,
@@ -59,10 +59,15 @@ const input = new InputManager(window);
 const audio = new AudioManager();
 const loadoutShowroom = new KartShowroom();
 let gameSettings = loadSettings();
+let appCopy = applyDocumentLanguage(document, gameSettings.language);
 audio.applySettings(gameSettings);
 
-const hud = new Hud(document.getElementById('hud'), document.getElementById('minimap'));
-const networkStatus = new NetworkStatus(document.getElementById('network-status-overlay'));
+const hud = new Hud(document.getElementById('hud'), document.getElementById('minimap'), {
+  language: gameSettings.language,
+});
+const networkStatus = new NetworkStatus(document.getElementById('network-status-overlay'), {
+  language: gameSettings.language,
+});
 const onlineClient = new OnlineClient();
 
 /** Player selections, persisted across races in this session. */
@@ -91,6 +96,9 @@ let pendingInviteJoinCode = '';
 let localRoomReconnecting = false;
 let reconnectFailurePending = false;
 let onlineLoadGeneration = 0;
+const ERROR_COPY_KEY_BY_CODE = new Map(
+  Object.entries(ERROR_CODES).map(([key, value]) => [value, key]),
+);
 
 const playerControls = makeControls();
 
@@ -143,6 +151,7 @@ const screens = new Screens({
   onSettingsChange(key, value) {
     ensureAudio();
     gameSettings = saveSettings({ ...gameSettings, [key]: value });
+    if (key === 'language') applyLanguage(gameSettings.language);
     audio.applySettings(gameSettings);
     screens.updateSettings(gameSettings);
     audio.ui('move');
@@ -150,6 +159,7 @@ const screens = new Screens({
   onSettingsReset() {
     ensureAudio();
     gameSettings = resetSettings();
+    applyLanguage(gameSettings.language);
     audio.applySettings(gameSettings);
     screens.updateSettings(gameSettings);
     audio.ui('confirm');
@@ -172,6 +182,8 @@ const screens = new Screens({
     endRace();
     goToTitle();
   },
+}, {
+  language: gameSettings.language,
 });
 
 const onlineScreens = new OnlineScreens({
@@ -267,7 +279,25 @@ const onlineScreens = new OnlineScreens({
   onReturnRoom() {
     onlineClient.returnRoom();
   },
+}, {
+  language: gameSettings.language,
 });
+
+function applyLanguage(language) {
+  appCopy = applyDocumentLanguage(document, language);
+  screens.setLanguage(language);
+  onlineScreens.setLanguage(language);
+  hud.setLanguage(language);
+  networkStatus.setLanguage(language);
+  updateOnlineLoadingOverlay();
+}
+
+function localizedOnlineError(message, fallback = appCopy.online.errors.generic) {
+  if (typeof message === 'string') return message || fallback;
+  if (message?.code === 'session_replaced') return appCopy.main.sessionReplaced;
+  const key = ERROR_COPY_KEY_BY_CODE.get(String(message?.code || ''));
+  return appCopy.online.errors[key] || onlineErrorMessage(message, fallback);
+}
 
 wireOnlineClient();
 void networkStatus.loadVersion();
@@ -503,12 +533,12 @@ function presentRoomReconnectFailure(event) {
   onlineScreens.setBusy(false);
   buildAttract();
   onlineScreens.showAlert(
-    onlineErrorMessage(event, event?.code === 'session_replaced'
-      ? 'This room session was resumed in another window.'
-      : 'The reconnect window expired. Join the room again.'),
+    localizedOnlineError(event, event?.code === 'session_replaced'
+      ? appCopy.main.sessionReplaced
+      : appCopy.main.reconnectExpired),
     {
-      title: UI_COPY.online.alerts.reconnectExpiredTitle,
-      buttonLabel: UI_COPY.online.alerts.returnLobby,
+      title: appCopy.online.alerts.reconnectExpiredTitle,
+      buttonLabel: appCopy.online.alerts.returnLobby,
       restoreFocus: null,
       onConfirm: returnToLobbyAfterReconnectFailure,
     },
@@ -549,8 +579,8 @@ function wireOnlineClient() {
     if (race) endRace();
     buildAttract();
     showOnlineLobby(onlineLobbyState || { rooms: [] });
-    onlineScreens.showAlert(message?.message || UI_COPY.online.room.kickedMessage, {
-      title: UI_COPY.online.alerts.kickedTitle,
+    onlineScreens.showAlert(appCopy.online.room.kickedMessage, {
+      title: appCopy.online.alerts.kickedTitle,
       restoreFocus: null,
     });
   });
@@ -558,7 +588,7 @@ function wireOnlineClient() {
     Promise.resolve(startOnlineRace(message)).catch((error) => {
       if (race?.session.kind === 'online' && race.session.raceId === message?.raceId) endRace();
       onlineScreens.setBusy(false);
-      reportOnlineError(error?.message || 'Unable to start the online race.', { action: 'start' });
+      reportOnlineError(error?.message || appCopy.main.unableStartOnlineRace, { action: 'start' });
     });
   });
   onlineClient.on('race_loaded_ack', (message) => {
@@ -593,9 +623,9 @@ function wireOnlineClient() {
     if (isTerminalOnlineProtocolError(message)) {
       reconnectFailurePending = false;
       finishLocalRoomReconnect({ restoreFocus: false });
-      onlineScreens.showAlert(onlineErrorMessage(message), {
-        title: UI_COPY.online.alerts.updateRequiredTitle,
-        buttonLabel: UI_COPY.online.alerts.refreshPage,
+      onlineScreens.showAlert(localizedOnlineError(message), {
+        title: appCopy.online.alerts.updateRequiredTitle,
+        buttonLabel: appCopy.online.alerts.refreshPage,
         restoreFocus: null,
         onConfirm: () => window.location.reload(),
       });
@@ -627,9 +657,9 @@ function wireOnlineClient() {
     onlineScreens.setBusy(false);
     onlineScreens.presentError({
       ...event,
-      message: onlineErrorMessage(event, event?.code === 'session_replaced'
-        ? 'This room session was resumed in another window.'
-        : 'The reconnect window expired. Join the room again.'),
+      message: localizedOnlineError(event, event?.code === 'session_replaced'
+        ? appCopy.main.sessionReplaced
+        : appCopy.main.reconnectExpired),
     }, { action: 'join' });
   });
 }
@@ -754,14 +784,14 @@ function startRace() {
 
 function onlineLoadedCountText(roomState = onlineRoomState) {
   const members = roomState?.members || roomState?.participants || roomState?.players || [];
-  if (!Array.isArray(members) || members.length === 0) return 'PREPARING LOCAL RESOURCES';
+  if (!Array.isArray(members) || members.length === 0) return appCopy.main.preparingResources;
   const loaded = members.filter((member) => member?.loaded === true).length;
-  return `${loaded}/${members.length} PLAYERS LOADED`;
+  return formatCopy(appCopy.main.playersLoaded, { loaded, total: members.length });
 }
 
 function updateOnlineLoadingOverlay(stage = race?.loadingStage) {
   if (race?.session.kind !== 'online' || race.onlineActivated) return;
-  hud.showLoading(stage || 'BUILDING RACE...', onlineLoadedCountText());
+  hud.showLoading(appCopy.main[stage] || stage || appCopy.main.buildingRace, onlineLoadedCountText());
 }
 
 function isCurrentOnlineLoad(mountedRace, token) {
@@ -787,12 +817,12 @@ function submitOnlineRaceLoaded(mountedRace) {
     return true;
   }
   if (!onlineClient.markRaceLoaded(raceId)) {
-    mountedRace.loadingStage = 'WAITING FOR CONNECTION...';
+    mountedRace.loadingStage = 'waitingConnection';
     updateOnlineLoadingOverlay(mountedRace.loadingStage);
     return false;
   }
   mountedRace.loadSubmitted = true;
-  mountedRace.loadingStage = 'SYNCING RACE...';
+  mountedRace.loadingStage = 'syncingRace';
   updateOnlineLoadingOverlay(mountedRace.loadingStage);
   startOnlineRaceMusic(mountedRace);
   return true;
@@ -819,9 +849,7 @@ async function prewarmOnlineRace(mountedRace, token) {
     camera,
     isCurrent: () => isCurrentOnlineLoad(mountedRace, token),
     onStage: (stage) => {
-      mountedRace.loadingStage = stage === 'compile'
-        ? 'WARMING UP GPU...'
-        : 'PREPARING FIRST FRAME...';
+      mountedRace.loadingStage = stage === 'compile' ? 'warmingGpu' : 'preparingFrame';
       updateOnlineLoadingOverlay(mountedRace.loadingStage);
     },
   });
@@ -902,7 +930,7 @@ function mountRace(track, session, def, { onlineLoading = false, loadToken = nul
     loadAcknowledged: !onlineLoading,
     hasAuthoritativeSnapshot: !onlineLoading,
     onlineActivated: !onlineLoading,
-    loadingStage: onlineLoading ? 'BUILDING RACE...' : '',
+    loadingStage: onlineLoading ? 'buildingRace' : '',
     musicStarted: !onlineLoading,
   };
 

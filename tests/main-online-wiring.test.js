@@ -57,7 +57,7 @@ test('Room reconnects use a blocking overlay and defer Lobby navigation until co
   );
   assert.match(
     source,
-    /function presentRoomReconnectFailure[\s\S]*buttonLabel: UI_COPY\.online\.alerts\.returnLobby[\s\S]*onConfirm: returnToLobbyAfterReconnectFailure/,
+    /function presentRoomReconnectFailure[\s\S]*buttonLabel: appCopy\.online\.alerts\.returnLobby[\s\S]*onConfirm: returnToLobbyAfterReconnectFailure/,
   );
   assert.match(
     source,
@@ -81,6 +81,14 @@ test('kicked players return to the Lobby and receive an information alert', () =
   assert.match(
     source,
     /onlineClient\.on\('kicked',[\s\S]*showOnlineLobby\([\s\S]*onlineScreens\.showAlert\([\s\S]*kickedTitle/,
+  );
+  assert.match(
+    source,
+    /onlineClient\.on\('kicked',[\s\S]*showAlert\(appCopy\.online\.room\.kickedMessage/,
+  );
+  assert.doesNotMatch(
+    source,
+    /onlineClient\.on\('kicked',[\s\S]*showAlert\(message\?\.message/,
   );
   assert.match(source, /onKickPlayer\(\{ participantId \}\)[\s\S]*onlineClient\.kickPlayer\(participantId\)/);
 });

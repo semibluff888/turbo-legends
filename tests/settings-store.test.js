@@ -18,6 +18,7 @@ class MemoryStorage {
 
 test('settings sanitize partial values and clamp volume ranges', () => {
   assert.deepEqual(sanitizeSettings({
+    language: 'en',
     muted: true,
     master: 2,
     musicEnabled: false,
@@ -26,6 +27,7 @@ test('settings sanitize partial values and clamp volume ranges', () => {
     menuBgm: 'bad-menu',
     raceBgm: 'rainbow-kart-dash',
   }), {
+    language: 'en',
     muted: true,
     master: 1,
     musicEnabled: false,
@@ -55,6 +57,15 @@ test('old settings records gain the new BGM defaults', () => {
   assert.equal(loaded.sfx, 0.4);
   assert.equal(loaded.menuBgm, 'rainbow-drift');
   assert.equal(loaded.raceBgm, 'default');
+  assert.equal(loaded.language, 'zh-CN');
+});
+
+test('language settings persist English and reject unsupported values', () => {
+  const storage = new MemoryStorage();
+  const saved = saveSettings({ ...DEFAULT_SETTINGS, language: 'en' }, storage);
+  assert.equal(saved.language, 'en');
+  assert.equal(loadSettings(storage).language, 'en');
+  assert.equal(sanitizeSettings({ language: 'fr' }).language, 'zh-CN');
 });
 
 test('invalid or unavailable storage falls back without throwing', () => {

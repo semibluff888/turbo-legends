@@ -7,11 +7,14 @@
 
 import { CHARACTER_STAT_RANGE, DIFFICULTY, ITEM_INFO } from '../core/constants.js';
 import {
-  HELP_CONTROLS,
-  HELP_GAMEPLAY,
-  HELP_ITEM_DESCRIPTIONS,
-  HELP_ITEM_ORDER,
-  UI_COPY,
+  formatCopy,
+  formatOrdinal,
+  getUiCopy,
+  localizeCharacter,
+  localizeDifficulty,
+  localizeItem,
+  localizeTrack,
+  sanitizeLanguage,
 } from './copy.js';
 
 const cssColor = (n) => '#' + (n >>> 0).toString(16).padStart(6, '0');
@@ -39,15 +42,7 @@ function el(tag, className, parent, text) {
   return node;
 }
 
-const STAT_ROWS = [
-  ['speed', 'Speed'],
-  ['accel', 'Accel'],
-  ['handling', 'Turn'],
-  ['weight', 'Weight'],
-];
-
 const MEDALS = ['🥇', '🥈', '🥉'];
-const ORDINALS = ['0th', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
 
 /** Normalize a track definition into a 100x60 SVG polygon. */
 function outlinePoints(points) {
@@ -70,7 +65,7 @@ function outlinePoints(points) {
 }
 
 export class Screens {
-  constructor(roots, callbacks) {
+  constructor(roots, callbacks, options = {}) {
     const pick = (...keys) => {
       for (const k of keys) if (roots[k]) return roots[k];
       return null;
@@ -86,6 +81,8 @@ export class Screens {
       results: pick('results', 'screen-results', 'screenResults'),
     };
     this.callbacks = callbacks || {};
+    this.language = sanitizeLanguage(options.language);
+    this.copy = getUiCopy(this.language);
 
     this._screen = null;
     this._items = [];
@@ -95,9 +92,11 @@ export class Screens {
     this._builtCharacters = null;
     this._builtTracks = null;
     this._settings = {};
-    this._settingDefs = new Map(UI_COPY.settings.rows.map((def) => [def.key, def]));
+    this._settingDefs = new Map(this.copy.settings.rows.map((def) => [def.key, def]));
     this._helpTab = 'controls';
     this._toastTimer = null;
+    this._pauseOnline = false;
+    this._resultsData = null;
 
     this._buildTitle();
     this._buildDifficulty();
@@ -107,6 +106,50 @@ export class Screens {
     this._buildResultsShell();
   }
 
+  setLanguage(language) {
+    const next = sanitizeLanguage(language);
+    if (next === this.language) return false;
+
+    const active = this._screen;
+    const focusedValue = this.getFocused()?.value;
+    const characters = this._builtCharacters;
+    const tracks = this._builtTracks;
+    const results = this._resultsData;
+
+    this.language = next;
+    this.copy = getUiCopy(next);
+    this._settingDefs = new Map(this.copy.settings.rows.map((def) => [def.key, def]));
+    this._builtCharacters = null;
+    this._builtTracks = null;
+
+    this._buildTitle();
+    this._buildDifficulty();
+    this._buildSettings();
+    this._buildHelp();
+    this._buildPause();
+    this._buildResultsShell();
+    if (characters) this._buildCharacters(characters);
+    if (tracks) this._buildTracks(tracks);
+    this.updateSettings(this._settings);
+
+    if (active === 'title') this.showTitle();
+    else if (active === 'character' && characters) this.showCharacter(characters);
+    else if (active === 'track' && tracks) this.showTrack(tracks);
+    else if (active === 'difficulty') this.showDifficulty();
+    else if (active === 'settings') this.showSettings(this._settings);
+    else if (active === 'help') this.showHelp(this._helpTab);
+    else if (active === 'pause') this.showPause({ online: this._pauseOnline });
+    else if (active === 'results' && results) {
+      this.showResults(results.standings, results.player, results.trackName);
+    }
+
+    if (focusedValue !== undefined) {
+      const index = this._items.findIndex((item) => item.value === focusedValue);
+      if (index >= 0) this._setFocus(index);
+    }
+    return true;
+  }
+
   // -------------------------------------------------------------------------
   // Static screens
   // -------------------------------------------------------------------------
@@ -114,7 +157,7 @@ export class Screens {
   _buildTitle() {
     const root = this.roots.title;
     if (!root) return;
-    const menu = UI_COPY.title.items.map((item) => `
+    const menu = this.copy.title.items.map((item) => `
       <button class="main-menu-option menu-option main-menu-${item.value}"
         type="button" data-value="${item.value}" title="${item.desc}"
         aria-label="${item.label}: ${item.desc}">
@@ -132,14 +175,14 @@ export class Screens {
             <span class="logo-line logo-turbo">TURBO</span>
             <span class="logo-line logo-legends">LEGENDS</span>
           </h1>
-          <p class="title-tagline">START YOUR ENGINES</p>
+          <p class="title-tagline">${this.copy.title.tagline}</p>
         </div>
         <div class="main-menu-panel">
-          <h2 class="main-menu-heading">${UI_COPY.title.heading}</h2>
+          <h2 class="main-menu-heading">${this.copy.title.heading}</h2>
           <div class="main-menu-list">${menu}</div>
         </div>
       </div>
-      <footer class="title-help">${UI_COPY.title.hint}</footer>
+      <footer class="title-help">${this.copy.title.hint}</footer>
       <div class="menu-status" role="status" aria-live="polite" hidden></div>`;
 
     for (const node of root.querySelectorAll('.main-menu-option')) {
@@ -150,20 +193,21 @@ export class Screens {
   _buildDifficulty() {
     const root = this.roots.difficulty;
     if (!root) return;
-    root.innerHTML = `<h2 class="screen-heading">${UI_COPY.difficulty.heading}</h2>`;
+    root.innerHTML = `<h2 class="screen-heading">${this.copy.difficulty.heading}</h2>`;
     const row = el('div', 'card-row diff-row', root);
     for (const key of Object.keys(DIFFICULTY)) {
       const d = DIFFICULTY[key];
-      const f = UI_COPY.difficulty.flavor[key] || { icon: '🏁', desc: '' };
+      const f = this.copy.difficulty.flavor[key] || { icon: '🏁', desc: '' };
+      const localized = localizeDifficulty(key, d, this.language);
       const card = el('button', `card diff-card diff-${key} menu-option`, row);
       card.type = 'button';
       card.dataset.value = key;
       el('div', 'diff-icon', card, f.icon);
-      el('div', 'diff-name', card, d.label);
+      el('div', 'diff-name', card, localized.label);
       el('p', 'diff-desc', card, f.desc);
       this._wireOption(card, 'difficulty');
     }
-    el('p', 'screen-hint', root, UI_COPY.difficulty.hint);
+    el('p', 'screen-hint', root, this.copy.difficulty.hint);
   }
 
   _buildSettings() {
@@ -171,17 +215,17 @@ export class Screens {
     if (!root) return;
     root.innerHTML = `
       <div class="settings-panel">
-        <h2 class="panel-heading">${UI_COPY.settings.heading}</h2>
+        <h2 class="panel-heading">${this.copy.settings.heading}</h2>
         <div class="settings-list"></div>
         <div class="panel-actions">
-          <button type="button" class="panel-action menu-option" data-value="reset">${UI_COPY.settings.reset}</button>
-          <button type="button" class="panel-action panel-action-primary menu-option" data-value="back">${UI_COPY.settings.back}</button>
+          <button type="button" class="panel-action menu-option" data-value="reset">${this.copy.settings.reset}</button>
+          <button type="button" class="panel-action panel-action-primary menu-option" data-value="back">${this.copy.settings.back}</button>
         </div>
-        <p class="panel-hint">${UI_COPY.settings.hint}</p>
+        <p class="panel-hint">${this.copy.settings.hint}</p>
       </div>`;
 
     const list = root.querySelector('.settings-list');
-    for (const def of UI_COPY.settings.rows) {
+    for (const def of this.copy.settings.rows) {
       const row = el('div', `setting-row menu-option setting-${def.kind}`, list);
       row.dataset.value = def.key;
       row.dataset.kind = def.kind;
@@ -213,13 +257,13 @@ export class Screens {
         previous.type = 'button';
         previous.tabIndex = -1;
         previous.dataset.direction = '-1';
-        previous.setAttribute('aria-label', `Previous ${def.label}`);
+        previous.setAttribute('aria-label', formatCopy(this.copy.common.previous, { label: def.label }));
         el('span', 'setting-value', control);
         const next = el('button', 'setting-choice-arrow setting-choice-next', control, '›');
         next.type = 'button';
         next.tabIndex = -1;
         next.dataset.direction = '1';
-        next.setAttribute('aria-label', `Next ${def.label}`);
+        next.setAttribute('aria-label', formatCopy(this.copy.common.next, { label: def.label }));
       }
       this._wireSettingRow(row);
     }
@@ -234,16 +278,16 @@ export class Screens {
     if (!root) return;
     root.innerHTML = `
       <div class="help-panel">
-        <h2 class="panel-heading">${UI_COPY.help.heading}</h2>
+        <h2 class="panel-heading">${this.copy.help.heading}</h2>
         <div class="help-tabs" role="tablist"></div>
         <div class="help-content" role="tabpanel"></div>
         <div class="help-footer">
-          <button type="button" class="panel-action panel-action-primary menu-option" data-value="back">${UI_COPY.help.back}</button>
-          <p class="panel-hint">${UI_COPY.help.hint}</p>
+          <button type="button" class="panel-action panel-action-primary menu-option" data-value="back">${this.copy.help.back}</button>
+          <p class="panel-hint">${this.copy.help.hint}</p>
         </div>
       </div>`;
     const tabs = root.querySelector('.help-tabs');
-    for (const tab of UI_COPY.help.tabs) {
+    for (const tab of this.copy.help.tabs) {
       const button = el('button', 'help-tab', tabs, tab.label);
       button.type = 'button';
       button.dataset.value = tab.value;
@@ -257,10 +301,10 @@ export class Screens {
   _buildPause() {
     const root = this.roots.pause;
     if (!root) return;
-    root.innerHTML = `<div class="pause-panel"><h2 class="pause-heading">${UI_COPY.pause.heading}</h2></div>`;
+    root.innerHTML = `<div class="pause-panel"><h2 class="pause-heading">${this.copy.pause.heading}</h2></div>`;
     const panel = root.firstElementChild;
     const list = el('div', 'pause-list', panel);
-    for (const [value, label] of UI_COPY.pause.items) {
+    for (const [value, label] of this.copy.pause.items) {
       const btn = el('button', 'pause-option menu-option', list, label);
       btn.type = 'button';
       btn.dataset.value = value;
@@ -273,13 +317,13 @@ export class Screens {
     if (!root) return;
     root.innerHTML = `
       <div class="results-panel">
-        <h2 class="results-heading">${UI_COPY.results.heading}</h2>
+        <h2 class="results-heading">${this.copy.results.heading}</h2>
         <p class="results-track"></p>
         <table class="results-table">
-          <thead><tr><th></th><th class="th-name">${UI_COPY.results.racer}</th><th>${UI_COPY.results.time}</th><th>${UI_COPY.results.bestLap}</th></tr></thead>
+          <thead><tr><th></th><th class="th-name">${this.copy.results.racer}</th><th>${this.copy.results.time}</th><th>${this.copy.results.bestLap}</th></tr></thead>
           <tbody></tbody>
         </table>
-        <div class="results-continue menu-option" data-value="done">${UI_COPY.results.continue}</div>
+        <div class="results-continue menu-option" data-value="done">${this.copy.results.continue}</div>
       </div>`;
     this._wireOption(root.querySelector('.results-continue'), 'results');
   }
@@ -293,15 +337,17 @@ export class Screens {
     this._builtCharacters = characters;
     const root = this.roots.character;
     if (!root) return;
-    root.innerHTML = `<h2 class="screen-heading">${UI_COPY.character.heading}</h2>`;
+    root.innerHTML = `<h2 class="screen-heading">${this.copy.character.heading}</h2>`;
     const grid = el('div', 'char-grid', root);
     for (const ch of characters) {
+      const localized = localizeCharacter(ch, this.language);
       const locked = ch.availability === 'locked';
       const card = el('button', `card char-card${locked ? ' is-locked' : ' menu-option'}`, grid);
       card.type = 'button';
       card.dataset.value = ch.id;
       card.disabled = locked;
-      card.setAttribute('aria-label', locked ? `${ch.name}, locked, coming soon` : ch.name);
+      card.setAttribute('aria-label', locked
+        ? formatCopy(this.copy.common.lockedAria, { name: ch.name }) : ch.name);
       const swatch = el('div', 'char-swatch', card);
       if (locked) {
         el('span', 'racer-secret-silhouette', swatch);
@@ -315,10 +361,10 @@ export class Screens {
       const nameRow = el('div', 'char-name-row', body);
       el('span', 'char-name', nameRow, ch.name);
       el('span', locked ? 'chip chip-locked' : `chip chip-${ch.weightClass}`,
-        nameRow, locked ? 'COMING SOON' : ch.weightClass);
-      el('p', 'char-blurb', body, ch.blurb);
+        nameRow, locked ? this.copy.common.comingSoon : this.copy.common.weights[ch.weightClass]);
+      el('p', 'char-blurb', body, localized.blurb);
       const stats = el('div', 'char-stats', body);
-      for (const [key, label] of STAT_ROWS) {
+      for (const [key, label] of Object.entries(this.copy.common.stats)) {
         const stat = el('div', 'stat-row', stats);
         el('span', 'stat-label', stat, label);
         const bar = el('div', 'stat-bar', stat);
@@ -329,11 +375,11 @@ export class Screens {
         fill.style.width = pct.toFixed(0) + '%';
         fill.classList.toggle('is-overcap', overcap);
         el('span', `stat-value${overcap ? ' is-overcap' : ''}`, stat,
-          `${Math.round(ch.stats[key] * 100)}${overcap ? ' MAX+' : ''}`);
+          `${Math.round(ch.stats[key] * 100)}${overcap ? this.copy.common.max : ''}`);
       }
       if (!locked) this._wireOption(card, 'character');
     }
-    el('p', 'screen-hint', root, UI_COPY.character.hint);
+    el('p', 'screen-hint', root, this.copy.character.hint);
   }
 
   _buildTracks(tracks) {
@@ -341,9 +387,10 @@ export class Screens {
     this._builtTracks = tracks;
     const root = this.roots.track;
     if (!root) return;
-    root.innerHTML = `<h2 class="screen-heading">${UI_COPY.track.heading}</h2>`;
+    root.innerHTML = `<h2 class="screen-heading">${this.copy.track.heading}</h2>`;
     const row = el('div', 'card-row track-row', root);
     for (const t of tracks) {
+      const localized = localizeTrack(t, this.language);
       const card = el('button', 'card track-card menu-option', row);
       card.type = 'button';
       card.dataset.value = t.id;
@@ -363,11 +410,11 @@ export class Screens {
          </svg>`;
       const body = el('div', 'track-body', card);
       el('div', 'track-name', body, t.name);
-      el('p', 'track-subtitle', body, t.subtitle || '');
-      el('span', 'chip chip-laps', body, `${t.laps ?? 3} LAPS`);
+      el('p', 'track-subtitle', body, localized.subtitle || '');
+      el('span', 'chip chip-laps', body, formatCopy(this.copy.common.laps, { count: t.laps ?? 3 }));
       this._wireOption(card, 'track');
     }
-    el('p', 'screen-hint', root, UI_COPY.track.hint);
+    el('p', 'screen-hint', root, this.copy.track.hint);
   }
 
   // -------------------------------------------------------------------------
@@ -415,6 +462,7 @@ export class Screens {
   }
 
   showPause({ online = false } = {}) {
+    this._pauseOnline = Boolean(online);
     this.hideAll();
     const root = this.roots.pause;
     if (!root) return;
@@ -423,8 +471,8 @@ export class Screens {
     if (restart) restart.hidden = online;
     if (quit) {
       quit.textContent = online
-        ? (UI_COPY.online.room?.leave || UI_COPY.online.lobby?.leave || 'LEAVE ROOM')
-        : UI_COPY.pause.items.at(-1)[1];
+        ? this.copy.online.room.leave
+        : this.copy.pause.items.at(-1)[1];
     }
     root.hidden = false;
     this._screen = 'pause';
@@ -445,6 +493,7 @@ export class Screens {
   }
 
   showResults(standings, player, trackName) {
+    this._resultsData = { standings, player, trackName };
     const root = this.roots.results;
     if (!root) return;
     root.querySelector('.results-track').textContent = trackName || '';
@@ -457,13 +506,13 @@ export class Screens {
       tr.style.setProperty('--row-i', i);
       const tdRank = el('td', 'td-rank', tr);
       if (rank <= 3) el('span', 'medal', tdRank, MEDALS[rank - 1]);
-      else tdRank.textContent = ORDINALS[rank] || `${rank}th`;
+      else tdRank.textContent = formatOrdinal(rank, this.language);
       const tdName = el('td', 'td-name', tr);
       const dot = el('span', 'name-dot', tdName);
       dot.style.background = cssColor(k.color);
       el('span', 'name-text', tdName, k.name);
-      if (k === player) el('span', 'chip chip-you', tdName, 'YOU');
-      el('td', 'td-time', tr, k.finished ? fmtClock(k.finishTime) : 'DNF');
+      if (k === player) el('span', 'chip chip-you', tdName, this.copy.common.you);
+      el('td', 'td-time', tr, k.finished ? fmtClock(k.finishTime) : this.copy.common.dnf);
       el('td', 'td-best', tr, fmtClock(k.bestLap));
       tbody.appendChild(tr);
     });
@@ -499,7 +548,7 @@ export class Screens {
         const on = !!this._settings[key];
         row.classList.toggle('is-on', on);
         row.setAttribute('aria-checked', String(on));
-        if (valueNode) valueNode.textContent = on ? 'ON' : 'OFF';
+        if (valueNode) valueNode.textContent = on ? this.copy.common.on : this.copy.common.off;
       } else if (kind === 'volume') {
         const value = clampUnit(this._settings[key]);
         const pct = Math.round(value * 100);
@@ -507,7 +556,7 @@ export class Screens {
         if (fill) fill.style.width = `${pct}%`;
         if (valueNode) valueNode.textContent = `${pct}%`;
         row.setAttribute('aria-valuenow', String(pct));
-        row.setAttribute('aria-valuetext', `${pct} percent`);
+        row.setAttribute('aria-valuetext', formatCopy(this.copy.common.percent, { value: pct }));
       } else {
         const options = this._settingDefs.get(key)?.options || [];
         let index = options.findIndex((option) => option.value === this._settings[key]);
@@ -564,7 +613,7 @@ export class Screens {
 
   cycleHelpTab(dir) {
     if (this._screen !== 'help') return;
-    const tabs = UI_COPY.help.tabs;
+    const tabs = this.copy.help.tabs;
     const current = Math.max(0, tabs.findIndex((tab) => tab.value === this._helpTab));
     const next = (current + Math.sign(dir) + tabs.length) % tabs.length;
     this._setHelpTab(tabs[next].value);
@@ -580,7 +629,7 @@ export class Screens {
   }
 
   _setHelpTab(value) {
-    if (!UI_COPY.help.tabs.some((tab) => tab.value === value)) value = 'controls';
+    if (!this.copy.help.tabs.some((tab) => tab.value === value)) value = 'controls';
     this._helpTab = value;
     const root = this.roots.help;
     if (!root) return;
@@ -600,7 +649,7 @@ export class Screens {
 
     if (this._helpTab === 'controls') {
       const grid = el('div', 'help-controls-grid', content);
-      for (const group of HELP_CONTROLS) {
+      for (const group of this.copy.help.controls) {
         const card = el('section', 'help-section help-controls-card', grid);
         el('h3', 'help-section-title', card, group.title);
         const rows = el('div', 'help-control-rows', card);
@@ -612,18 +661,18 @@ export class Screens {
       }
     } else if (this._helpTab === 'items') {
       const grid = el('div', 'help-items-grid', content);
-      for (const item of HELP_ITEM_ORDER) {
-        const info = ITEM_INFO[item];
+      for (const item of this.copy.help.itemOrder) {
+        const info = localizeItem(item, ITEM_INFO[item], this.language);
         if (!info) continue;
         const card = el('article', 'help-item-card', grid);
         el('span', 'help-item-glyph', card, info.glyph);
         const copy = el('span', 'help-item-copy', card);
         el('h3', 'help-item-name', copy, info.label);
-        el('p', 'help-item-desc', copy, HELP_ITEM_DESCRIPTIONS[item] || '');
+        el('p', 'help-item-desc', copy, this.copy.help.itemDescriptions[item] || '');
       }
     } else {
       const grid = el('div', 'help-gameplay-grid', content);
-      for (const tip of HELP_GAMEPLAY) {
+      for (const tip of this.copy.help.gameplay) {
         const card = el('article', 'help-gameplay-card', grid);
         el('span', 'help-gameplay-icon', card, tip.icon);
         const copy = el('span', 'help-gameplay-copy', card);

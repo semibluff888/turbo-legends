@@ -4,10 +4,12 @@ import {
   sanitizeMenuBgm,
   sanitizeRaceBgm,
 } from '../audio/bgm.js';
+import { DEFAULT_LANGUAGE, sanitizeLanguage } from './copy.js';
 
 export const SETTINGS_STORAGE_KEY = 'turbo-kart.settings.v1';
 
 export const DEFAULT_SETTINGS = Object.freeze({
+  language: DEFAULT_LANGUAGE,
   muted: false,
   master: 1,
   musicEnabled: true,
@@ -26,6 +28,7 @@ function clampUnit(value, fallback) {
 export function sanitizeSettings(value) {
   const source = value && typeof value === 'object' ? value : {};
   return {
+    language: sanitizeLanguage(source.language),
     muted: typeof source.muted === 'boolean' ? source.muted : DEFAULT_SETTINGS.muted,
     master: clampUnit(source.master, DEFAULT_SETTINGS.master),
     musicEnabled: typeof source.musicEnabled === 'boolean'

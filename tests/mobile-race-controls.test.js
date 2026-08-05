@@ -11,8 +11,8 @@ test('mobile race controls provide visible steer, drift, item, brake, and pause 
   assert.match(html, /class="btn btn-item"/);
   assert.match(html, /class="btn btn-brake"/);
   assert.match(html, /class="btn btn-pause"/);
-  assert.match(html, /aria-label="Brake or reverse"/);
-  assert.match(html, /aria-label="Pause race"/);
+  assert.match(html, /aria-label="刹车或倒车"/);
+  assert.match(html, /aria-label="暂停比赛"/);
 });
 
 test('mobile race controls are gated to an active HUD and respect device safe areas', () => {

@@ -9,40 +9,33 @@
 // No DOM access at module import time (Node syntax-check imports this file).
 
 import { ITEM_INFO, RACE_STATE } from '../core/constants.js';
+import {
+  formatCopy,
+  formatOrdinal,
+  formatOrdinalParts,
+  getUiCopy,
+  sanitizeLanguage,
+} from './copy.js';
 
 /** Sim speed (units/s) → displayed km/h. Pure flavor for the readout. */
 const SPEED_KMH = 5.4;
 /** Padding inside the minimap canvas, in CSS pixels. */
 const MAP_PAD = 16;
 
-const ORDINALS = ['0th', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th',
-  '8th', '9th', '10th', '11th', '12th'];
-const ordinal = (n) => ORDINALS[n] || `${n}th`;
-
-const STANDINGS_STATUS = Object.freeze({
-  left: Object.freeze({ key: 'left', label: 'LEFT ROOM' }),
-  disconnected: Object.freeze({ key: 'disconnected', label: 'DISCONNECTED' }),
-  reconnecting: Object.freeze({ key: 'reconnecting', label: 'RECONNECTING' }),
-  finished: Object.freeze({ key: 'finished', label: 'FINISHED' }),
-  takeover: Object.freeze({ key: 'takeover', label: 'AI TAKE OVER' }),
-  ai: Object.freeze({ key: 'ai', label: 'AI RACER' }),
-  ready: Object.freeze({ key: 'ready', label: 'READY' }),
-  racing: Object.freeze({ key: 'racing', label: 'RACING' }),
-});
-
 /** Pure status mapping shared by the HUD and its contract tests. */
-export function standingsStatus(kart, raceState) {
+export function standingsStatus(kart, raceState, language) {
+  const labels = getUiCopy(language).hud.statuses;
   const presenceState = kart?.presenceState
     || (kart?.connected === false ? 'reconnecting' : 'connected');
-  if (presenceState === 'left') return STANDINGS_STATUS.left;
-  if (presenceState === 'disconnected') return STANDINGS_STATUS.disconnected;
-  if (presenceState === 'reconnecting') return STANDINGS_STATUS.reconnecting;
-  if (kart?.finished) return STANDINGS_STATUS.finished;
-  if (kart?.controllerKind === 'takeover-ai') return STANDINGS_STATUS.takeover;
-  if (kart?.controllerKind === 'ai') return STANDINGS_STATUS.ai;
-  return raceState === RACE_STATE.COUNTDOWN
-    ? STANDINGS_STATUS.ready
-    : STANDINGS_STATUS.racing;
+  let key = 'racing';
+  if (presenceState === 'left') key = 'left';
+  else if (presenceState === 'disconnected') key = 'disconnected';
+  else if (presenceState === 'reconnecting') key = 'reconnecting';
+  else if (kart?.finished) key = 'finished';
+  else if (kart?.controllerKind === 'takeover-ai') key = 'takeover';
+  else if (kart?.controllerKind === 'ai') key = 'ai';
+  else if (raceState === RACE_STATE.COUNTDOWN) key = 'ready';
+  return { key, label: labels[key] };
 }
 
 const cssColor = (n) => '#' + (n >>> 0).toString(16).padStart(6, '0');
@@ -66,9 +59,11 @@ export class Hud {
    * @param {HTMLElement} hudRoot #hud container (already holds #minimap)
    * @param {HTMLCanvasElement} minimapCanvas
    */
-  constructor(hudRoot, minimapCanvas) {
+  constructor(hudRoot, minimapCanvas, options = {}) {
     this.root = hudRoot;
     this.canvas = minimapCanvas;
+    this.language = sanitizeLanguage(options.language);
+    this.copy = getUiCopy(this.language);
 
     hudRoot.insertAdjacentHTML('beforeend', `
       <div class="hud-slot">
@@ -79,7 +74,7 @@ export class Hud {
       </div>
       <div class="hud-race-info">
         <div class="hud-rank" data-rank="n">
-          <span class="hud-rank-num"></span><span class="hud-rank-suffix"></span>
+          <span class="hud-rank-prefix"></span><span class="hud-rank-num"></span><span class="hud-rank-suffix"></span>
         </div>
         <div class="hud-lap">LAP <span class="hud-lap-now">1</span><span class="hud-lap-sep">/</span><span class="hud-lap-total">3</span></div>
       </div>
@@ -115,6 +110,7 @@ export class Hud {
     this._glyph = q('.hud-item-glyph');
     this._count = q('.hud-item-count');
     this._rankEl = q('.hud-rank');
+    this._rankPrefix = q('.hud-rank-prefix');
     this._rankNum = q('.hud-rank-num');
     this._rankSuf = q('.hud-rank-suffix');
     this._lapNow = q('.hud-lap-now');
@@ -134,6 +130,7 @@ export class Hud {
     this._standingsBody = q('.hud-standings-body');
     this._standingRows = [];
     this._standingsVisible = false;
+    this._applyStaticCopy();
 
     // --- Minimap: HiDPI backing store; CSS controls the display size. ------
     const size = minimapCanvas.width || 220;
@@ -154,6 +151,56 @@ export class Hud {
     this._bannerTimer = 0;
     this._colorCache = Object.create(null);
     this._resetState();
+  }
+
+  setLanguage(language) {
+    const next = sanitizeLanguage(language);
+    if (next === this.language) return false;
+    this.language = next;
+    this.copy = getUiCopy(next);
+    this._applyStaticCopy();
+    for (const row of this._standingRows) {
+      row.you.textContent = this.copy.common.you;
+      if (row.cache.status) row.status.textContent = this.copy.hud.statuses[row.cache.status] || '';
+    }
+    if (this._c.rank > 0) this._setRankCopy(this._c.rank);
+    if (this._cdShown === 'go') this._cd.textContent = this.copy.hud.go;
+    if (this._banner.className.includes('final-lap')) this._bannerPrimary.textContent = this.copy.hud.finalLap;
+    if (this._banner.className.includes('finish') && this._c.rank > 0) {
+      this._bannerPrimary.textContent = formatCopy(this.copy.hud.finished, {
+        place: formatOrdinal(this._c.rank, this.language),
+      });
+      this._bannerSecondary.textContent = this.copy.hud.waitingFinish;
+    }
+    return true;
+  }
+
+  _applyStaticCopy() {
+    const set = (selector, value) => {
+      const node = this.root.querySelector(selector);
+      if (node) node.textContent = value;
+    };
+    const currentLap = this._lapNow?.textContent || '1';
+    const totalLaps = this._lapTotal?.textContent || '3';
+    set('.hud-lap', '');
+    const lap = this.root.querySelector('.hud-lap');
+    if (lap) lap.innerHTML = `${this.copy.hud.lap} <span class="hud-lap-now">${currentLap}</span><span class="hud-lap-sep">/</span><span class="hud-lap-total">${totalLaps}</span>`;
+    this._lapNow = this.root.querySelector('.hud-lap-now');
+    this._lapTotal = this.root.querySelector('.hud-lap-total');
+    set('.hud-time-row:not(.hud-best) .hud-time-label', this.copy.hud.time);
+    set('.hud-best .hud-time-label', this.copy.hud.best);
+    set('.hud-wrongway', this.copy.hud.wrongWay);
+    set('.hud-standings-title', this.copy.hud.liveStandings);
+    const heads = this.root.querySelectorAll('.hud-standings-head > span');
+    heads.forEach((node, index) => { node.textContent = this.copy.hud.standingsHead[index] || ''; });
+    set('.hud-standings-hint', this.copy.hud.holdTab);
+  }
+
+  _setRankCopy(rank) {
+    const parts = formatOrdinalParts(rank, this.language);
+    this._rankPrefix.textContent = parts.prefix;
+    this._rankNum.textContent = parts.number;
+    this._rankSuf.textContent = parts.suffix;
   }
 
   /** Clear all cached values + latches; next update() repaints everything. */
@@ -187,7 +234,7 @@ export class Hud {
   }
 
   showLoading(stage, detail = '') {
-    this._loadingStage.textContent = String(stage || 'LOADING RACE...');
+    this._loadingStage.textContent = String(stage || this.copy.hud.loadingRace);
     this._loadingDetail.textContent = String(detail || '');
     this._loadingDetail.hidden = !detail;
     this._loading.hidden = false;
@@ -252,8 +299,7 @@ export class Hud {
     const rank = kart.rank | 0;
     if (rank !== c.rank) {
       c.rank = rank;
-      this._rankNum.textContent = rank;
-      this._rankSuf.textContent = ordinal(rank).slice(String(rank).length);
+      this._setRankCopy(rank);
       this._rankEl.setAttribute('data-rank', rank >= 1 && rank <= 3 ? String(rank) : 'n');
       repop(this._rankEl, 'rank-pop');
     }
@@ -280,7 +326,7 @@ export class Hud {
     if (!this._finalLapShown && kart.lap > 0 && lapNow === lapTotal
         && !kart.finished && race.state === RACE_STATE.RACING) {
       this._finalLapShown = true;
-      this.banner('FINAL LAP!', 2600, 'final-lap');
+      this.banner(this.copy.hud.finalLap, 2600, 'final-lap');
     }
     if (!this._finishShown && kart.finished) {
       this._finishShown = true;
@@ -309,7 +355,7 @@ export class Hud {
       row.className = 'hud-standing-row';
       row.innerHTML = `
         <span class="hud-standing-pos"></span>
-        <span class="hud-standing-racer"><span class="hud-standing-name"></span><span class="hud-standing-you" hidden>YOU</span></span>
+        <span class="hud-standing-racer"><span class="hud-standing-name"></span><span class="hud-standing-you" hidden>${this.copy.common.you}</span></span>
         <span class="hud-standing-lap"></span>
         <span class="hud-standing-status"></span>
       `;
@@ -340,9 +386,9 @@ export class Hud {
 
       const place = Math.max(1, Number(racer.rank) || index + 1);
       const pos = String(place).padStart(2, '0');
-      const name = String(racer.name || racer.displayName || `Racer ${place}`);
+      const name = String(racer.name || racer.displayName || formatCopy(this.copy.common.racerFallback, { rank: place }));
       const lap = `${Math.max(1, Math.min(Number(racer.lap) || 1, lapTotal))}/${lapTotal}`;
-      const state = standingsStatus(racer, race.state);
+      const state = standingsStatus(racer, race.state, this.language);
       const local = Boolean(racer.isPlayer);
       const cache = row.cache;
 
@@ -373,7 +419,7 @@ export class Hud {
     this._cdShown = key;
     const el = this._cd;
     el.hidden = false;
-    el.textContent = key === 'go' ? 'GO!' : String(key);
+    el.textContent = key === 'go' ? this.copy.hud.go : String(key);
     el.classList.toggle('is-go', key === 'go');
     repop(el, 'cd-pop');
     clearTimeout(this._cdTimer);
@@ -404,10 +450,13 @@ export class Hud {
 
   /** Keep the finishing place and wait hint visible until the results screen. */
   finish(rank) {
+    const copy = this.copy || getUiCopy(this.language);
     const el = this._banner;
     el.className = 'hud-banner finish';
-    this._bannerPrimary.textContent = 'FINISHED! ' + ordinal(rank);
-    this._bannerSecondary.textContent = 'WAITING FOR OTHER RACERS TO FINISH...';
+    this._bannerPrimary.textContent = formatCopy(copy.hud.finished, {
+      place: formatOrdinal(rank, this.language),
+    });
+    this._bannerSecondary.textContent = copy.hud.waitingFinish;
     this._bannerSecondary.hidden = false;
     el.hidden = false;
     repop(el, 'banner-in');

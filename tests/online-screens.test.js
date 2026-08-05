@@ -17,9 +17,11 @@ import {
   roomCodeFromSearch,
   roomStatusMessage,
 } from '../src/ui/online-screens.js';
+import { getUiCopy } from '../src/ui/copy.js';
 
 const onlineScreensSource = readFileSync(new URL('../src/ui/online-screens.js', import.meta.url), 'utf8');
 const onlineStylesSource = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
+const EN_COPY = getUiCopy('en');
 
 test('online input helpers normalize display fields and room codes', () => {
   assert.equal(normalizeDisplayName('  Turbo\n  Racer  '), 'Turbo Racer');
@@ -218,7 +220,7 @@ test('room start remains unavailable while a reserved member is offline', () => 
   assert.deepEqual(view.reconnectingMembers.map((member) => member.participantId), ['guest']);
   assert.equal(view.everyoneReady, false);
   assert.equal(view.canStart, false);
-  assert.equal(roomStatusMessage(view), 'Waiting for Same to reconnect.');
+  assert.equal(roomStatusMessage(view, EN_COPY.online.room), 'Waiting for Same to reconnect.');
 });
 
 test('Room status summarizes multiple reconnecting racers before readiness', () => {
@@ -233,7 +235,7 @@ test('Room status summarizes multiple reconnecting racers before readiness', () 
   }, 'host');
 
   assert.equal(view.reconnectingCount, 2);
-  assert.equal(roomStatusMessage(view), 'Waiting for 2 racers to reconnect.');
+  assert.equal(roomStatusMessage(view, EN_COPY.online.room), 'Waiting for 2 racers to reconnect.');
 });
 
 test('Room reconnect overlay is idempotent, blocks content, and restores focus', () => {
@@ -458,6 +460,8 @@ test('password failures stay inline while quick-match failures use the shared al
   assert.equal(passwordScreen._activeDialog.name, 'join');
 
   const quickScreen = Object.assign(Object.create(OnlineScreens.prototype), {
+    copy: EN_COPY,
+    language: 'en',
     _pendingAction: { kind: 'quick' },
     _activeDialog: null,
     doc: { activeElement: null },

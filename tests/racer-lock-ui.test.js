@@ -8,7 +8,7 @@ const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 test('single-player locked Racer cards are visible but excluded from selection', () => {
   assert.match(screens, /ch\.availability === 'locked'/);
-  assert.match(screens, /locked \? 'COMING SOON'/);
+  assert.match(screens, /locked \? this\.copy\.common\.comingSoon/);
   assert.match(screens, /if \(!locked\) this\._wireOption/);
   assert.match(screens, /racer-secret-silhouette/);
   assert.match(styles, /\.char-card\.is-locked/);

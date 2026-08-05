@@ -15,7 +15,17 @@ import { CHARACTERS } from '../game/characters.js';
 import { onlineErrorMessage } from '../net/online-flow.js';
 import { ERROR_CODES, validateRoomPassword } from '../net/protocol.js';
 import { TRACKS } from '../track/tracks.js';
-import { UI_COPY } from './copy.js';
+import {
+  formatCopy,
+  formatOrdinal,
+  getUiCopy,
+  localizeAvatar,
+  localizeCharacter,
+  localizeDifficulty,
+  localizePaint,
+  localizeTrack,
+  sanitizeLanguage,
+} from './copy.js';
 
 export const ONLINE_ROOM_CAPACITY = 8;
 export const ONLINE_ROOM_MIN_CAPACITY = 2;
@@ -28,9 +38,6 @@ const IN_GAME_PHASES = new Set(['loading', 'countdown', 'racing', 'race', 'resul
 const MEDALS = ['\u{1F947}', '\u{1F948}', '\u{1F949}'];
 const ERROR_COPY_KEYS = new Map(Object.entries(ERROR_CODES).map(([key, value]) => [value, key]));
 const LOADOUT_TABS = new Set(['racer', 'paint', 'avatar']);
-const LOADOUT_STAT_ROWS = [
-  ['speed', 'Speed'], ['accel', 'Accel'], ['handling', 'Turn'], ['weight', 'Weight'],
-];
 
 const cssColor = (value) => `#${(value >>> 0).toString(16).padStart(6, '0')}`;
 
@@ -163,16 +170,6 @@ function createNode(doc, tag, className, parent, text) {
   return node;
 }
 
-function ordinal(rank) {
-  const n = Math.max(1, Math.trunc(Number(rank) || 1));
-  const mod100 = n % 100;
-  if (mod100 >= 11 && mod100 <= 13) return `${n}th`;
-  if (n % 10 === 1) return `${n}st`;
-  if (n % 10 === 2) return `${n}nd`;
-  if (n % 10 === 3) return `${n}rd`;
-  return `${n}th`;
-}
-
 function statusSortOrder(room) {
   if (room.joinable) return 0;
   if (room.status === 'full') return 1;
@@ -180,8 +177,8 @@ function statusSortOrder(room) {
   return 3;
 }
 
-function defaultRoomName() {
-  return normalizeRoomName(UI_COPY.online.lobby.defaultRoomName);
+function defaultRoomName(copy = getUiCopy()) {
+  return normalizeRoomName(copy.online.lobby.defaultRoomName);
 }
 
 /** Normalize a user-entered room code to the server's unambiguous alphabet. */
@@ -257,6 +254,7 @@ export function formatOnlineTime(seconds) {
  * name, host display name, and room code without treating names as identities.
  */
 export function buildLobbyView(lobbyState = {}, options = {}) {
+  const copy = options.copy || getUiCopy(options.language);
   const rawRooms = Array.isArray(lobbyState)
     ? lobbyState
     : firstDefined(lobbyState.rooms, lobbyState.roomList, []);
@@ -280,13 +278,13 @@ export function buildLobbyView(lobbyState = {}, options = {}) {
     const status = roomStatusOf(room, playerCount, maxPlayers);
     const roomName = normalizeRoomName(firstDefined(room.roomName, room.name, ''))
       || roomCode
-      || UI_COPY.online.lobby.unnamedRoom;
+      || copy.online.lobby.unnamedRoom;
     const hostDisplayName = normalizeDisplayName(firstDefined(
       room.hostDisplayName,
       room.hostName,
       room.host?.displayName,
       '',
-    )) || UI_COPY.online.lobby.unknownHost;
+    )) || copy.online.lobby.unknownHost;
     const requiresPassword = room.requiresPassword === true || roomType === 'private';
     const joinable = status === 'waiting' && room.joinable !== false;
     const isInvited = Boolean(inviteRoomCode && roomCode === inviteRoomCode);
@@ -341,7 +339,8 @@ export function buildLobbyView(lobbyState = {}, options = {}) {
 }
 
 /** Normalize room_state into pre-race room presentation facts. */
-export function buildRoomView(roomState = {}, localParticipantId = '') {
+export function buildRoomView(roomState = {}, localParticipantId = '', options = {}) {
+  const copy = options.copy || getUiCopy(options.language);
   const settings = roomState.settings || {};
   const phase = normalizedRoomPhase(firstDefined(roomState.phase, roomState.state, 'waiting'));
   const hostId = String(firstDefined(
@@ -357,7 +356,12 @@ export function buildRoomView(roomState = {}, localParticipantId = '') {
     const postRaceState = normalizedRoomPhase(firstDefined(member.postRaceState, ''));
     return {
       participantId,
-      displayName: String(firstDefined(member.displayName, member.nickname, member.name, `Racer ${index + 1}`)),
+      displayName: String(firstDefined(
+        member.displayName,
+        member.nickname,
+        member.name,
+        formatCopy(copy.common.racerFallback, { rank: index + 1 }),
+      )),
       characterId: String(firstDefined(member.characterId, member.character?.id, '')),
       paintId: String(firstDefined(member.paintId, DEFAULT_ONLINE_LOADOUT.paintId)),
       avatarId: String(firstDefined(member.avatarId, DEFAULT_ONLINE_LOADOUT.avatarId)),
@@ -394,7 +398,7 @@ export function buildRoomView(roomState = {}, localParticipantId = '') {
   return {
     roomCode: normalizeRoomCode(firstDefined(roomState.roomCode, roomState.code, '')),
     roomName: normalizeRoomName(firstDefined(roomState.roomName, roomState.name, ''))
-      || UI_COPY.online.room.unnamedRoom,
+      || copy.online.room.unnamedRoom,
     roomType: roomTypeOf(roomState),
     maxPlayers,
     capacity: maxPlayers,
@@ -416,7 +420,7 @@ export function buildRoomView(roomState = {}, localParticipantId = '') {
   };
 }
 
-export function roomStatusMessage(view, copy = UI_COPY.online.room) {
+export function roomStatusMessage(view, copy = getUiCopy().online.room) {
   if (view.phase !== 'waiting') return copy.phase[view.phase] || copy.loading;
   if (view.reconnectingCount === 1) {
     return copy.waitingForReconnect.replace('{name}', view.reconnectingMembers[0].displayName);
@@ -434,7 +438,8 @@ export function roomStatusMessage(view, copy = UI_COPY.online.room) {
 }
 
 /** Normalize a race_results payload for the results table. */
-export function buildOnlineResultsView(resultState = {}, localParticipantId = '') {
+export function buildOnlineResultsView(resultState = {}, localParticipantId = '', options = {}) {
+  const copy = options.copy || getUiCopy(options.language);
   const rawRows = firstDefined(resultState.standings, resultState.results, []);
   const standings = Array.isArray(rawRows) ? rawRows.map((row, index) => {
     const participantId = participantIdOf(row);
@@ -443,7 +448,12 @@ export function buildOnlineResultsView(resultState = {}, localParticipantId = ''
     const finished = row.finished !== false && finishTime !== null;
     return {
       participantId,
-      displayName: String(firstDefined(row.displayName, row.nickname, row.name, `Racer ${index + 1}`)),
+      displayName: String(firstDefined(
+        row.displayName,
+        row.nickname,
+        row.name,
+        formatCopy(copy.common.racerFallback, { rank: index + 1 }),
+      )),
       characterId: String(firstDefined(row.characterId, row.character?.id, '')),
       paintId: String(firstDefined(row.paintId, DEFAULT_ONLINE_LOADOUT.paintId)),
       avatarId: String(firstDefined(row.avatarId, DEFAULT_ONLINE_LOADOUT.avatarId)),
@@ -474,6 +484,8 @@ export class OnlineScreens {
     if (!this.doc) throw new Error('OnlineScreens requires DOM roots or a document');
 
     this.callbacks = callbacks || {};
+    this.language = sanitizeLanguage(options.language);
+    this.copy = getUiCopy(this.language);
     this.characters = options.characters || CHARACTERS;
     this.paints = options.paints || PAINT_THEMES;
     this.avatars = options.avatars || AVATARS;
@@ -507,11 +519,11 @@ export class OnlineScreens {
     this._lobbySearch = '';
     this._inviteRoomCode = '';
     this._locatedInviteCode = '';
-    this._lobbyView = buildLobbyView();
+    this._lobbyView = buildLobbyView({}, { copy: this.copy });
     this._lobbyRoomByCode = new Map();
     this._createFormInitialized = false;
     this._roomState = {};
-    this._roomView = buildRoomView();
+    this._roomView = buildRoomView({}, '', { copy: this.copy });
     this._resultsState = {};
     this._localParticipantId = '';
     this._activeDialog = null;
@@ -532,6 +544,81 @@ export class OnlineScreens {
   }
 
   get activeScreen() { return this._screen; }
+
+  setLanguage(language) {
+    const next = sanitizeLanguage(language);
+    if (next === this.language) return false;
+
+    const draft = this._captureLobbyDraft();
+    const reconnecting = !this.roots.room?.querySelector('[data-room-reconnect]')?.hidden;
+    const sharedHost = this._sharedUi?.host;
+    this._detachLoadoutPreview();
+    for (const remove of this._listeners.splice(0)) remove();
+    if (this._toastTimer) clearTimeout(this._toastTimer);
+    this._toastTimer = null;
+    sharedHost?.remove();
+    this._sharedUi = null;
+    this._activeDialog = null;
+    this._activeAlert = null;
+    this._roomReconnectFocus = null;
+
+    this.language = next;
+    this.copy = getUiCopy(next);
+    this._createFormInitialized = false;
+    this._buildLobby();
+    this._buildRoom();
+    this._buildResults();
+    this._buildSharedUi();
+
+    this._lobbySearch = draft.search;
+    this.updateLobby(this._lobbyState, {
+      displayName: this._displayName,
+      inviteRoomCode: this._inviteRoomCode,
+      search: draft.search,
+    });
+    this._restoreLobbyDraft(draft);
+    if (Object.keys(this._roomState).length) {
+      this.updateRoom(this._roomState, { localParticipantId: this._localParticipantId });
+    }
+    if (Object.keys(this._resultsState).length) {
+      this.updateResults(this._resultsState, { localParticipantId: this._localParticipantId });
+    }
+    if (reconnecting) this.setRoomReconnecting(true, { restoreFocus: false });
+    this._syncBusyState();
+    return true;
+  }
+
+  _captureLobbyDraft() {
+    const root = this.roots.lobby;
+    const value = (selector, fallback = '') => root?.querySelector(selector)?.value ?? fallback;
+    return {
+      nickname: value('[data-field="nickname"]', this._displayName),
+      search: value('[data-field="search"]', this._lobbySearch),
+      roomName: value('[data-create-field="roomName"]'),
+      roomType: value('[data-create-field="roomType"]', 'public'),
+      maxPlayers: value('[data-create-field="maxPlayers"]', String(ONLINE_ROOM_CAPACITY)),
+      trackId: value('[data-create-field="trackId"]', this.tracks[0]?.id || ''),
+      password: value('[data-create-field="password"]'),
+    };
+  }
+
+  _restoreLobbyDraft(draft) {
+    const root = this.roots.lobby;
+    const set = (selector, value) => {
+      const node = root?.querySelector(selector);
+      if (node) node.value = value;
+    };
+    set('[data-field="nickname"]', draft.nickname);
+    set('[data-field="search"]', draft.search);
+    set('[data-create-field="roomName"]', draft.roomName || defaultRoomName(this.copy));
+    set('[data-create-field="roomType"]', draft.roomType);
+    set('[data-create-field="maxPlayers"]', draft.maxPlayers);
+    set('[data-create-field="trackId"]', draft.trackId);
+    set('[data-create-field="password"]', draft.password);
+    this._syncCreateRoomType();
+    this._syncCreateTrackPreview();
+    this._refreshLobbyView();
+  }
 
   /** Join a public invite immediately, or prompt when its room needs a password. */
   joinInvitedRoom(roomCode) {
@@ -554,26 +641,26 @@ export class OnlineScreens {
     try {
       const result = callback(payload);
       if (result && typeof result.catch === 'function') {
-        result.catch((error) => this.showError(error?.message || UI_COPY.online.errors.generic));
+        result.catch((error) => this.showError(error?.message || this.copy.online.errors.generic));
       }
       return result;
     } catch (error) {
-      this.showError(error?.message || UI_COPY.online.errors.generic);
+      this.showError(error?.message || this.copy.online.errors.generic);
       return undefined;
     }
   }
 
   _pageActionsMarkup() {
-    const copy = UI_COPY.online.pageActions;
+    const copy = this.copy.online.pageActions;
     return `
-      <div class="online-page-actions" aria-label="Page actions">
-        <button type="button" class="online-page-action" data-page-action="settings">
+      <div class="online-page-actions" aria-label="${copy.label}">
+        <button type="button" class="online-page-action" data-page-action="settings"
+          aria-label="${copy.settings}" title="${copy.settings}">
           <span class="online-page-action-icon" aria-hidden="true">&#9881;</span>
-          <span>${copy.settings}</span>
         </button>
-        <button type="button" class="online-page-action" data-page-action="help">
+        <button type="button" class="online-page-action" data-page-action="help"
+          aria-label="${copy.help}" title="${copy.help}">
           <span class="online-page-action-icon" aria-hidden="true">?</span>
-          <span>${copy.help}</span>
         </button>
       </div>`;
   }
@@ -582,7 +669,7 @@ export class OnlineScreens {
     const parent = this.doc.body
       || Object.values(this.roots).find(Boolean)?.parentElement;
     if (!parent) return;
-    const copy = UI_COPY.online.alerts;
+    const copy = this.copy.online.alerts;
     const host = createNode(this.doc, 'div', 'online-shared-ui', parent);
     host.innerHTML = `
       <div class="online-toast" data-online-toast role="status" aria-live="polite" hidden></div>
@@ -637,7 +724,7 @@ export class OnlineScreens {
     const node = this.roots.lobby?.querySelector(`[data-field-error="${field}"]`);
     const control = this._fieldControl(field);
     if (!node || !control) return false;
-    node.textContent = String(message || UI_COPY.online.errors.generic);
+    node.textContent = String(message || this.copy.online.errors.generic);
     node.hidden = false;
     control.setAttribute('aria-invalid', 'true');
     if (focus) control.focus();
@@ -663,12 +750,12 @@ export class OnlineScreens {
   }
 
   _errorText(message) {
-    if (typeof message === 'string') return message || UI_COPY.online.errors.generic;
+    if (typeof message === 'string') return message || this.copy.online.errors.generic;
     const code = String(message?.code || '');
     const copyKey = ERROR_COPY_KEYS.get(code);
     return String(
-      UI_COPY.online.errors[copyKey]
-      || onlineErrorMessage(message, UI_COPY.online.errors.generic),
+      this.copy.online.errors[copyKey]
+      || onlineErrorMessage(message, this.copy.online.errors.generic),
     );
   }
 
@@ -685,7 +772,7 @@ export class OnlineScreens {
   }
 
   _alertTitle(action, connectionError = false) {
-    const copy = UI_COPY.online.alerts;
+    const copy = (this.copy || getUiCopy(this.language)).online.alerts;
     if (connectionError) return copy.connectionTitle;
     if (action === 'join') return copy.joinTitle;
     if (action === 'create') return copy.createTitle;
@@ -722,14 +809,15 @@ export class OnlineScreens {
     return 'alert';
   }
 
-  showAlert(message, {
-    title = UI_COPY.online.alerts.genericTitle,
-    restoreFocus = this.doc.activeElement,
-    buttonLabel = UI_COPY.online.alerts.dismiss,
-    cancelLabel = null,
-    onConfirm = null,
-    onCancel = null,
-  } = {}) {
+  showAlert(message, options = {}) {
+    const {
+      title = this.copy.online.alerts.genericTitle,
+      restoreFocus = this.doc.activeElement,
+      buttonLabel = this.copy.online.alerts.dismiss,
+      cancelLabel = null,
+      onConfirm = null,
+      onCancel = null,
+    } = options;
     const alert = this._sharedUi?.alert;
     if (!alert) return;
     const previous = this._activeAlert?.restoreFocus || restoreFocus;
@@ -739,10 +827,10 @@ export class OnlineScreens {
       suspendedDialog.setAttribute('aria-hidden', 'true');
     }
     alert.querySelector('[data-alert-title]').textContent = title;
-    alert.querySelector('[data-alert-message]').textContent = String(message || UI_COPY.online.errors.generic);
+    alert.querySelector('[data-alert-message]').textContent = String(message || this.copy.online.errors.generic);
     alert.querySelector('[data-action="dismiss-alert"]').textContent = String(buttonLabel);
     const cancel = alert.querySelector('[data-action="cancel-alert"]');
-    cancel.textContent = String(cancelLabel || UI_COPY.online.alerts.cancel);
+    cancel.textContent = String(cancelLabel || this.copy.online.alerts.cancel);
     cancel.hidden = !cancelLabel;
     alert.hidden = false;
     this._activeAlert = {
@@ -828,7 +916,7 @@ export class OnlineScreens {
   _buildLobby() {
     const root = this.roots.lobby;
     if (!root) return;
-    const copy = UI_COPY.online.lobby;
+    const copy = this.copy.online.lobby;
     root.innerHTML = `
       <div class="online-panel online-directory-panel">
         <header class="online-directory-header">
@@ -1026,7 +1114,7 @@ export class OnlineScreens {
   _buildRoom() {
     const root = this.roots.room;
     if (!root) return;
-    const copy = UI_COPY.online.room;
+    const copy = this.copy.online.room;
     root.innerHTML = `
       <div class="online-panel online-room-panel" data-room-content>
         <header class="online-room-header">
@@ -1166,6 +1254,7 @@ export class OnlineScreens {
 
     const racerGrid = root.querySelector('[data-loadout-racer-grid]');
     for (const character of this.characters) {
+      const localized = localizeCharacter(character, this.language);
       const locked = character.availability === 'locked';
       const button = createNode(this.doc, 'button',
         `online-loadout-racer-option${locked ? ' is-locked' : ''}`, racerGrid);
@@ -1173,7 +1262,7 @@ export class OnlineScreens {
       button.dataset.loadoutCharacterId = character.id;
       button.disabled = locked;
       button.setAttribute('aria-label', locked
-        ? `${character.name}, locked, coming soon` : character.name);
+        ? formatCopy(this.copy.common.lockedAria, { name: character.name }) : character.name);
       const swatch = createNode(this.doc, 'span', 'online-loadout-racer-swatch', button,
         locked ? '' : '\u{1F3CE}\u{FE0F}');
       if (locked) {
@@ -1186,10 +1275,10 @@ export class OnlineScreens {
       const nameRow = createNode(this.doc, 'span', 'online-loadout-racer-name-row', body);
       createNode(this.doc, 'strong', '', nameRow, character.name);
       createNode(this.doc, 'span', locked ? 'chip chip-locked' : `chip chip-${character.weightClass}`,
-        nameRow, locked ? 'COMING SOON' : character.weightClass);
-      createNode(this.doc, 'span', 'online-loadout-racer-blurb', body, character.blurb);
+        nameRow, locked ? this.copy.common.comingSoon : this.copy.common.weights[character.weightClass]);
+      createNode(this.doc, 'span', 'online-loadout-racer-blurb', body, localized.blurb);
       const stats = createNode(this.doc, 'span', 'online-loadout-racer-stats', body);
-      for (const [key, label] of LOADOUT_STAT_ROWS) {
+      for (const [key, label] of Object.entries(this.copy.common.stats)) {
         const row = createNode(this.doc, 'span', 'online-loadout-stat-row', stats);
         createNode(this.doc, 'span', '', row, label);
         const bar = createNode(this.doc, 'span', 'online-loadout-stat-bar', row);
@@ -1200,7 +1289,7 @@ export class OnlineScreens {
           ((character.stats[key] - minimum) / (maximum - minimum)) * 100)).toFixed(0)}%`;
         fill.classList.toggle('is-overcap', overcap);
         createNode(this.doc, 'span', `online-loadout-stat-value${overcap ? ' is-overcap' : ''}`,
-          row, `${Math.round(character.stats[key] * 100)}${overcap ? ' MAX+' : ''}`);
+          row, `${Math.round(character.stats[key] * 100)}${overcap ? this.copy.common.max : ''}`);
       }
       if (!locked) {
         this._listen(button, 'click', () => this._updateLoadoutDraft({ characterId: character.id }));
@@ -1209,22 +1298,24 @@ export class OnlineScreens {
 
     const paintGrid = root.querySelector('[data-loadout-paint-grid]');
     for (const paint of this.paints) {
+      const localized = localizePaint(paint, this.language);
       const button = createNode(this.doc, 'button', 'online-loadout-paint-option', paintGrid);
       button.type = 'button';
       button.dataset.loadoutPaintId = paint.id;
       const swatch = createNode(this.doc, 'span', 'online-loadout-paint-swatch', button);
       swatch.style.background = `linear-gradient(135deg, ${cssColor(paint.color)} 52%, ${cssColor(paint.accentColor)} 52%)`;
-      createNode(this.doc, 'strong', '', button, paint.name);
+      createNode(this.doc, 'strong', '', button, localized.name);
       this._listen(button, 'click', () => this._updateLoadoutDraft({ paintId: paint.id }));
     }
 
     const avatarGrid = root.querySelector('[data-loadout-avatar-grid]');
     for (const avatar of this.avatars) {
+      const localized = localizeAvatar(avatar, this.language);
       const button = createNode(this.doc, 'button', 'online-loadout-avatar-option', avatarGrid);
       button.type = 'button';
       button.dataset.loadoutAvatarId = avatar.id;
       createNode(this.doc, 'span', 'online-loadout-avatar-glyph', button, avatar.glyph);
-      createNode(this.doc, 'strong', '', button, avatar.name);
+      createNode(this.doc, 'strong', '', button, localized.name);
       this._listen(button, 'click', () => this._updateLoadoutDraft({ avatarId: avatar.id }));
     }
 
@@ -1249,7 +1340,8 @@ export class OnlineScreens {
     const difficultySelect = root.querySelector('[data-room-setting="difficulty"]');
     const autoFillAi = root.querySelector('[data-room-setting="autoFillAi"]');
     for (const [value, preset] of Object.entries(this.difficulties)) {
-      const option = createNode(this.doc, 'option', '', difficultySelect, preset.label || value);
+      const localized = localizeDifficulty(value, preset, this.language);
+      const option = createNode(this.doc, 'option', '', difficultySelect, localized.label || value);
       option.value = value;
     }
 
@@ -1276,7 +1368,7 @@ export class OnlineScreens {
       this.showAlert(copy.kickMessage.replace('{name}', member.displayName), {
         title: copy.kickTitle,
         buttonLabel: copy.kickConfirm,
-        cancelLabel: UI_COPY.online.alerts.cancel,
+        cancelLabel: this.copy.online.alerts.cancel,
         restoreFocus: button,
         onConfirm: () => {
           this._pendingAction = { kind: 'kick' };
@@ -1369,8 +1461,8 @@ export class OnlineScreens {
     const avatar = this.avatars.find((candidate) => candidate.id === this._loadoutDraft.avatarId)
       || this.avatars[0];
     node.querySelector('[data-draft-racer]').textContent = character?.name || '';
-    node.querySelector('[data-draft-paint]').textContent = paint?.name || '';
-    node.querySelector('[data-draft-avatar]').textContent = avatar?.name || '';
+    node.querySelector('[data-draft-paint]').textContent = localizePaint(paint, this.language)?.name || '';
+    node.querySelector('[data-draft-avatar]').textContent = localizeAvatar(avatar, this.language)?.name || '';
     node.querySelector('[data-loadout-avatar-glyph]').textContent = avatar?.glyph || '';
 
     for (const tab of node.querySelectorAll('[data-loadout-tab]')) {
@@ -1422,7 +1514,7 @@ export class OnlineScreens {
       this._pendingLoadout = null;
       this._pendingAction = null;
       this._syncLoadoutDialog();
-      this.presentError(UI_COPY.online.errors.generic, { action: 'loadout' });
+      this.presentError(this.copy.online.errors.generic, { action: 'loadout' });
     }
   }
 
@@ -1436,8 +1528,8 @@ export class OnlineScreens {
     const avatar = this.avatars.find((candidate) => candidate.id === loadout.avatarId)
       || this.avatars[0];
     root.querySelector('[data-loadout-racer]').textContent = character?.name || '';
-    root.querySelector('[data-loadout-paint]').textContent = paint?.name || '';
-    root.querySelector('[data-loadout-avatar]').textContent = avatar?.name || '';
+    root.querySelector('[data-loadout-paint]').textContent = localizePaint(paint, this.language)?.name || '';
+    root.querySelector('[data-loadout-avatar]').textContent = localizeAvatar(avatar, this.language)?.name || '';
     root.querySelector('[data-loadout-preview-host="room"] [data-loadout-avatar-glyph]').textContent = avatar?.glyph || '';
     const swatch = root.querySelector('[data-loadout-paint-swatch]');
     if (swatch && paint) {
@@ -1448,7 +1540,7 @@ export class OnlineScreens {
   _buildResults() {
     const root = this.roots.results;
     if (!root) return;
-    const copy = UI_COPY.online.results;
+    const copy = this.copy.online.results;
     root.innerHTML = `
       <div class="online-panel online-results-panel">
         <header class="online-results-header">
@@ -1516,7 +1608,7 @@ export class OnlineScreens {
     const input = this.roots.lobby?.querySelector('[data-field="nickname"]');
     const displayName = normalizeDisplayName(input?.value ?? this._displayName);
     if (!displayName) {
-      this.showFieldError('nickname', UI_COPY.online.errors.nickname, { focus: true });
+      this.showFieldError('nickname', this.copy.online.errors.nickname, { focus: true });
       return '';
     }
     this.clearFieldError('nickname');
@@ -1563,8 +1655,8 @@ export class OnlineScreens {
     const description = root.querySelector('[data-room-track-description]');
     const laps = root.querySelector('[data-room-track-laps]');
     if (name) name.textContent = track?.name || '';
-    if (description) description.textContent = track?.subtitle || '';
-    if (laps) laps.textContent = `${track?.laps ?? 3} LAPS`;
+    if (description) description.textContent = localizeTrack(track, this.language)?.subtitle || '';
+    if (laps) laps.textContent = formatCopy(this.copy.common.laps, { count: track?.laps ?? 3 });
   }
 
   _submitCreateRoom() {
@@ -1584,15 +1676,15 @@ export class OnlineScreens {
     );
     const password = root.querySelector('[data-create-field="password"]').value;
     if (!roomName) {
-      this.showFieldError('create-room-name', UI_COPY.online.errors.ROOM_NAME_INVALID, { focus: true });
+      this.showFieldError('create-room-name', this.copy.online.errors.ROOM_NAME_INVALID, { focus: true });
       return;
     }
     if (!ROOM_TYPES.has(roomType)) {
-      this.showFieldError('create-room-type', UI_COPY.online.errors.ROOM_TYPE_INVALID, { focus: true });
+      this.showFieldError('create-room-type', this.copy.online.errors.ROOM_TYPE_INVALID, { focus: true });
       return;
     }
     if (roomType === 'private' && !isValidRoomPassword(password)) {
-      this.showFieldError('create-password', UI_COPY.online.errors.PASSWORD_REQUIRED, { focus: true });
+      this.showFieldError('create-password', this.copy.online.errors.PASSWORD_REQUIRED, { focus: true });
       return;
     }
     const payload = { displayName, roomName, roomType, maxPlayers, trackId };
@@ -1623,7 +1715,7 @@ export class OnlineScreens {
     if (!room || this._busy) return;
     const passwordInput = this.roots.lobby.querySelector('[data-join-field="password"]');
     if (!isValidRoomPassword(passwordInput.value)) {
-      this.showFieldError('join-password', UI_COPY.online.errors.PASSWORD_REQUIRED, { focus: true });
+      this.showFieldError('join-password', this.copy.online.errors.PASSWORD_REQUIRED, { focus: true });
       return;
     }
     this._submitJoinRoom(room, passwordInput.value);
@@ -1680,6 +1772,7 @@ export class OnlineScreens {
       search: this._lobbySearch,
       inviteRoomCode: this._inviteRoomCode,
       tracks: this.tracks,
+      copy: this.copy,
     });
     this._renderLobbyRooms(this._lobbyView);
     this._syncLobbyCount(this._lobbyView);
@@ -1692,7 +1785,7 @@ export class OnlineScreens {
     if (!list) return;
     list.innerHTML = '';
     this._lobbyRoomByCode = new Map(view.allRooms.map((room) => [room.roomCode, room]));
-    const copy = UI_COPY.online.lobby;
+    const copy = this.copy.online.lobby;
     if (!view.rooms.length) {
       const empty = createNode(this.doc, 'div', 'online-room-list-empty', list);
       empty.setAttribute('role', 'status');
@@ -1782,7 +1875,7 @@ export class OnlineScreens {
   }
 
   _syncLobbyCount(view) {
-    const copy = UI_COPY.online.lobby;
+    const copy = this.copy.online.lobby;
     const node = this.roots.lobby?.querySelector('[data-room-count]');
     if (!node) return;
     node.textContent = view.search
@@ -1796,7 +1889,7 @@ export class OnlineScreens {
     try {
       if (!this.navigator?.clipboard?.writeText) throw new Error('Clipboard API unavailable');
       await this.navigator.clipboard.writeText(url);
-      this.showToast(UI_COPY.online.room.copied);
+      this.showToast(this.copy.online.room.copied);
     } catch {
       const fallback = createNode(this.doc, 'textarea', 'online-copy-fallback', this.roots.room, url);
       fallback.setAttribute('readonly', '');
@@ -1804,8 +1897,8 @@ export class OnlineScreens {
       let copied = false;
       try { copied = Boolean(this.doc.execCommand?.('copy')); } catch { copied = false; }
       fallback.remove();
-      if (copied) this.showToast(UI_COPY.online.room.copyFallback);
-      else this.presentError(UI_COPY.online.room.copyFailed, { action: 'copy' });
+      if (copied) this.showToast(this.copy.online.room.copyFallback);
+      else this.presentError(this.copy.online.room.copyFailed, { action: 'copy' });
     }
   }
 
@@ -1839,7 +1932,7 @@ export class OnlineScreens {
       const maxPlayers = root?.querySelector('[data-create-field="maxPlayers"]');
       const trackId = root?.querySelector('[data-create-field="trackId"]');
       const password = root?.querySelector('[data-create-field="password"]');
-      if (roomName) roomName.value = defaultRoomName();
+      if (roomName) roomName.value = defaultRoomName(this.copy);
       if (roomType) roomType.value = 'public';
       if (maxPlayers) maxPlayers.value = String(ONLINE_ROOM_CAPACITY);
       if (trackId && this.tracks[0]) trackId.value = this.tracks[0].id;
@@ -1901,11 +1994,11 @@ export class OnlineScreens {
     if (context.localParticipantId !== undefined) {
       this._localParticipantId = String(context.localParticipantId || '');
     }
-    const view = buildRoomView(this._roomState, this._localParticipantId);
+    const view = buildRoomView(this._roomState, this._localParticipantId, { copy: this.copy });
     this._roomView = view;
     const root = this.roots.room;
     if (!root) return view;
-    const copy = UI_COPY.online.room;
+    const copy = this.copy.online.room;
     const authoritativeLoadout = this._memberLoadout(view.localMember);
     if (this._pendingLoadout && sameLoadout(authoritativeLoadout, this._pendingLoadout)) {
       const committed = { ...this._pendingLoadout };
@@ -2044,7 +2137,7 @@ export class OnlineScreens {
       ...(context.trackName === undefined ? {} : { trackName: context.trackName }),
       ...(context.autoReturnSeconds === undefined ? {} : { autoReturnSeconds: context.autoReturnSeconds }),
     };
-    const view = buildOnlineResultsView(merged, this._localParticipantId);
+    const view = buildOnlineResultsView(merged, this._localParticipantId, { copy: this.copy });
     const root = this.roots.results;
     if (!root) return view;
     root.querySelector('[data-results-track]').textContent = view.trackName;
@@ -2054,7 +2147,7 @@ export class OnlineScreens {
       const row = createNode(this.doc, 'tr', result.isLocal ? 'is-local' : '', body);
       row.style.setProperty('--row-i', index);
       const place = createNode(this.doc, 'td', 'online-result-rank', row);
-      place.textContent = result.rank <= 3 ? MEDALS[result.rank - 1] : ordinal(result.rank);
+      place.textContent = result.rank <= 3 ? MEDALS[result.rank - 1] : formatOrdinal(result.rank, this.language);
       const racer = createNode(this.doc, 'td', 'online-result-racer', row);
       const resultLoadout = this._sanitizeLoadout(result);
       const avatar = this.avatarById.get(resultLoadout.avatarId);
@@ -2065,17 +2158,17 @@ export class OnlineScreens {
       createNode(this.doc, 'span', 'online-result-name', racer, result.displayName);
       const character = this.characterById.get(result.characterId);
       if (character) createNode(this.doc, 'span', 'online-result-character', racer, character.name);
-      if (result.isLocal) createNode(this.doc, 'span', 'online-mini-chip', racer, UI_COPY.online.room.you);
+      if (result.isLocal) createNode(this.doc, 'span', 'online-mini-chip', racer, this.copy.online.room.you);
       createNode(this.doc, 'td', 'online-result-time', row, result.finished ? formatOnlineTime(result.finishTime) : 'DNF');
       createNode(this.doc, 'td', 'online-result-time', row, formatOnlineTime(result.bestLap));
     });
     const countdown = view.autoReturnSeconds === null
       ? ''
-      : ` ${UI_COPY.online.results.autoReturn.replace(
+      : ` ${this.copy.online.results.autoReturn.replace(
         '{seconds}',
         String(Math.max(0, Math.ceil(view.autoReturnSeconds))),
       )}`;
-    this.showStatus(`${context.status ?? UI_COPY.online.results.returnHint}${countdown}`, 'results');
+    this.showStatus(`${context.status ?? this.copy.online.results.returnHint}${countdown}`, 'results');
     if (context.error) this.showError(context.error, 'results');
     else if (context.clearError) this.clearError('results');
     root.querySelector('[data-action="return"]').disabled = this._busy;
@@ -2121,7 +2214,7 @@ export class OnlineScreens {
     }
     const node = this.roots[screen]?.querySelector('[data-online-error]');
     if (!node) return;
-    const errors = UI_COPY.online.errors;
+    const errors = this.copy.online.errors;
     const code = typeof message === 'string' ? message : message?.code;
     const fallback = typeof message === 'string' ? message : message?.message;
     node.textContent = String(errors[code] || fallback || errors.generic);

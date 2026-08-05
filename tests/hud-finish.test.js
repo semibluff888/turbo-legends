@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Hud } from '../src/ui/hud.js';
+import { getUiCopy } from '../src/ui/copy.js';
 
 function classList() {
   const values = new Set();
@@ -18,6 +19,8 @@ test('finish announcement keeps place and waiting copy visible without a timer',
   hud._bannerPrimary = { textContent: '' };
   hud._bannerSecondary = { textContent: '', hidden: true };
   hud._bannerTimer = null;
+  hud.language = 'en';
+  hud.copy = getUiCopy('en');
 
   hud.finish(2);
 
@@ -27,4 +30,10 @@ test('finish announcement keeps place and waiting copy visible without a timer',
   assert.equal(hud._bannerSecondary.hidden, false);
   assert.equal(hud._banner.classList.has('banner-in'), true);
   assert.equal(hud._bannerTimer, null);
+
+  hud.language = 'zh-CN';
+  hud.copy = getUiCopy('zh-CN');
+  hud.finish(2);
+  assert.equal(hud._bannerPrimary.textContent, '完成比赛！第2名');
+  assert.equal(hud._bannerSecondary.textContent, '正在等待其他车手完成比赛…');
 });

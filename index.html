@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
@@ -43,42 +43,42 @@
 
     <!-- Presentation-only finish camera treatment. -->
     <div id="finish-cinematic" aria-hidden="true"></div>
-    <button id="finish-cinematic-skip" type="button" aria-label="Skip finish cinematic" hidden disabled>
-      <span class="finish-skip-desktop">ENTER / A&nbsp;&nbsp;·&nbsp;&nbsp;SKIP</span>
-      <span class="finish-skip-touch">SKIP</span>
+    <button id="finish-cinematic-skip" type="button" aria-label="跳过终点动画" hidden disabled>
+      <span class="finish-skip-desktop">ENTER / A&nbsp;&nbsp;·&nbsp;&nbsp;跳过</span>
+      <span class="finish-skip-touch">跳过</span>
     </button>
 
     <!-- Mobile race controls: auto-accelerate, drag left to steer. -->
-    <div id="touch-steer-zone" aria-label="Drag left or right to steer">
+    <div id="touch-steer-zone" aria-label="左右拖动进行转向">
       <div class="touch-steer-pad" aria-hidden="true">
         <span class="touch-steer-arrow touch-steer-arrow-left">‹</span>
         <span class="touch-steer-rail"><span class="touch-steer-knob"></span></span>
         <span class="touch-steer-arrow touch-steer-arrow-right">›</span>
-        <span class="touch-steer-label">STEER</span>
+        <span class="touch-steer-label">转向</span>
       </div>
     </div>
-    <div id="touch-controls" aria-label="Race controls">
-      <button class="btn btn-pause" type="button" aria-label="Pause race">
+    <div id="touch-controls" aria-label="比赛控制">
+      <button class="btn btn-pause" type="button" aria-label="暂停比赛">
         <span class="touch-pause-icon" aria-hidden="true"></span>
       </button>
       <div class="touch-action-cluster">
-        <button class="btn btn-item" type="button" aria-label="Use item">
+        <button class="btn btn-item" type="button" aria-label="使用道具">
           <span class="touch-action-icon touch-item-icon" aria-hidden="true">?</span>
-          <span class="touch-action-label">ITEM</span>
+          <span class="touch-action-label">道具</span>
         </button>
-        <button class="btn btn-brake" type="button" aria-label="Brake or reverse">
+        <button class="btn btn-brake" type="button" aria-label="刹车或倒车">
           <span class="touch-action-icon" aria-hidden="true">▼</span>
-          <span class="touch-action-label">BRAKE</span>
+          <span class="touch-action-label">刹车</span>
         </button>
-        <button class="btn btn-drift" type="button" aria-label="Drift">
+        <button class="btn btn-drift" type="button" aria-label="漂移">
           <span class="touch-action-icon touch-drift-icon" aria-hidden="true">↻</span>
-          <span class="touch-action-label">DRIFT</span>
+          <span class="touch-action-label">漂移</span>
         </button>
       </div>
     </div>
 
     <noscript>
-      <div class="noscript-warning">Turbo Legends needs JavaScript enabled.</div>
+      <div class="noscript-warning">Turbo Legends 需要启用 JavaScript。</div>
     </noscript>
   </div>
   <script type="module" src="./src/main.js?v=20260802-main-menu-center"></script>

@@ -39,7 +39,7 @@ test('latency levels use the requested inclusive boundaries', () => {
 
 test('network status switches detailed and race fields without retaining stale metrics', () => {
   const root = makeRoot();
-  const view = new NetworkStatus(root);
+  const view = new NetworkStatus(root, { language: 'en' });
   const online = root.nodes.get('[data-network-online]');
   const summary = root.nodes.get('.network-summary');
   const separator = root.nodes.get('[data-network-online-separator]');
@@ -59,6 +59,11 @@ test('network status switches detailed and race fields without retaining stale m
   assert.equal(latency.textContent, '43 ms');
   assert.equal(latency.dataset.level, 'good');
   assert.equal(version.textContent, 'VERSION 1.2.3');
+
+  view.setLanguage('zh-CN');
+  assert.equal(online.textContent, '在线玩家 12');
+  assert.equal(version.textContent, '版本 1.2.3');
+  view.setLanguage('en');
 
   view.showVersion();
   assert.equal(root.dataset.context, 'version');
@@ -89,7 +94,7 @@ test('network status switches detailed and race fields without retaining stale m
 
 test('version loader uses only server metadata and preserves the unknown fallback', async () => {
   const root = makeRoot();
-  const view = new NetworkStatus(root);
+  const view = new NetworkStatus(root, { language: 'en' });
   const version = root.nodes.get('[data-game-version]');
 
   const loaded = await view.loadVersion(async (url, options) => {

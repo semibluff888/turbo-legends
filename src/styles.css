@@ -24,6 +24,22 @@
   --bronze: #e8985a;
 }
 
+:root:lang(zh-CN) {
+  --font: 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans CJK SC', 'Segoe UI', Arial, sans-serif;
+}
+
+:lang(zh-CN) .main-menu-heading,
+:lang(zh-CN) .main-menu-label,
+:lang(zh-CN) .screen-heading,
+:lang(zh-CN) .panel-heading,
+:lang(zh-CN) .pause-heading,
+:lang(zh-CN) .online-heading,
+:lang(zh-CN) .online-action,
+:lang(zh-CN) .online-field-label,
+:lang(zh-CN) .hud-standings-title {
+  letter-spacing: 0.03em;
+}
+
 html, body {
   height: 100%;
   overflow: hidden;
@@ -1447,9 +1463,13 @@ kbd {
   gap: 8px;
 }
 .online-page-action {
-  padding: 8px 14px;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  padding: 0;
   border: 2px solid rgba(255, 255, 255, 0.25);
-  border-radius: 999px;
+  border-radius: 50%;
   color: rgba(255, 255, 255, 0.88);
   background: rgba(255, 255, 255, 0.08);
   font-size: 11px;
@@ -2317,6 +2337,7 @@ kbd {
   filter: drop-shadow(0 0 18px rgba(255, 255, 255, 0.25));
 }
 .hud-rank-num { font-size: 84px; font-weight: 900; }
+.hud-rank-prefix,
 .hud-rank-suffix { font-size: 34px; font-weight: 900; }
 
 .hud-rank[data-rank="1"] { color: var(--gold); }
@@ -3064,6 +3085,7 @@ body.touch #hud:not([hidden]) #minimap {
   .hud-slot-frame { width: 72px; height: 72px; border-radius: 18px; }
   .hud-item-glyph { font-size: 36px; }
   .hud-rank-num { font-size: 62px; }
+  .hud-rank-prefix,
   .hud-rank-suffix { font-size: 26px; }
   .hud-lap { font-size: 17px; }
   .hud-time-row { font-size: 18px; }
@@ -3386,16 +3408,8 @@ body.touch #hud:not([hidden]) #minimap {
 
 #screen-online-lobby .online-page-actions { flex: 0 0 auto; }
 #screen-online-lobby .online-page-action {
-  min-width: 64px;
-  min-height: 52px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  padding: 5px 10px;
-  font-size: 9px;
-  font-weight: 900;
+  width: 48px;
+  height: 48px;
 }
 .online-page-action-icon { font-size: 20px; line-height: 1; }
 
@@ -3574,12 +3588,11 @@ body.touch #hud:not([hidden]) #minimap {
     padding: 11px 13px;
   }
   .online-lobby-back > span:last-child,
-  .online-lobby-brand small,
-  #screen-online-lobby .online-page-action > span:last-child { display: none; }
+  .online-lobby-brand small { display: none; }
   .online-lobby-back { padding: 8px 10px; }
   .online-lobby-account { gap: 6px; }
   #screen-online-lobby .online-nickname-field { width: min(220px, 35vw); }
-  #screen-online-lobby .online-page-action { min-width: 39px; min-height: 45px; }
+  #screen-online-lobby .online-page-action { width: 42px; height: 42px; }
   .online-lobby-layout { overflow: auto; grid-template-columns: 1fr; }
   .online-lobby-sidebar { overflow: visible; display: grid; grid-template-columns: minmax(220px, 0.75fr) minmax(300px, 1.25fr); align-items: start; }
   .online-create-card { display: grid; grid-template-columns: 1fr 1fr; }
@@ -3690,15 +3703,8 @@ body.touch #hud:not([hidden]) #minimap {
 
 #screen-online-room .online-page-actions { justify-self: end; }
 #screen-online-room .online-page-action {
-  min-width: 60px;
-  min-height: 52px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  padding: 5px 8px;
-  font-size: 8px;
+  width: 48px;
+  height: 48px;
 }
 
 #screen-online-room .online-room-grid {
@@ -3802,12 +3808,11 @@ body.touch #hud:not([hidden]) #minimap {
     grid-template-columns: auto minmax(0, 1fr) auto;
     padding: 11px 13px;
   }
-  .online-room-back > span:last-child,
-  #screen-online-room .online-page-action > span:last-child { display: none; }
+  .online-room-back > span:last-child { display: none; }
   .online-room-back { padding: 8px 10px; }
   #screen-online-room .online-room-heading { width: auto; }
   #screen-online-room .online-room-name { font-size: clamp(24px, 5vw, 36px); }
-  #screen-online-room .online-page-action { min-width: 39px; min-height: 45px; }
+  #screen-online-room .online-page-action { width: 42px; height: 42px; }
 }
 
 @media (max-width: 640px) {
@@ -4119,9 +4124,9 @@ body.touch #hud:not([hidden]) #minimap {
   }
   #screen-online-lobby .online-page-action,
   #screen-online-room .online-page-action {
-    min-width: 38px;
-    min-height: 40px;
-    padding: 4px 6px;
+    width: 40px;
+    height: 40px;
+    padding: 0;
   }
   #screen-online-lobby .online-lobby-layout {
     display: flex;
