@@ -405,24 +405,30 @@ export class RoomManager extends EventEmitter {
 
   async quickMatch({ displayName, characterId, paintId, avatarId } = {}) {
     displayName = requireValid(validateDisplayName(displayName));
-    const candidates = [...this.rooms.values()].filter((room) => {
-      if (room.roomType !== ROOM_TYPES.PUBLIC
-        || room.state !== ROOM_STATES.WAITING
-        || !hasOnlineMember(room)
-        || occupiedMembers(room).length >= room.maxPlayers) return false;
-      return true;
-    });
+    const candidates = [...this.rooms.values()].map((room) => ({
+      room,
+      playerCount: occupiedMembers(room).length,
+    })).filter(({ room, playerCount }) => (
+      room.roomType === ROOM_TYPES.PUBLIC
+      && room.state === ROOM_STATES.WAITING
+      && hasOnlineMember(room)
+      && playerCount < room.maxPlayers
+    ));
     if (candidates.length === 0) {
       throw new GameError(
         ERROR_CODES.NO_MATCHING_ROOM,
         'No joinable public room is available.',
       );
     }
-    const index = Math.min(
-      candidates.length - 1,
-      Math.max(0, Math.floor(this.random() * candidates.length)),
+    const highestPlayerCount = Math.max(...candidates.map(({ playerCount }) => playerCount));
+    const preferredCandidates = candidates.filter(
+      ({ playerCount }) => playerCount === highestPlayerCount,
     );
-    return await this.joinRoom(candidates[index].code, {
+    const index = Math.min(
+      preferredCandidates.length - 1,
+      Math.max(0, Math.floor(this.random() * preferredCandidates.length)),
+    );
+    return await this.joinRoom(preferredCandidates[index].room.code, {
       displayName, characterId, paintId, avatarId,
     });
   }

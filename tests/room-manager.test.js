@@ -382,6 +382,31 @@ test('quick match atomically joins only a visible joinable public room', async (
   );
 });
 
+test('quick match prefers the joinable public room with the most players', async () => {
+  const codes = ['ABC234', 'DEF567'];
+  const harness = createHarness({
+    roomCodeFactory: () => codes.shift(),
+    random: () => 0,
+  });
+  const sparseRoom = await harness.manager.createRoom({
+    displayName: 'Sparse Host', characterId: 'pip', roomName: 'Sparse Room',
+    roomType: ROOM_TYPES.PUBLIC, maxPlayers: 4,
+  });
+  const busyRoom = await harness.manager.createRoom({
+    displayName: 'Busy Host', characterId: 'nova', roomName: 'Busy Room',
+    roomType: ROOM_TYPES.PUBLIC, maxPlayers: 4,
+  });
+  await harness.manager.joinRoom(busyRoom.roomCode, {
+    displayName: 'Busy Guest', characterId: 'kit',
+  });
+
+  const matched = await harness.manager.quickMatch({ displayName: 'Quick Guest' });
+
+  assert.equal(matched.roomCode, busyRoom.roomCode);
+  assert.equal(harness.manager.getRoomState(sparseRoom.roomCode).members.length, 1);
+  assert.equal(harness.manager.getRoomState(busyRoom.roomCode).members.length, 3);
+});
+
 test('room list counts reserved reconnect seats and hides rooms with no online member', async () => {
   const harness = createHarness();
   const { host, guest } = await addTwoPlayers(harness);
