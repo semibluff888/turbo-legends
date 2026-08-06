@@ -1625,7 +1625,10 @@ export class OnlineScreens {
     const isPrivate = root.querySelector('[data-create-field="roomType"]')?.value === 'private';
     const field = root.querySelector('[data-private-password-field]');
     const input = root.querySelector('[data-create-field="password"]');
-    if (field) field.hidden = !isPrivate;
+    if (field) {
+      field.hidden = false;
+      field.classList.toggle('is-visible', isPrivate);
+    }
     if (input) {
       input.required = isPrivate;
       if (!isPrivate) input.value = '';
