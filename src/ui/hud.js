@@ -8,7 +8,7 @@
 //
 // No DOM access at module import time (Node syntax-check imports this file).
 
-import { ITEM_INFO, RACE_STATE } from '../core/constants.js';
+import { ITEM_INFO, RACE, RACE_STATE } from '../core/constants.js';
 import {
   formatCopy,
   formatOrdinal,
@@ -36,6 +36,24 @@ export function standingsStatus(kart, raceState, language) {
   else if (kart?.controllerKind === 'ai') key = 'ai';
   else if (raceState === RACE_STATE.COUNTDOWN) key = 'ready';
   return { key, label: labels[key] };
+}
+
+/** Seconds left after the first finisher before the race resolves globally. */
+export function postRaceSecondsRemaining(race) {
+  if (!race || race.state !== RACE_STATE.RACING) return null;
+  const racers = Array.isArray(race.karts)
+    ? race.karts
+    : (Array.isArray(race.standings) ? race.standings : []);
+  let firstFinishTime = Infinity;
+  for (const racer of racers) {
+    if (!racer?.finished || !Number.isFinite(racer.finishTime)) continue;
+    firstFinishTime = Math.min(firstFinishTime, racer.finishTime);
+  }
+  if (!Number.isFinite(firstFinishTime)) return null;
+
+  const elapsed = Math.max(firstFinishTime, Number(race.elapsed) || 0);
+  const remaining = RACE.postRaceTimeout - (elapsed - firstFinishTime);
+  return Math.ceil(Math.max(0, remaining));
 }
 
 const cssColor = (n) => '#' + (n >>> 0).toString(16).padStart(6, '0');
@@ -170,7 +188,17 @@ export class Hud {
       this._bannerPrimary.textContent = formatCopy(this.copy.hud.finished, {
         place: formatOrdinal(this._c.rank, this.language),
       });
-      this._bannerSecondary.textContent = this.copy.hud.waitingFinish;
+      this._bannerSecondary.textContent = Number.isFinite(this._postRaceSecondsShown)
+        ? formatCopy(this.copy.hud.waitingFinishCountdown, {
+          seconds: this._postRaceSecondsShown,
+        })
+        : this.copy.hud.waitingFinish;
+    }
+    if (this._banner.className.includes('race-ending')
+        && Number.isFinite(this._postRaceSecondsShown)) {
+      this._bannerPrimary.textContent = formatCopy(this.copy.hud.raceEnding, {
+        seconds: this._postRaceSecondsShown,
+      });
     }
     return true;
   }
@@ -212,6 +240,7 @@ export class Hud {
     };
     this._finalLapShown = false;
     this._finishShown = false;
+    this._postRaceSecondsShown = null;
     this._lastElapsed = 0;
     this._cdShown = null;
     clearTimeout(this._cdTimer);
@@ -328,9 +357,18 @@ export class Hud {
       this._finalLapShown = true;
       this.banner(this.copy.hud.finalLap, 2600, 'final-lap');
     }
+    const postRaceSeconds = postRaceSecondsRemaining(race);
     if (!this._finishShown && kart.finished) {
       this._finishShown = true;
-      this.finish(rank || kart.rank);
+      this.finish(rank || kart.rank, postRaceSeconds);
+    } else if (kart.finished && postRaceSeconds !== null
+        && (postRaceSeconds !== this._postRaceSecondsShown
+          || !this._banner.className.includes('finish'))) {
+      this.finish(rank || kart.rank, postRaceSeconds);
+    } else if (!kart.finished && postRaceSeconds !== null
+        && (postRaceSeconds !== this._postRaceSecondsShown
+          || !this._banner.className.includes('race-ending'))) {
+      this.raceEnding(postRaceSeconds);
     }
     // If countdown numbers were shown but GO never arrived, fire it when the
     // director flips to racing so the layer always cleans itself up.
@@ -449,18 +487,43 @@ export class Hud {
   }
 
   /** Keep the finishing place and wait hint visible until the results screen. */
-  finish(rank) {
+  finish(rank, secondsRemaining = null) {
     const copy = this.copy || getUiCopy(this.language);
     const el = this._banner;
+    const alreadyVisible = !el.hidden && el.className.includes('finish');
+    const seconds = Number.isFinite(secondsRemaining)
+      ? Math.max(0, Math.ceil(secondsRemaining))
+      : null;
+    this._postRaceSecondsShown = seconds;
     el.className = 'hud-banner finish';
     this._bannerPrimary.textContent = formatCopy(copy.hud.finished, {
       place: formatOrdinal(rank, this.language),
     });
-    this._bannerSecondary.textContent = copy.hud.waitingFinish;
+    this._bannerSecondary.textContent = seconds === null
+      ? copy.hud.waitingFinish
+      : formatCopy(copy.hud.waitingFinishCountdown, { seconds });
     this._bannerSecondary.hidden = false;
     el.hidden = false;
-    repop(el, 'banner-in');
+    if (!alreadyVisible) repop(el, 'banner-in');
     clearTimeout(this._bannerTimer);
+    this._bannerTimer = null;
+  }
+
+  /** Warn unfinished racers how long remains before the race resolves. */
+  raceEnding(secondsRemaining) {
+    const copy = this.copy || getUiCopy(this.language);
+    const el = this._banner;
+    const alreadyVisible = !el.hidden && el.className.includes('race-ending');
+    const seconds = Math.max(0, Math.ceil(Number(secondsRemaining) || 0));
+    this._postRaceSecondsShown = seconds;
+    el.className = 'hud-banner race-ending';
+    this._bannerPrimary.textContent = formatCopy(copy.hud.raceEnding, { seconds });
+    this._bannerSecondary.textContent = '';
+    this._bannerSecondary.hidden = true;
+    el.hidden = false;
+    if (!alreadyVisible) repop(el, 'banner-in');
+    clearTimeout(this._bannerTimer);
+    this._bannerTimer = null;
   }
 
   /** @param {boolean} on */

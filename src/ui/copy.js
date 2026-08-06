@@ -129,7 +129,9 @@ const EN_COPY = {
   hud: {
     lap: 'LAP', time: 'TIME', best: 'BEST', wrongWay: 'WRONG WAY ⚠', liveStandings: 'LIVE STANDINGS',
     standingsHead: ['POS', 'RACER', 'LAP', 'STATUS'], holdTab: 'HOLD TAB', go: 'GO!', finalLap: 'FINAL LAP!',
-    finished: 'FINISHED! {place}', waitingFinish: 'WAITING FOR OTHER RACERS TO FINISH...', loadingRace: 'LOADING RACE...',
+    finished: 'FINISHED! {place}', waitingFinish: 'WAITING FOR OTHER RACERS TO FINISH...',
+    waitingFinishCountdown: 'WAITING FOR OTHER RACERS TO FINISH... {seconds}s REMAINING',
+    raceEnding: 'RACE ENDS IN {seconds}s', loadingRace: 'LOADING RACE...',
     statuses: { left: 'LEFT ROOM', disconnected: 'DISCONNECTED', reconnecting: 'RECONNECTING', finished: 'FINISHED', takeover: 'AI TAKE OVER', ai: 'AI RACER', ready: 'READY', racing: 'RACING' },
   },
   network: {
@@ -242,7 +244,9 @@ const ZH_COPY = {
   hud: {
     lap: '圈数', time: '用时', best: '最佳', wrongWay: '方向错误 ⚠', liveStandings: '实时排名',
     standingsHead: ['名次', '车手', '圈数', '状态'], holdTab: '按住 TAB', go: '出发！', finalLap: '最后一圈！',
-    finished: '完成比赛！{place}', waitingFinish: '正在等待其他车手完成比赛…', loadingRace: '正在加载比赛…',
+    finished: '完成比赛！{place}', waitingFinish: '正在等待其他车手完成比赛…',
+    waitingFinishCountdown: '正在等待其他车手完成比赛… 剩余 {seconds} 秒',
+    raceEnding: '比赛将在 {seconds} 秒后结束', loadingRace: '正在加载比赛…',
     statuses: { left: '已离开房间', disconnected: '已断线', reconnecting: '重连中', finished: '已完赛', takeover: 'AI 接管', ai: 'AI 车手', ready: '准备完成', racing: '比赛中' },
   },
   network: {

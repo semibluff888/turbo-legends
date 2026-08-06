@@ -2635,6 +2635,10 @@ kbd {
 }
 .hud-banner.final-lap { color: var(--accent); animation-name: banner-in, pulse; }
 .hud-banner.finish    { color: #36d6a0; }
+.hud-banner.race-ending {
+  color: var(--accent);
+  font-size: clamp(26px, 4vw, 52px);
+}
 .hud-banner.banner-in { animation: banner-in 0.45s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
 
 .hud-wrongway {
