@@ -292,6 +292,7 @@ export function formatProfileBestTime(finishTimeMs, noRecord = '--') {
  */
 export function buildLobbyView(lobbyState = {}, options = {}) {
   const copy = options.copy || getUiCopy(options.language);
+  const language = sanitizeLanguage(options.language);
   const rawRooms = Array.isArray(lobbyState)
     ? lobbyState
     : firstDefined(lobbyState.rooms, lobbyState.roomList, []);
@@ -333,8 +334,10 @@ export function buildLobbyView(lobbyState = {}, options = {}) {
       '',
     ));
     const track = trackById.get(trackId) || tracks[0] || null;
-    const trackName = String(firstDefined(room.trackName, room.track?.name, track?.name, trackId));
-    const haystack = `${roomName}\n${hostDisplayName}\n${roomCode}\n${trackName}`.toLocaleLowerCase();
+    const sourceTrackName = String(firstDefined(room.trackName, room.track?.name, track?.name, trackId));
+    const trackName = localizeTrack(track, language)?.name || sourceTrackName;
+    const haystack = `${roomName}\n${hostDisplayName}\n${roomCode}\n${trackName}\n${sourceTrackName}`
+      .toLocaleLowerCase();
     const matchesSearch = !normalizedSearch || haystack.includes(normalizedSearch) || isInvited;
     return {
       roomCode,
@@ -477,6 +480,8 @@ export function roomStatusMessage(view, copy = getUiCopy().online.room) {
 /** Normalize a race_results payload for the results table. */
 export function buildOnlineResultsView(resultState = {}, localParticipantId = '', options = {}) {
   const copy = options.copy || getUiCopy(options.language);
+  const language = sanitizeLanguage(options.language);
+  const tracks = Array.isArray(options.tracks) ? options.tracks : TRACKS;
   const rawRows = firstDefined(resultState.standings, resultState.results, []);
   const aiRows = Array.isArray(rawRows) ? rawRows.filter((row) => (
     Number(row?.aiPlayerNumber) > 0
@@ -522,9 +527,15 @@ export function buildOnlineResultsView(resultState = {}, localParticipantId = ''
     };
   }).sort((a, b) => a.rank - b.rank) : [];
 
+  const trackId = String(firstDefined(resultState.trackId, resultState.track?.id, ''));
+  const sourceTrackName = String(firstDefined(resultState.trackName, resultState.track?.name, ''));
+  const track = tracks.find((candidate) => candidate.id === trackId)
+    || tracks.find((candidate) => candidate.name === sourceTrackName)
+    || null;
+
   return {
     standings,
-    trackName: String(firstDefined(resultState.trackName, resultState.track?.name, '')),
+    trackName: localizeTrack(track, language)?.name || sourceTrackName,
     autoReturnSeconds: finiteNumber(resultState.autoReturnSeconds, resultState.returnIn),
   };
 }
@@ -576,12 +587,17 @@ export class OnlineScreens {
     this._lobbySearch = '';
     this._inviteRoomCode = '';
     this._locatedInviteCode = '';
-    this._lobbyView = buildLobbyView({}, { copy: this.copy });
+    this._lobbyView = buildLobbyView({}, {
+      tracks: this.tracks,
+      copy: this.copy,
+      language: this.language,
+    });
     this._lobbyRoomByCode = new Map();
     this._createFormInitialized = false;
     this._roomState = {};
     this._roomView = buildRoomView({}, '', { copy: this.copy });
     this._resultsState = {};
+    this._resultsTrackId = '';
     this._userProfile = null;
     this._progressionState = null;
     this._localParticipantId = '';
@@ -1163,7 +1179,8 @@ export class OnlineScreens {
     const roomType = root.querySelector('[data-create-field="roomType"]');
     const trackSelect = root.querySelector('[data-create-field="trackId"]');
     for (const track of this.tracks) {
-      const option = createNode(this.doc, 'option', '', trackSelect, track.name);
+      const localized = localizeTrack(track, this.language);
+      const option = createNode(this.doc, 'option', '', trackSelect, localized.name || track.name);
       option.value = track.id;
     }
     this._listen(nickname, 'input', () => this.clearFieldError('nickname'));
@@ -1448,7 +1465,8 @@ export class OnlineScreens {
 
     const trackSelect = root.querySelector('[data-room-setting="trackId"]');
     for (const track of this.tracks) {
-      const option = createNode(this.doc, 'option', '', trackSelect, track.name);
+      const localized = localizeTrack(track, this.language);
+      const option = createNode(this.doc, 'option', '', trackSelect, localized.name || track.name);
       option.value = track.id;
     }
     const difficultySelect = root.querySelector('[data-room-setting="difficulty"]');
@@ -1765,9 +1783,10 @@ export class OnlineScreens {
     const preview = root?.querySelector('[data-create-track-preview]');
     if (!select || !preview) return;
     const track = this.trackById.get(select.value) || this.tracks[0] || null;
+    const localized = localizeTrack(track, this.language);
     preview.innerHTML = trackPreviewMarkup(track);
     preview.style.background = trackPreviewBackground(track);
-    preview.title = track?.name || '';
+    preview.title = localized?.name || track?.name || '';
   }
 
   _syncRoomTrackPreview(trackId) {
@@ -1775,14 +1794,15 @@ export class OnlineScreens {
     const preview = root?.querySelector('[data-room-track-preview]');
     if (!preview) return;
     const track = this.trackById.get(trackId) || this.tracks[0] || null;
+    const localized = localizeTrack(track, this.language);
     preview.innerHTML = trackPreviewMarkup(track);
     preview.style.background = trackPreviewBackground(track);
-    preview.title = track?.name || '';
+    preview.title = localized?.name || track?.name || '';
     const name = root.querySelector('[data-room-track-name]');
     const description = root.querySelector('[data-room-track-description]');
     const laps = root.querySelector('[data-room-track-laps]');
-    if (name) name.textContent = track?.name || '';
-    if (description) description.textContent = localizeTrack(track, this.language)?.subtitle || '';
+    if (name) name.textContent = localized?.name || track?.name || '';
+    if (description) description.textContent = localized?.subtitle || '';
     if (laps) laps.textContent = formatCopy(this.copy.common.laps, { count: track?.laps ?? 3 });
   }
 
@@ -1900,6 +1920,7 @@ export class OnlineScreens {
       inviteRoomCode: this._inviteRoomCode,
       tracks: this.tracks,
       copy: this.copy,
+      language: this.language,
     });
     this._renderLobbyRooms(this._lobbyView);
     this._syncLobbyCount(this._lobbyView);
@@ -2262,12 +2283,18 @@ export class OnlineScreens {
       this._localParticipantId = String(context.localParticipantId || '');
     }
     if (context.progression !== undefined) this._progressionState = context.progression;
+    if (context.trackId !== undefined) this._resultsTrackId = String(context.trackId || '');
     const merged = {
       ...this._resultsState,
+      ...(this._resultsTrackId ? { trackId: this._resultsTrackId } : {}),
       ...(context.trackName === undefined ? {} : { trackName: context.trackName }),
       ...(context.autoReturnSeconds === undefined ? {} : { autoReturnSeconds: context.autoReturnSeconds }),
     };
-    const view = buildOnlineResultsView(merged, this._localParticipantId, { copy: this.copy });
+    const view = buildOnlineResultsView(merged, this._localParticipantId, {
+      tracks: this.tracks,
+      copy: this.copy,
+      language: this.language,
+    });
     const root = this.roots.results;
     if (!root) return view;
     root.querySelector('[data-results-track]').textContent = view.trackName;

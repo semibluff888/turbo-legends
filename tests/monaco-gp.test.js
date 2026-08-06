@@ -11,6 +11,7 @@ test('Monaco Grand Prix is registered as the 5th track in TRACKS roster', () => 
   assert.equal(TRACKS[4].id, 'monaco-gp');
   assert.equal(TRACKS[4].name, 'Monaco Grand Prix');
   assert.equal(TRACKS[4].theme.scenery, 'monaco');
+  assert.equal(TRACKS[4].theme.road, 0x464c59);
 });
 
 test('Monaco Grand Prix exposes authored tunnel structure and pickup layout', () => {

@@ -157,7 +157,7 @@ export const TRACKS = [
     spacing: 1.0,
     theme: {
       sky: 0x15284f, skyHorizon: 0x8fc8e5, fog: 0xa8d0e2, fogDensity: 0.0036,
-      road: 0x273746, roadEdge: 0xbff7ff, offroad: 0xe7f3ff, offroadDark: 0x7894aa,
+      road: 0x34495c, roadEdge: 0xbff7ff, offroad: 0xe7f3ff, offroadDark: 0x7894aa,
       wall: 0x65dff3, scenery: 'glacier',
       sun: 0xcfe9ff, sunIntensity: 1.05, ambient: 0xbfdcff, ambientIntensity: 0.68,
     },
@@ -227,7 +227,7 @@ export const TRACKS = [
     spacing: 1.0,
     theme: {
       sky: 0x3a86ff, skyHorizon: 0xbde0fe, fog: 0xc4e0ff, fogDensity: 0.0020,
-      road: 0x363a45, roadEdge: 0xffffff, offroad: 0x4a7c59, offroadDark: 0x355e40,
+      road: 0x464c59, roadEdge: 0xffffff, offroad: 0x4a7c59, offroadDark: 0x355e40,
       wall: 0xe33d3d, scenery: 'monaco',
       sun: 0xfffaed, sunIntensity: 1.45, ambient: 0xe2e8f0, ambientIntensity: 0.70,
     },

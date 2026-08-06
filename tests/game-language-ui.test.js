@@ -106,7 +106,7 @@ test('racer identity distinguishes its kart from human racer labels', () => {
   assert.match(en.online.errors.CHARACTER_INVALID, /kart/i);
 });
 
-test('proper names stay English while descriptive and generic entity copy localizes', () => {
+test('track names and descriptive entity copy localize while racer names stay unchanged', () => {
   const character = localizeCharacter(CHARACTERS[0], 'zh-CN');
   const track = localizeTrack(TRACKS[0], 'zh-CN');
   const paint = localizePaint(PAINT_THEMES[0], 'zh-CN');
@@ -115,8 +115,16 @@ test('proper names stay English while descriptive and generic entity copy locali
 
   assert.equal(character.name, CHARACTERS[0].name);
   assert.notEqual(character.blurb, CHARACTERS[0].blurb);
-  assert.equal(track.name, TRACKS[0].name);
+  assert.equal(track.name, '落日环道');
   assert.notEqual(track.subtitle, TRACKS[0].subtitle);
+  assert.deepEqual(
+    TRACKS.map((candidate) => localizeTrack(candidate, 'zh-CN').name),
+    ['落日环道', '港湾环线', '巅峰赛道', '极光冰瀑', '摩纳哥大奖赛', '都会高速'],
+  );
+  assert.deepEqual(
+    TRACKS.map((candidate) => localizeTrack(candidate, 'en').name),
+    TRACKS.map((candidate) => candidate.name),
+  );
   assert.equal(paint.name, '极速蓝');
   assert.equal(avatar.name, '猫');
   assert.equal(item.label, '香蕉皮');

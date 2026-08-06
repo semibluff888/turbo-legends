@@ -703,7 +703,7 @@ function wireOnlineClient() {
       onlineScreens.updateResults(message, {
         localParticipantId: onlineClient.selfId,
         isHost: onlineHostId() === onlineClient.selfId,
-        trackName: race.track.name,
+        trackId: race.track.id,
         progression: onlineProgressionState,
       });
     }
@@ -1290,6 +1290,7 @@ function presentRaceResults() {
     screens.hideAll();
     const fallback = {
       raceId: session.raceId,
+      trackId: race.track.id,
       trackName: race.track.name,
       standings: session.standings.map((kart) => ({
         kartIndex: kart.index,
@@ -1309,14 +1310,14 @@ function presentRaceResults() {
     onlineScreens.showResults(onlineResultsState || fallback, {
       localParticipantId: onlineClient.selfId,
       isHost: onlineHostId() === onlineClient.selfId,
-      trackName: race.track.name,
+      trackId: race.track.id,
       progression: onlineProgressionState || { status: 'pending' },
       ...(error ? { error: error.message } : {}),
     });
   } else {
     networkStatus.showVersion();
     mode = 'results';
-    screens.showResults(session.standings, session.player, race.track.name);
+    screens.showResults(session.standings, session.player, race.track);
   }
   resetControls(playerControls);
   race.accumulator = 0;

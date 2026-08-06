@@ -52,6 +52,7 @@ test('Aurora Icefall builds its procedural structures and glacier scene headless
   assert.ok(trackNames.has('bridge-underdeck'));
   assert.ok(trackNames.has('bridge-hangers'));
   assert.ok(tunnelLights >= 2);
+  assert.equal(trackMesh.getObjectByName('road')?.material?.color?.getHex(), 0x34495c);
 
   assert.ok(world.scene.getObjectByName('mirror-lake'));
   assert.ok(world.scene.getObjectByName('frozen-waterfall'));

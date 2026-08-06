@@ -149,7 +149,7 @@ export class Screens {
     else if (active === 'help') this.showHelp(this._helpTab);
     else if (active === 'pause') this.showPause({ online: this._pauseOnline });
     else if (active === 'results' && results) {
-      this.showResults(results.standings, results.player, results.trackName);
+      this.showResults(results.standings, results.player, results.track);
     }
 
     if (focusedValue !== undefined) {
@@ -428,7 +428,7 @@ export class Screens {
              stroke-linejoin="round" stroke-linecap="round"/>
          </svg>`;
       const body = el('div', 'track-body', card);
-      el('div', 'track-name', body, t.name);
+      el('div', 'track-name', body, localized.name || t.name);
       el('p', 'track-subtitle', body, localized.subtitle || '');
       el('span', 'chip chip-laps', body, formatCopy(this.copy.common.laps, { count: t.laps ?? 3 }));
       this._wireOption(card, 'track');
@@ -511,10 +511,13 @@ export class Screens {
     }
   }
 
-  showResults(standings, player, trackName) {
-    this._resultsData = { standings, player, trackName };
+  showResults(standings, player, track) {
+    this._resultsData = { standings, player, track };
     const root = this.roots.results;
     if (!root) return;
+    const trackName = typeof track === 'string'
+      ? track
+      : localizeTrack(track, this.language)?.name;
     root.querySelector('.results-track').textContent = trackName || '';
     const tbody = root.querySelector('tbody');
     tbody.innerHTML = '';

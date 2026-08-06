@@ -101,7 +101,7 @@ test('lobby view normalizes room types, status and joinability', () => {
     'DEF345', 'ABC234', 'GHJ456', 'KMN567',
   ]);
   assert.equal(view.rooms[0].requiresPassword, true);
-  assert.equal(view.rooms[1].trackName, 'Harbor Loop');
+  assert.equal(view.rooms[1].trackName, '港湾环线');
   assert.equal(view.rooms[0].joinable, true);
   assert.equal(view.rooms[2].status, 'full');
   assert.equal(view.rooms[2].joinable, false);
@@ -356,6 +356,7 @@ test('alert cancellation stays separate from confirmation', () => {
 
 test('authoritative results use participant ids and do not invent times', () => {
   const view = buildOnlineResultsView({
+    trackId: 'summit-raceway',
     trackName: 'Summit Raceway',
     standings: [
       { participantId: 'p2', name: 'Turbo', rank: 2, finishTime: 72.5, bestLap: 34.25, paintId: 'crimson-heat', avatarId: 'dog' },
@@ -372,6 +373,11 @@ test('authoritative results use participant ids and do not invent times', () => 
   assert.equal(view.standings[2].displayName, 'AI玩家 1');
   assert.equal(view.standings[2].finished, false);
   assert.equal(view.standings[2].finishTime, null);
+  assert.equal(view.trackName, '巅峰赛道');
+  assert.equal(buildOnlineResultsView({
+    trackId: 'summit-raceway',
+    trackName: 'Summit Raceway',
+  }, '', { language: 'en' }).trackName, 'Summit Raceway');
   assert.equal(formatOnlineTime(view.standings[0].finishTime), '1:10.00');
   assert.equal(formatOnlineTime(view.standings[2].bestLap), '—');
 });

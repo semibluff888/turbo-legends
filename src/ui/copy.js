@@ -308,12 +308,30 @@ const ENTITY_COPY = deepFreeze({
       tundra: '机密低温驱动原型车，性能预计将突破当前抓地极限。', gearbox: '尚未发布的动力单元，速度和冲击力足以打破联赛规则。',
     },
     tracks: {
-      'sunset-circuit': '节奏明快的入门赛道，包含两个发卡弯和一条带加速的后直道。',
-      'harbor-loop': '狭窄的码头弯道，注意起重机旁的减速弯。',
-      'summit-raceway': '一路攀升的雄心之路，拥有长距离漂移和大落差路段。',
-      'aurora-icefall': '穿越蓝冰隧道、镜湖折返弯，以及横跨自身赛道的空中桥梁。',
-      'monaco-gp': '标志性的 F1 街道赛道，包含狭窄发卡弯、港湾游艇、赌场广场与幽暗隧道。',
-      'metropolis-highway': '穿梭于高架道路、玻璃摩天楼和流畅的城市直道。',
+      'sunset-circuit': {
+        name: '落日环道',
+        subtitle: '节奏明快的入门赛道，包含两个发卡弯和一条带加速的后直道。',
+      },
+      'harbor-loop': {
+        name: '港湾环线',
+        subtitle: '狭窄的码头弯道，注意起重机旁的减速弯。',
+      },
+      'summit-raceway': {
+        name: '巅峰赛道',
+        subtitle: '一路攀升的雄心之路，拥有长距离漂移和大落差路段。',
+      },
+      'aurora-icefall': {
+        name: '极光冰瀑',
+        subtitle: '穿越蓝冰隧道、镜湖折返弯，以及横跨自身赛道的空中桥梁。',
+      },
+      'monaco-gp': {
+        name: '摩纳哥大奖赛',
+        subtitle: '标志性的 F1 街道赛道，包含狭窄发卡弯、港湾游艇、赌场广场与幽暗隧道。',
+      },
+      'metropolis-highway': {
+        name: '都会高速',
+        subtitle: '穿梭于高架道路、玻璃摩天楼和流畅的城市直道。',
+      },
     },
     paints: {
       'turbo-blue': '极速蓝', 'sunset-pop': '落日流行', 'mint-rush': '薄荷冲刺', 'orange-flare': '橙色烈焰',
@@ -371,8 +389,11 @@ export function localizeCharacter(character, language = DEFAULT_LANGUAGE) {
 
 export function localizeTrack(track, language = DEFAULT_LANGUAGE) {
   if (!track) return track;
-  const subtitle = ENTITY_COPY[sanitizeLanguage(language)].tracks[track.id];
-  return subtitle ? { ...track, subtitle } : track;
+  const copy = ENTITY_COPY[sanitizeLanguage(language)].tracks[track.id];
+  if (!copy) return track;
+  return typeof copy === 'string'
+    ? { ...track, subtitle: copy }
+    : { ...track, ...copy };
 }
 
 export function localizePaint(paint, language = DEFAULT_LANGUAGE) {
