@@ -95,6 +95,16 @@ function initScratch(kart) {
   kart._wallCd = 0;
 }
 
+/**
+ * Restore edge-detected control state after copying an authoritative snapshot.
+ * This advances no physics; it only prevents a held drift button from becoming
+ * a duplicate press, or an unacknowledged press from being lost during replay.
+ */
+export function syncKartPhysicsInputState(kart) {
+  initScratch(kart);
+  kart._driftHeld = !kart.incapacitated && !!kart.controls?.drift;
+}
+
 /** Highest drift tier reached for a given charge, or -1. */
 function tierForCharge(charge) {
   for (let i = DRIFT_TIERS.length - 1; i >= 0; i--) {

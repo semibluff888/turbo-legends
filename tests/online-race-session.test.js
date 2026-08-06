@@ -84,6 +84,39 @@ function snapshotAcks(inputAck = 0, useItemAck = 0) {
   return [[0, inputAck, useItemAck], [1, -1, 0]];
 }
 
+function drivingSnapshotKart(track, index, extra = {}) {
+  const s = 20 + index * 4;
+  const world = track.toWorld(s, 0, {});
+  const { controls = {}, ...state } = extra;
+  return snapshotKart(index, {
+    x: world.x,
+    y: world.y,
+    z: world.z,
+    yaw: world.heading,
+    speed: 18,
+    airborne: false,
+    drifting: false,
+    driftDirection: 0,
+    driftCharge: 0,
+    driftTier: -1,
+    hopTimer: 0,
+    surface: 'road',
+    s,
+    lateral: 0,
+    offTrackDepth: 0,
+    progress: s,
+    controls: {
+      throttle: 1,
+      brake: 0,
+      steer: 0,
+      drift: false,
+      lookBack: false,
+      ...controls,
+    },
+    ...state,
+  });
+}
+
 test('online snapshot populates Kart-shaped state and item views', () => {
   const track = new Track(getTrackDef('sunset-circuit'));
   const client = new FakeClient();
@@ -282,6 +315,104 @@ test('input is sampled at 60Hz and item presses use a monotonic action counter',
   session.update(FIXED_DT, controls);
   session.flushInput(controls);
   assert.equal(client.inputs.at(-1).useItemSeq, 2);
+});
+
+test('an unacknowledged drift press survives reconciliation with a pre-press snapshot', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  const session = new OnlineRaceSession({
+    client, track, raceId: 'race-drift-latency', roster: roster(), localParticipantId: 'local',
+  });
+  client.ack('race-drift-latency');
+  const prePressKarts = [
+    drivingSnapshotKart(track, 0),
+    drivingSnapshotKart(track, 1),
+  ];
+  session.applySnapshot({
+    raceId: 'race-drift-latency', tick: 1, acks: snapshotAcks(),
+    state: RACE_STATE.RACING, karts: prePressKarts,
+  });
+
+  const controls = {
+    throttle: 1, brake: 0, steer: 1,
+    drift: true, useItem: false, lookBack: false,
+  };
+  session.update(FIXED_DT, controls);
+  session.flushInput(controls);
+  assert.equal(session.player.drifting, true);
+  assert.equal(session.player.airborne, true);
+
+  session.applySnapshot({
+    raceId: 'race-drift-latency', tick: 4, acks: snapshotAcks(),
+    state: RACE_STATE.RACING, karts: prePressKarts,
+  });
+  assert.equal(session.player.drifting, true);
+  assert.equal(session.player.airborne, true);
+  assert.ok(session.player.hopTimer > 0);
+});
+
+test('an authoritative held drift does not become a duplicate press on the first prediction step', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  const session = new OnlineRaceSession({
+    client, track, raceId: 'race-drift-held', roster: roster(), localParticipantId: 'local',
+  });
+  client.ack('race-drift-held');
+  session.applySnapshot({
+    raceId: 'race-drift-held', tick: 1, acks: snapshotAcks(), state: RACE_STATE.RACING,
+    karts: [
+      drivingSnapshotKart(track, 0, { controls: { drift: true } }),
+      drivingSnapshotKart(track, 1),
+    ],
+  });
+
+  session.update(FIXED_DT, {
+    throttle: 1, brake: 0, steer: 1,
+    drift: true, useItem: false, lookBack: false,
+  });
+  assert.equal(session.player.airborne, false);
+  assert.equal(session.player.drifting, false);
+  assert.equal(session.player.hopTimer, 0);
+});
+
+test('an unacknowledged drift release still cashes its boost after reconciliation', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  const session = new OnlineRaceSession({
+    client, track, raceId: 'race-drift-release', roster: roster(), localParticipantId: 'local',
+  });
+  client.ack('race-drift-release');
+  const heldKarts = [
+    drivingSnapshotKart(track, 0, {
+      drifting: true,
+      driftDirection: 1,
+      driftCharge: 1,
+      driftTier: 0,
+      controls: { steer: 1, drift: true },
+    }),
+    drivingSnapshotKart(track, 1),
+  ];
+  session.applySnapshot({
+    raceId: 'race-drift-release', tick: 10, acks: snapshotAcks(1),
+    state: RACE_STATE.RACING, karts: heldKarts,
+  });
+
+  const released = {
+    throttle: 1, brake: 0, steer: 1,
+    drift: false, useItem: false, lookBack: false,
+  };
+  session.update(FIXED_DT, released);
+  session.flushInput(released);
+  assert.equal(session.player.drifting, false);
+  assert.equal(session.player.boostSource, 'drift');
+
+  session.applySnapshot({
+    raceId: 'race-drift-release', tick: 13, acks: snapshotAcks(1),
+    state: RACE_STATE.RACING, karts: heldKarts,
+  });
+  assert.equal(session.player.drifting, false);
+  assert.equal(session.player.boostSource, 'drift');
+  assert.ok(session.player.boostTimer > 0);
 });
 
 test('loading sessions send no input before a snapshot and can neutralize immediately', () => {

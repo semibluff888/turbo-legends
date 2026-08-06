@@ -9,7 +9,7 @@ import { FIXED_DT, KART_STATE, RACE, RACE_STATE, SURFACE } from '../core/constan
 import { angleDelta, clamp, lerp, loopDelta } from '../core/mathx.js';
 import { getCharacter } from '../game/characters.js';
 import { Kart, makeControls } from '../game/kart.js';
-import { stepKartPhysics } from '../game/physics.js';
+import { stepKartPhysics, syncKartPhysicsInputState } from '../game/physics.js';
 import { decodeKartSnapshot } from './protocol.js';
 
 const INPUT_DT = 1 / 60;
@@ -109,6 +109,11 @@ function copyKartFields(kart, snapshot, { motion = true } = {}) {
 function copyPredictedFields(dst, src) {
   for (const field of PREDICTED_FIELDS) dst[field] = src[field];
   copyControls(dst.controls, src.controls);
+}
+
+function restorePredictedKart(kart, snapshot) {
+  copyKartFields(kart, snapshot);
+  syncKartPhysicsInputState(kart);
 }
 
 function motionState(source) {
@@ -577,7 +582,7 @@ export class OnlineRaceSession {
         this._predictionReady = false;
       }
       this._applyRemoteSnapshot(display, snapshot, { blendFirstSnapshot: true, snapshotTick });
-      copyKartFields(this._predictedKart, snapshot);
+      restorePredictedKart(this._predictedKart, snapshot);
       return;
     }
     const controllerKind = snapshot.controllerKind ?? display.controllerKind;
@@ -590,7 +595,7 @@ export class OnlineRaceSession {
       this._correction.yaw = 0;
       this._predictionReady = false;
       this._applyRemoteSnapshot(display, snapshot, { blendFirstSnapshot: true, snapshotTick });
-      copyKartFields(this._predictedKart, snapshot);
+      restorePredictedKart(this._predictedKart, snapshot);
       this._hasLocalSnapshot = true;
       return;
     }
@@ -599,7 +604,7 @@ export class OnlineRaceSession {
     const firstLocalSnapshot = !this._hasLocalSnapshot;
     const before = { x: display.x, y: display.y, z: display.z, yaw: display.yaw, state: display.state };
     copyKartFields(display, snapshot);
-    copyKartFields(this._predictedKart, snapshot);
+    restorePredictedKart(this._predictedKart, snapshot);
     this._remoteMotion.delete(display.index);
     this._predictionReady = true;
     this._hasLocalSnapshot = true;
