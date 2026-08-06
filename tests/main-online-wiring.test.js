@@ -153,6 +153,12 @@ test('main migrates local nicknames into server profiles and routes Room exits b
   assert.match(source, /onNicknameChange\(\{ displayName \}\)[\s\S]*persistOnlineDisplayName\(displayName\)/);
   assert.match(source, /function acceptOnlineDisplayName\(value\)[\s\S]*saveOnlineDisplayName\(value\)[\s\S]*code: 'name_invalid'/);
   assert.match(source, /function persistOnlineDisplayName\(value\)[\s\S]*userProfileClient\.updateDisplayName\(saved\)/);
+  assert.match(source, /onOpenProfile\(\)[\s\S]*refreshOnlineUserProfile\(\)/);
+  assert.match(source, /ONLINE_PROFILE_REFRESH_COOLDOWN_MS = 2_000/);
+  assert.match(
+    source,
+    /function refreshOnlineUserProfile\(\)[\s\S]*userProfileClient\.load\(\)[\s\S]*revision !== onlineProfileRevision/,
+  );
   assert.match(source, /userProfileClient\.bootstrap\(displayName\)[\s\S]*onlineClient\.enterLobby/);
   assert.match(source, /function leaveCurrentOnlineRoom\(\)[\s\S]*onlineClient\.leaveRoom\(\)[\s\S]*showOnlineLobby\(/);
   assert.match(source, /onQuit\(\)[\s\S]*race\?\.session\.kind === 'online'[\s\S]*leaveCurrentOnlineRoom\(\)/);

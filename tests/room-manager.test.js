@@ -1019,6 +1019,89 @@ test('leaving while post-race settlement is waiting resolves the escape immediat
   );
 });
 
+test('explicit race leave releases the user immediately and settles when every racer leaves', async () => {
+  const settlements = [];
+  const roomCodes = ['ABC234', 'DEF567'];
+  const userStore = progressionStore(settlements);
+  userStore.startRace = () => 2;
+  const harness = createHarness({
+    roomCodeFactory: () => roomCodes.shift(),
+    userStore,
+  });
+  const host = await harness.manager.createRoom({
+    userId: 'user-host', displayName: 'Host', characterId: 'pip',
+    roomName: 'Original Room', roomType: ROOM_TYPES.PUBLIC, maxPlayers: 2,
+  });
+  const guest = await harness.manager.joinRoom(host.roomCode, {
+    userId: 'user-guest', displayName: 'Guest', characterId: 'nova',
+  });
+  harness.manager.setReady(host.participantId, true);
+  harness.manager.setReady(guest.participantId, true);
+  const race = harness.manager.startRace(host.participantId);
+  await harness.manager.markRaceLoaded(host.participantId, race.raceId);
+  await harness.manager.markRaceLoaded(guest.participantId, race.raceId);
+
+  harness.manager.leave(host.participantId);
+  assert.equal(harness.manager.userParticipants.has('user-host'), false);
+
+  const replacement = await harness.manager.createRoom({
+    userId: 'user-host', displayName: 'Host', characterId: 'pip',
+    roomName: 'Replacement Room', roomType: ROOM_TYPES.PUBLIC, maxPlayers: 2,
+  });
+  assert.equal(harness.manager.rooms.has(host.roomCode), true);
+  assert.equal(harness.manager.userParticipants.get('user-host'), replacement.participantId);
+
+  harness.manager.leave(guest.participantId);
+
+  assert.equal(harness.manager.rooms.has(host.roomCode), false);
+  assert.equal(harness.manager.rooms.has(replacement.roomCode), true);
+  assert.equal(harness.manager.userParticipants.get('user-host'), replacement.participantId);
+  assert.equal(harness.manager.userParticipants.has('user-guest'), false);
+  assert.equal(settlements.length, 1);
+  assert.deepEqual(
+    settlements[0].participants
+      .map(({ userId, escaped }) => ({ userId, escaped }))
+      .sort((a, b) => a.userId.localeCompare(b.userId)),
+    [
+      { userId: 'user-guest', escaped: true },
+      { userId: 'user-host', escaped: true },
+    ],
+  );
+});
+
+test('empty active race settles expired disconnects before room destruction', async () => {
+  const settlements = [];
+  const userStore = progressionStore(settlements);
+  userStore.startRace = () => 2;
+  const harness = createHarness({
+    userStore,
+    resumeTimeoutMs: 30_000,
+    emptyRoomTtlMs: 60_000,
+  });
+  const host = await harness.manager.createRoom({
+    userId: 'user-host', displayName: 'Host', characterId: 'pip',
+    roomName: 'Disconnect Room', roomType: ROOM_TYPES.PUBLIC, maxPlayers: 2,
+  });
+  const guest = await harness.manager.joinRoom(host.roomCode, {
+    userId: 'user-guest', displayName: 'Guest', characterId: 'nova',
+  });
+  harness.manager.setReady(host.participantId, true);
+  harness.manager.setReady(guest.participantId, true);
+  const race = harness.manager.startRace(host.participantId);
+  await harness.manager.markRaceLoaded(host.participantId, race.raceId);
+  await harness.manager.markRaceLoaded(guest.participantId, race.raceId);
+  harness.manager.disconnect(host.participantId);
+  harness.manager.disconnect(guest.participantId);
+
+  harness.advance(60_000);
+  harness.manager.maintenance();
+
+  assert.equal(harness.manager.rooms.has(host.roomCode), false);
+  assert.equal(harness.manager.userParticipants.size, 0);
+  assert.equal(settlements.length, 1);
+  assert.equal(settlements[0].participants.every((participant) => participant.escaped), true);
+});
+
 test('auto-placed racers are public DNF entries and cannot set natural finish records', async () => {
   const settlements = [];
   const harness = createHarness({ userStore: progressionStore(settlements) });
@@ -1107,6 +1190,13 @@ test('room state distinguishes reconnecting, disconnected and explicit leave pre
     'human',
   );
 
+  harness.manager.leave(host.participantId);
+  state = harness.manager.getRoomState(host.roomCode);
+  assert.equal(
+    state.members.find((member) => member.participantId === host.participantId).presenceState,
+    'left',
+  );
+
   harness.manager.disconnect(guest.participantId);
   harness.advance(30_001);
   harness.manager.maintenance();
@@ -1114,13 +1204,6 @@ test('room state distinguishes reconnecting, disconnected and explicit leave pre
   assert.equal(
     state.members.find((member) => member.participantId === guest.participantId).presenceState,
     'disconnected',
-  );
-
-  harness.manager.leave(host.participantId);
-  state = harness.manager.getRoomState(host.roomCode);
-  assert.equal(
-    state.members.find((member) => member.participantId === host.participantId).presenceState,
-    'left',
   );
 });
 

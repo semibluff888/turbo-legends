@@ -521,11 +521,21 @@ export class RoomManager extends EventEmitter {
       member.resumeExpired = false;
       member.connected = false;
       member.resumeExpiresAt = null;
+      // Explicit leaves cannot resume. Keep the member only for this race's
+      // standings/settlement, while releasing the account for another room.
+      this._releaseUserParticipant(member);
       if (room.race?.simulation && member.kartIndex !== null) {
         this._setController(room, member, CONTROLLER_KINDS.TAKEOVER_AI);
       }
       if (room.hostParticipantId === participantId) this._migrateHost(room);
       this._resolvePendingParticipant(participantId, !member.resultLocked, now);
+      if (occupiedMembers(room).length === 0
+        && [ROOM_STATES.COUNTDOWN, ROOM_STATES.RACING, ROOM_STATES.RESULTS]
+          .includes(room.state)) {
+        if (room.state !== ROOM_STATES.RESULTS) this._finishRace(room, now);
+        this._destroyRoom(room);
+        return;
+      }
     }
     if (![...room.members.values()].some((candidate) => candidate.connected)) room.emptySince = this.now();
     if (this._maybeReturnRoom(room)) return;
@@ -920,6 +930,12 @@ export class RoomManager extends EventEmitter {
     for (const room of [...this.rooms.values()]) {
       try {
         if (room.emptySince !== null && now - room.emptySince >= this.emptyRoomTtlMs) {
+          // Race starts are persisted immediately, so an expired empty room
+          // must settle its active race before the in-memory roster is lost.
+          if (room.race?.simulation
+            && [ROOM_STATES.COUNTDOWN, ROOM_STATES.RACING].includes(room.state)) {
+            this._finishRace(room, now);
+          }
           this._destroyRoom(room);
           continue;
         }
@@ -1515,10 +1531,14 @@ export class RoomManager extends EventEmitter {
   _removeParticipant(room, member) {
     room.members.delete(member.participantId);
     this.participantRooms.delete(member.participantId);
+    this._releaseUserParticipant(member);
+    if (room.hostParticipantId === member.participantId) this._migrateHost(room);
+  }
+
+  _releaseUserParticipant(member) {
     if (this.userParticipants.get(member.userId) === member.participantId) {
       this.userParticipants.delete(member.userId);
     }
-    if (room.hostParticipantId === member.participantId) this._migrateHost(room);
   }
 
   _migrateHost(room) {
@@ -1534,9 +1554,7 @@ export class RoomManager extends EventEmitter {
     room.race?.simulation?.dispose?.();
     for (const member of room.members.values()) {
       this.participantRooms.delete(member.participantId);
-      if (this.userParticipants.get(member.userId) === member.participantId) {
-        this.userParticipants.delete(member.userId);
-      }
+      this._releaseUserParticipant(member);
     }
     this.rooms.delete(room.code);
     this.emit('roomDestroyed', { roomCode: room.code });

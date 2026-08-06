@@ -103,6 +103,10 @@ let localRoomReconnecting = false;
 let reconnectFailurePending = false;
 let onlineLoadGeneration = 0;
 let onlineProfileGeneration = 0;
+let onlineProfileRevision = 0;
+let onlineProfileRefreshPromise = null;
+let onlineProfileRefreshAllowedAt = 0;
+const ONLINE_PROFILE_REFRESH_COOLDOWN_MS = 2_000;
 const ERROR_COPY_KEY_BY_CODE = new Map(
   Object.entries(ERROR_CODES).map(([key, value]) => [value, key]),
 );
@@ -204,6 +208,7 @@ const onlineScreens = new OnlineScreens({
   },
   onOpenSettings() { openPanel('settings'); },
   onOpenHelp() { openPanel('help'); },
+  onOpenProfile() { return refreshOnlineUserProfile(); },
   async onNicknameChange({ displayName }) {
     await persistOnlineDisplayName(displayName);
   },
@@ -323,6 +328,45 @@ function acceptOnlineDisplayName(value) {
   return saved;
 }
 
+function applyOnlineUserProfile(profile, { render = true } = {}) {
+  if (!profile?.user) return false;
+  onlineUserProfile = profile;
+  onlineProfileRevision++;
+  userProfileClient.profile = profile;
+  onlineDisplayName = profile.user.displayName || onlineDisplayName;
+  if (onlineDisplayName) saveOnlineDisplayName(onlineDisplayName);
+  if (render) onlineScreens.updateUserProfile(profile);
+  return true;
+}
+
+function refreshOnlineUserProfile() {
+  if (onlineProfileRefreshPromise) return onlineProfileRefreshPromise;
+  const now = Date.now();
+  if (now < onlineProfileRefreshAllowedAt) return Promise.resolve(onlineUserProfile);
+  onlineProfileRefreshAllowedAt = now + ONLINE_PROFILE_REFRESH_COOLDOWN_MS;
+  const revision = onlineProfileRevision;
+  const request = (async () => {
+    try {
+      const profile = await userProfileClient.load();
+      if (revision !== onlineProfileRevision) {
+        userProfileClient.profile = onlineUserProfile;
+        return onlineUserProfile;
+      }
+      applyOnlineUserProfile(profile);
+      return profile;
+    } catch (error) {
+      onlineProfileRefreshAllowedAt = 0;
+      reportOnlineError(error);
+      return onlineUserProfile;
+    }
+  })();
+  onlineProfileRefreshPromise = request;
+  request.finally(() => {
+    if (onlineProfileRefreshPromise === request) onlineProfileRefreshPromise = null;
+  });
+  return request;
+}
+
 async function persistOnlineDisplayName(value) {
   const saved = acceptOnlineDisplayName(value);
   if (!saved) {
@@ -331,10 +375,7 @@ async function persistOnlineDisplayName(value) {
   }
   if (!onlineUserProfile || onlineUserProfile.user?.displayName === saved) return saved;
   try {
-    onlineUserProfile = await userProfileClient.updateDisplayName(saved);
-    onlineDisplayName = onlineUserProfile.user.displayName;
-    saveOnlineDisplayName(onlineDisplayName);
-    onlineScreens.updateUserProfile(onlineUserProfile);
+    applyOnlineUserProfile(await userProfileClient.updateDisplayName(saved));
     return onlineDisplayName;
   } catch (error) {
     onlineScreens.setBusy(false);
@@ -389,10 +430,9 @@ async function openOnlineLobby({ tryResume = true } = {}) {
   });
   onlineScreens.setBusy(true);
   try {
-    onlineUserProfile = await userProfileClient.bootstrap(displayName);
+    const profile = await userProfileClient.bootstrap(displayName);
     if (profileGeneration !== onlineProfileGeneration || mode !== 'online-lobby') return;
-    onlineDisplayName = onlineUserProfile.user.displayName;
-    saveOnlineDisplayName(onlineDisplayName);
+    applyOnlineUserProfile(profile, { render: false });
     onlineScreens.updateLobby(onlineLobbyState || { rooms: [] }, {
       displayName: onlineDisplayName,
       userProfile: onlineUserProfile,
@@ -670,18 +710,11 @@ function wireOnlineClient() {
   });
   onlineClient.on('welcome', (message) => {
     if (!message?.user) return;
-    onlineUserProfile = message.user;
-    onlineDisplayName = message.user.user?.displayName || onlineDisplayName;
-    if (onlineDisplayName) saveOnlineDisplayName(onlineDisplayName);
-    onlineScreens.updateUserProfile(onlineUserProfile);
+    applyOnlineUserProfile(message.user);
   });
   onlineClient.on('user_progression', (message) => {
     onlineProgressionState = message;
-    if (message?.profile) {
-      onlineUserProfile = message.profile;
-      userProfileClient.profile = message.profile;
-      onlineScreens.updateUserProfile(message.profile);
-    }
+    if (message?.profile) applyOnlineUserProfile(message.profile);
     if (mode === 'online-results') onlineScreens.updateProgression(message);
   });
   onlineClient.on('error', (message) => {

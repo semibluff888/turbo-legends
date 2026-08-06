@@ -990,7 +990,7 @@ export class OnlineScreens {
             <small>${copy.heading}</small>
           </div>
           <div class="online-lobby-account">
-            <button type="button" class="online-profile-button" data-action="profile"
+            <button type="button" class="online-profile-button" data-action="profile" data-busy-action
               aria-label="${profileCopy.open}">
               <span class="online-profile-mark" aria-hidden="true">TL</span>
               <span class="online-profile-summary">
@@ -1151,6 +1151,7 @@ export class OnlineScreens {
     this._listen(root.querySelector('[data-action="profile"]'), 'click', (event) => {
       this._renderUserProfile();
       this._openDialog('profile', event.currentTarget);
+      this._emit('onOpenProfile');
     });
     this._listen(root.querySelector('[data-action="quick"]'), 'click', () => this._submitQuickMatch());
     for (const button of root.querySelectorAll('[data-action="close-dialog"]')) {

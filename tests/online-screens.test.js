@@ -400,6 +400,10 @@ test('multiplayer profile and progression UI expose every V1 statistic in both l
   assert.match(onlineScreensSource, /Stats update failed/);
   assert.match(onlineStylesSource, /\.online-profile-stats \{[\s\S]*?grid-template-columns:/);
   assert.match(onlineStylesSource, /@media \(max-width: 680px\)[\s\S]*?\.online-profile-stats \{ grid-template-columns: repeat\(2,/);
+  assert.match(
+    onlineScreensSource,
+    /data-action="profile" data-busy-action[\s\S]*?this\._renderUserProfile\(\);[\s\S]*?this\._openDialog\('profile'[\s\S]*?this\._emit\('onOpenProfile'\)/,
+  );
 });
 
 test('Lobby and Room use field feedback, direct page actions, and persistent room state', () => {
