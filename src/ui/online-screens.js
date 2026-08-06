@@ -441,19 +441,37 @@ export function roomStatusMessage(view, copy = getUiCopy().online.room) {
 export function buildOnlineResultsView(resultState = {}, localParticipantId = '', options = {}) {
   const copy = options.copy || getUiCopy(options.language);
   const rawRows = firstDefined(resultState.standings, resultState.results, []);
+  const aiRows = Array.isArray(rawRows) ? rawRows.filter((row) => (
+    Number(row?.aiPlayerNumber) > 0
+    || /^ai[-:](\d+)(?:[-:]|$)/u.test(participantIdOf(row))
+  )).slice().sort((a, b) => {
+    const order = (row) => {
+      const explicit = Math.trunc(Number(row?.aiPlayerNumber) || 0);
+      if (explicit > 0) return explicit;
+      const match = /^ai[-:](\d+)(?:[-:]|$)/u.exec(participantIdOf(row));
+      return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+    };
+    return order(a) - order(b);
+  }) : [];
+  const aiNumbers = new Map(aiRows.map((row, index) => [row, (
+    Math.trunc(Number(row?.aiPlayerNumber) || 0) || index + 1
+  )]));
   const standings = Array.isArray(rawRows) ? rawRows.map((row, index) => {
     const participantId = participantIdOf(row);
     const finishTime = finiteNumber(row.finishTime, row.totalTime, row.time);
     const bestLap = finiteNumber(row.bestLap, row.bestLapTime);
     const finished = row.finished !== false && finishTime !== null;
+    const aiPlayerNumber = aiNumbers.get(row) ?? 0;
     return {
       participantId,
-      displayName: String(firstDefined(
-        row.displayName,
-        row.nickname,
-        row.name,
-        formatCopy(copy.common.racerFallback, { rank: index + 1 }),
-      )),
+      displayName: aiPlayerNumber > 0
+        ? `${copy.common.aiPlayer} ${aiPlayerNumber}`
+        : String(firstDefined(
+          row.displayName,
+          row.nickname,
+          row.name,
+          formatCopy(copy.common.racerFallback, { rank: index + 1 }),
+        )),
       characterId: String(firstDefined(row.characterId, row.character?.id, '')),
       paintId: String(firstDefined(row.paintId, DEFAULT_ONLINE_LOADOUT.paintId)),
       avatarId: String(firstDefined(row.avatarId, DEFAULT_ONLINE_LOADOUT.avatarId)),
@@ -1266,7 +1284,17 @@ export class OnlineScreens {
       const swatch = createNode(this.doc, 'span', 'online-loadout-racer-swatch', button,
         locked ? '' : '\u{1F3CE}\u{FE0F}');
       if (locked) {
-        createNode(this.doc, 'span', 'racer-secret-silhouette', swatch);
+        const sil = createNode(this.doc, 'span', 'racer-secret-silhouette', swatch);
+        sil.innerHTML = `
+          <svg class="racer-silhouette-svg" viewBox="0 0 140 45" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M 3 34 C 4 32, 10 26, 18 24 L 38 21 C 46 20, 52 11, 68 8 C 82 5, 94 9, 104 17 C 110 20, 118 21, 126 21 L 126 12 L 137 10 L 138 15 L 128 22 L 137 31 L 135 34 L 120 34 A 10 10 0 0 0 100 34 L 44 34 A 10 10 0 0 0 24 34 Z" fill="currentColor"/>
+            <circle cx="34" cy="34" r="9" fill="#080a14" stroke="currentColor" stroke-width="2.2"/>
+            <circle cx="34" cy="34" r="3.5" fill="currentColor"/>
+            <circle cx="110" cy="34" r="9" fill="#080a14" stroke="currentColor" stroke-width="2.2"/>
+            <circle cx="110" cy="34" r="3.5" fill="currentColor"/>
+            <path d="M 54 20 C 62 13, 76 10, 88 13 L 98 19" stroke="rgba(255,255,255,0.3)" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        `;
         createNode(this.doc, 'span', 'racer-lock-mark', swatch, '\u{1F512}');
       } else {
         swatch.style.background = `linear-gradient(135deg, ${cssColor(character.color)}, ${cssColor(character.accentColor)})`;

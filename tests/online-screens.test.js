@@ -359,7 +359,7 @@ test('authoritative results use participant ids and do not invent times', () => 
     standings: [
       { participantId: 'p2', name: 'Turbo', rank: 2, finishTime: 72.5, bestLap: 34.25, paintId: 'crimson-heat', avatarId: 'dog' },
       { participantId: 'p1', name: 'Turbo', rank: 1, finishTime: 70, bestLap: 33, paintId: 'turbo-blue', avatarId: 'cat' },
-      { participantId: 'ai-1', name: 'Gearbox', rank: 3, finished: false, finishTime: null, bestLap: null },
+      { participantId: 'ai-2-nova', name: 'NEON RAZOR', rank: 3, finished: false, finishTime: null, bestLap: null },
     ],
   }, 'p2');
 
@@ -368,6 +368,7 @@ test('authoritative results use participant ids and do not invent times', () => 
   assert.equal(view.standings[1].isLocal, true);
   assert.equal(view.standings[1].paintId, 'crimson-heat');
   assert.equal(view.standings[1].avatarId, 'dog');
+  assert.equal(view.standings[2].displayName, 'AI玩家 1');
   assert.equal(view.standings[2].finished, false);
   assert.equal(formatOnlineTime(view.standings[0].finishTime), '1:10.00');
   assert.equal(formatOnlineTime(view.standings[2].bestLap), '—');

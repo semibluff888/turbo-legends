@@ -526,9 +526,43 @@ kbd {
 .char-card { padding: 0; }
 .char-card.is-locked {
   cursor: default;
+  border-color: rgba(186, 140, 255, 0.25);
+  background: linear-gradient(160deg, rgba(14, 10, 26, 0.8), rgba(6, 7, 15, 0.92));
+  opacity: 0.52;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  filter: brightness(0.82) contrast(0.95);
+  box-shadow: inset 0 0 25px rgba(138, 92, 255, 0.05);
+  transition: opacity 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.char-card.is-locked:hover {
+  opacity: 0.64;
   border-color: rgba(186, 140, 255, 0.42);
-  background: linear-gradient(160deg, rgba(25, 19, 39, 0.96), rgba(12, 15, 28, 0.96));
-  opacity: 0.9;
+  box-shadow: inset 0 0 28px rgba(138, 92, 255, 0.12), 0 0 16px rgba(138, 92, 255, 0.16);
+}
+
+.char-card.is-locked .char-name {
+  color: rgba(225, 210, 255, 0.72);
+  text-shadow: none;
+}
+
+.char-card.is-locked .char-blurb {
+  color: rgba(255, 255, 255, 0.45);
+  opacity: 0.75;
+}
+
+.char-card.is-locked .stat-label,
+.char-card.is-locked .stat-value {
+  color: rgba(210, 195, 240, 0.55);
+}
+
+.char-card.is-locked .stat-bar {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.char-card.is-locked .stat-fill {
+  background: linear-gradient(90deg, rgba(138, 92, 255, 0.5), rgba(186, 140, 255, 0.3));
 }
 
 .char-swatch {
@@ -542,46 +576,40 @@ kbd {
 .char-card.is-locked .char-swatch {
   position: relative;
   background:
-    radial-gradient(circle at 50% 80%, rgba(152, 98, 255, 0.28), transparent 52%),
-    linear-gradient(145deg, #171523, #080a11);
+    radial-gradient(circle at 50% 80%, rgba(152, 98, 255, 0.22), transparent 55%),
+    linear-gradient(145deg, #120e20, #06070d);
+  border-bottom-color: rgba(186, 140, 255, 0.22);
 }
 .racer-secret-silhouette {
   position: relative;
-  width: 64px;
-  height: 24px;
-  border-radius: 70% 48% 25% 24%;
-  background: #020307;
-  filter: drop-shadow(0 0 9px rgba(174, 119, 255, 0.82));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 76px;
+  height: 28px;
 }
-.racer-secret-silhouette::before {
-  content: '';
-  position: absolute;
-  left: 17px;
-  bottom: 15px;
-  width: 31px;
-  height: 13px;
-  border-radius: 70% 80% 12% 12%;
-  background: #020307;
-  transform: skewX(-16deg);
-}
+.racer-secret-silhouette::before,
 .racer-secret-silhouette::after {
-  content: '';
-  position: absolute;
-  left: 8px;
-  bottom: -5px;
-  width: 14px;
-  height: 14px;
-  border: 3px solid #05060b;
-  border-radius: 50%;
-  background: #111323;
-  box-shadow: 35px 0 0 -3px #111323, 35px 0 0 0 #05060b;
+  content: none;
+}
+.racer-silhouette-svg {
+  width: 100%;
+  height: 100%;
+  color: #0b0918;
+  filter: drop-shadow(0 0 10px rgba(186, 140, 255, 0.85)) drop-shadow(0 0 3px rgba(186, 140, 255, 0.5));
+  transition: transform 0.25s ease, filter 0.25s ease;
+}
+.char-card.is-locked:hover .racer-silhouette-svg,
+.online-loadout-racer-option.is-locked:hover .racer-silhouette-svg {
+  transform: scale(1.06);
+  filter: drop-shadow(0 0 14px rgba(186, 140, 255, 1)) drop-shadow(0 0 4px rgba(255, 255, 255, 0.7));
 }
 .racer-lock-mark {
   position: absolute;
   top: 6px;
   right: 9px;
   font-size: 15px;
-  filter: grayscale(1) brightness(1.8);
+  filter: grayscale(0.2) brightness(1.5) drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6));
 }
 
 .char-body {
@@ -772,6 +800,10 @@ kbd {
   -webkit-backdrop-filter: blur(14px);
   box-shadow: 0 22px 60px rgba(5, 3, 18, 0.65);
   animation: pop 0.25s ease-out both;
+}
+
+.settings-panel.is-language-refresh {
+  animation: none;
 }
 
 .panel-heading {
@@ -2107,14 +2139,31 @@ kbd {
   transition: transform 0.12s, border-color 0.12s, background 0.12s;
 }
 .online-loadout-racer-swatch { position: relative; display: grid; place-items: center; min-height: 130px; font-size: 28px; }
-.online-loadout-racer-option.is-locked {
-  border-color: rgba(186, 140, 255, 0.34);
-  background: linear-gradient(155deg, rgba(29, 22, 45, 0.94), rgba(10, 12, 22, 0.96));
+.online-loadout-racer-option.is-locked,
+.online-loadout-racer-option.is-locked:disabled {
+  opacity: 0.58;
+  border-color: rgba(186, 140, 255, 0.32);
+  background: linear-gradient(155deg, rgba(18, 14, 32, 0.75), rgba(8, 10, 20, 0.88));
+  backdrop-filter: blur(6px);
+  filter: brightness(0.88) contrast(0.95);
+  box-shadow: inset 0 0 20px rgba(138, 92, 255, 0.08);
+  transition: opacity 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.online-loadout-racer-option.is-locked:hover:disabled {
+  opacity: 0.68;
+  border-color: rgba(186, 140, 255, 0.48);
+  box-shadow: inset 0 0 24px rgba(138, 92, 255, 0.14), 0 0 16px rgba(138, 92, 255, 0.18);
 }
 .online-loadout-racer-option.is-locked .online-loadout-racer-swatch {
   background:
-    radial-gradient(circle at 50% 72%, rgba(152, 98, 255, 0.3), transparent 50%),
-    linear-gradient(145deg, #171523, #080a11);
+    radial-gradient(circle at 50% 72%, rgba(152, 98, 255, 0.22), transparent 52%),
+    linear-gradient(145deg, #120e20, #06070d);
+}
+.online-loadout-racer-option.is-locked .online-loadout-stat-fill {
+  background: linear-gradient(90deg, rgba(138, 92, 255, 0.5), rgba(186, 140, 255, 0.3));
+}
+.online-loadout-racer-option.is-locked .online-loadout-racer-blurb {
+  color: rgba(255, 255, 255, 0.45);
 }
 .online-loadout-racer-body { min-width: 0; display: flex; flex-direction: column; gap: 5px; padding: 9px; }
 .online-loadout-racer-name-row { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
@@ -2159,7 +2208,6 @@ kbd {
 .online-loadout-racer-option:disabled,
 .online-loadout-paint-option:disabled,
 .online-loadout-avatar-option:disabled { cursor: default; opacity: 0.62; }
-.online-loadout-racer-option.is-locked:disabled { opacity: 0.92; }
 .online-loadout-actions { margin-top: auto; }
 
 /* Pre-race room ---------------------------------------------------------- */

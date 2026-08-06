@@ -124,7 +124,7 @@ export class Screens {
 
     this._buildTitle();
     this._buildDifficulty();
-    this._buildSettings();
+    this._buildSettings({ suppressEntryAnimation: active === 'settings' });
     this._buildHelp();
     this._buildPause();
     this._buildResultsShell();
@@ -136,7 +136,16 @@ export class Screens {
     else if (active === 'character' && characters) this.showCharacter(characters);
     else if (active === 'track' && tracks) this.showTrack(tracks);
     else if (active === 'difficulty') this.showDifficulty();
-    else if (active === 'settings') this.showSettings(this._settings);
+    else if (active === 'settings') {
+      const root = this.roots.settings;
+      if (root) {
+        root.hidden = false;
+        this._screen = 'settings';
+        this._cols = 1;
+        this._items = Array.from(root.querySelectorAll('.menu-option'))
+          .map((node) => ({ el: node, value: node.dataset.value }));
+      }
+    }
     else if (active === 'help') this.showHelp(this._helpTab);
     else if (active === 'pause') this.showPause({ online: this._pauseOnline });
     else if (active === 'results' && results) {
@@ -210,11 +219,11 @@ export class Screens {
     el('p', 'screen-hint', root, this.copy.difficulty.hint);
   }
 
-  _buildSettings() {
+  _buildSettings({ suppressEntryAnimation = false } = {}) {
     const root = this.roots.settings;
     if (!root) return;
     root.innerHTML = `
-      <div class="settings-panel">
+      <div class="settings-panel${suppressEntryAnimation ? ' is-language-refresh' : ''}">
         <h2 class="panel-heading">${this.copy.settings.heading}</h2>
         <div class="settings-list"></div>
         <div class="panel-actions">
@@ -350,7 +359,17 @@ export class Screens {
         ? formatCopy(this.copy.common.lockedAria, { name: ch.name }) : ch.name);
       const swatch = el('div', 'char-swatch', card);
       if (locked) {
-        el('span', 'racer-secret-silhouette', swatch);
+        const sil = el('span', 'racer-secret-silhouette', swatch);
+        sil.innerHTML = `
+          <svg class="racer-silhouette-svg" viewBox="0 0 140 45" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M 3 34 C 4 32, 10 26, 18 24 L 38 21 C 46 20, 52 11, 68 8 C 82 5, 94 9, 104 17 C 110 20, 118 21, 126 21 L 126 12 L 137 10 L 138 15 L 128 22 L 137 31 L 135 34 L 120 34 A 10 10 0 0 0 100 34 L 44 34 A 10 10 0 0 0 24 34 Z" fill="currentColor"/>
+            <circle cx="34" cy="34" r="9" fill="#080a14" stroke="currentColor" stroke-width="2.2"/>
+            <circle cx="34" cy="34" r="3.5" fill="currentColor"/>
+            <circle cx="110" cy="34" r="9" fill="#080a14" stroke="currentColor" stroke-width="2.2"/>
+            <circle cx="110" cy="34" r="3.5" fill="currentColor"/>
+            <path d="M 54 20 C 62 13, 76 10, 88 13 L 98 19" stroke="rgba(255,255,255,0.3)" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        `;
         el('span', 'racer-lock-mark', swatch, '🔒');
       } else {
         swatch.style.background =
@@ -522,7 +541,11 @@ export class Screens {
   hideAll() {
     for (const key of Object.keys(this.roots)) {
       const root = this.roots[key];
-      if (root) root.hidden = true;
+      if (root) {
+        root.querySelector?.('.settings-panel.is-language-refresh')
+          ?.classList.remove('is-language-refresh');
+        root.hidden = true;
+      }
     }
     this._screen = null;
     this._items = [];

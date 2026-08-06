@@ -181,6 +181,7 @@ function defaultRaceResults(room) {
       kartIndex: kart.index,
       participantId: entry?.participantId ?? null,
       displayName: entry?.displayName ?? kart.name,
+      aiPlayerNumber: entry?.aiPlayerNumber ?? null,
       characterId: entry?.characterId ?? kart.character?.id ?? null,
       paintId: entry?.paintId ?? null,
       avatarId: entry?.avatarId ?? null,
@@ -194,10 +195,11 @@ function defaultRaceResults(room) {
 
 function publicRoster(roster) {
   return roster.map(({
-    participantId, displayName, characterId, paintId, avatarId, controllerKind, kartIndex,
+    participantId, displayName, aiPlayerNumber, characterId, paintId, avatarId, controllerKind, kartIndex,
   }) => ({
     participantId,
     displayName,
+    ...(aiPlayerNumber == null ? {} : { aiPlayerNumber }),
     characterId,
     paintId,
     avatarId,
@@ -1019,7 +1021,8 @@ export class RoomManager extends EventEmitter {
         usedAppearances.set(character.id, appearances);
         roster.push({
           participantId: `ai-${roster.length}-${character.id}`,
-          displayName: character.name,
+          displayName: `AI player ${aiIndex + 1}`,
+          aiPlayerNumber: aiIndex + 1,
           characterId: character.id,
           paintId: appearance.paintId || defaults.paintId,
           avatarId: appearance.avatarId || defaults.avatarId,

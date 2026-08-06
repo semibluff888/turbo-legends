@@ -115,6 +115,11 @@ test('roster: player uses the Racer default look while AI appearances are seeded
   assert.equal(race.player.index, RACE.totalKarts - 1);
   assert.equal(race.player.paintId, 'turbo-blue');
   assert.equal(race.player.avatarId, 'cat');
+  assert.deepEqual(
+    race.karts.filter((kart) => !kart.isPlayer).map((kart) => kart.name),
+    Array.from({ length: RACE.totalKarts - 1 }, (_, index) => `AI player ${index + 1}`),
+  );
+  assert.equal(race.player.name, race.player.character.name);
   const ids = new Set(race.karts.map((k) => k.character.id));
   assert.equal(ids.size, 6, 'only the six available Racers should enter the field');
   for (const kart of race.karts.filter((candidate) => !candidate.isPlayer)) {

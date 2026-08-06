@@ -289,6 +289,7 @@ function applyLanguage(language) {
   onlineScreens.setLanguage(language);
   hud.setLanguage(language);
   networkStatus.setLanguage(language);
+  race?.session.setAiPlayerLabel?.(appCopy.common.aiPlayer);
   updateOnlineLoadingOverlay();
 }
 
@@ -778,6 +779,7 @@ function startRace() {
     playerCharacterId: selection.characterId,
     difficulty: selection.difficulty,
     seed: (Date.now() & 0xffffff) ^ 0x5eed,
+    aiPlayerLabel: appCopy.common.aiPlayer,
   });
   mountRace(track, session, def);
 }
@@ -890,6 +892,7 @@ function startOnlineRace(message) {
     roster,
     localParticipantId: onlineClient.selfId,
     roomState: onlineRoomState,
+    aiPlayerLabel: appCopy.common.aiPlayer,
   });
   onlineResultsState = null;
   const token = ++onlineLoadGeneration;

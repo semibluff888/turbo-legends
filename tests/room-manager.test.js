@@ -218,6 +218,16 @@ test('AI auto-fill is disabled by default and can be enabled by the host', async
   const filledRace = filledHarness.manager.startRace(filledHost.participantId);
   assert.equal(filledRace.roster.length, 4);
   assert.equal(filledRace.roster.filter((entry) => entry.controllerKind === 'ai').length, 2);
+  assert.deepEqual(
+    filledRace.roster
+      .filter((entry) => entry.controllerKind === 'ai')
+      .sort((a, b) => a.aiPlayerNumber - b.aiPlayerNumber)
+      .map(({ displayName, aiPlayerNumber }) => ({ displayName, aiPlayerNumber })),
+    [
+      { displayName: 'AI player 1', aiPlayerNumber: 1 },
+      { displayName: 'AI player 2', aiPlayerNumber: 2 },
+    ],
+  );
 
   const humansOnlyHarness = createHarness();
   const humansOnlyHost = await humansOnlyHarness.manager.createRoom({
@@ -490,6 +500,16 @@ test('start prepares one deterministic eight-kart roster and launches after all 
   assert.equal(harness.manager.listRooms()[0].status, 'in_game');
   assert.equal(harness.manager.listRooms()[0].joinable, false);
   assert.equal(prepare.roster.length, 8);
+  assert.deepEqual(
+    prepare.roster
+      .filter((entry) => entry.controllerKind === 'ai')
+      .sort((a, b) => a.aiPlayerNumber - b.aiPlayerNumber)
+      .map(({ displayName, aiPlayerNumber }) => ({ displayName, aiPlayerNumber })),
+    Array.from({ length: 6 }, (_, index) => ({
+      displayName: `AI player ${index + 1}`,
+      aiPlayerNumber: index + 1,
+    })),
+  );
   assert.equal(new Set(prepare.roster.map((entry) => entry.characterId)).size, 6);
   assert.equal(prepare.roster.some((entry) => ['tundra', 'gearbox'].includes(entry.characterId)), false);
   for (const characterId of new Set(prepare.roster.map((entry) => entry.characterId))) {
@@ -768,6 +788,7 @@ test('disconnect immediately transfers host and takeover AI can be reclaimed wit
   harness.manager.disconnect(host.participantId);
   assert.equal(harness.manager.getRoomState(host.roomCode).hostParticipantId, guest.participantId);
   assert.equal(simulation.controllers[hostIndex], 'takeover-ai');
+  assert.equal(simulation.karts[hostIndex].name, 'Host');
 
   harness.advance(29_000);
   const resumed = harness.manager.resume(host.roomCode, host.participantId, host.resumeToken);

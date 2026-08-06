@@ -128,6 +128,43 @@ test('online snapshot populates Kart-shaped state and item views', () => {
   assert.equal(firstBox.respawnAt, 9);
 });
 
+test('legacy dedicated AI rosters are numbered while takeover AI keeps the human name', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const session = new OnlineRaceSession({
+    client: new FakeClient(),
+    track,
+    raceId: 'race-ai-names',
+    localParticipantId: 'local',
+    aiPlayerLabel: 'AI玩家',
+    roster: [
+      ...roster(),
+      {
+        kartIndex: 3,
+        participantId: 'ai-3-pip',
+        displayName: 'SUGAR SPARK',
+        characterId: 'pip',
+        controllerKind: 'ai',
+      },
+      {
+        kartIndex: 2,
+        participantId: 'ai-2-nova',
+        displayName: 'NEON RAZOR',
+        characterId: 'nova',
+        controllerKind: 'ai',
+      },
+    ],
+  });
+
+  assert.equal(session.karts[2].name, 'AI玩家 1');
+  assert.equal(session.karts[3].name, 'AI玩家 2');
+  assert.equal(session.karts[1].name, 'Remote');
+  session.karts[1].controllerKind = 'takeover-ai';
+  session.setAiPlayerLabel('AI player');
+  assert.equal(session.karts[2].name, 'AI player 1');
+  assert.equal(session.karts[3].name, 'AI player 2');
+  assert.equal(session.karts[1].name, 'Remote');
+});
+
 test('room state updates live racer presence and cached state hydrates a resumed race', () => {
   const track = new Track(getTrackDef('sunset-circuit'));
   const client = new FakeClient();

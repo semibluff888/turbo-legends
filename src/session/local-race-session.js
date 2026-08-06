@@ -32,5 +32,9 @@ export class LocalRaceSession {
     this.director.reset();
   }
 
+  setAiPlayerLabel(label) {
+    this.director.setAiPlayerLabel(label);
+  }
+
   dispose() {}
 }

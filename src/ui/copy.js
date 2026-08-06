@@ -44,7 +44,7 @@ const EN_COPY = {
     lockedAria: '{name}, locked, coming soon', comingSoon: 'COMING SOON',
     weights: { light: 'light', medium: 'medium', heavy: 'heavy' },
     stats: { speed: 'Speed', accel: 'Accel', handling: 'Turn', weight: 'Weight' },
-    laps: '{count} LAPS', you: 'YOU', dnf: 'DNF', racerFallback: 'Racer {rank}', max: ' MAX+',
+    laps: '{count} LAPS', you: 'YOU', dnf: 'DNF', racerFallback: 'Racer {rank}', aiPlayer: 'AI player', max: ' MAX+',
   },
   document: {
     finishSkip: 'ENTER / A  ·  SKIP', finishSkipTouch: 'SKIP', finishSkipAria: 'Skip finish cinematic',
@@ -165,7 +165,7 @@ const ZH_COPY = {
     lockedAria: '{name}，尚未解锁，敬请期待', comingSoon: '敬请期待',
     weights: { light: '轻型', medium: '中型', heavy: '重型' },
     stats: { speed: '速度', accel: '加速', handling: '操控', weight: '重量' },
-    laps: '{count} 圈', you: '你', dnf: 'DNF', racerFallback: '车手 {rank}', max: ' 极限+',
+    laps: '{count} 圈', you: '你', dnf: 'DNF', racerFallback: '车手 {rank}', aiPlayer: 'AI玩家', max: ' 极限+',
   },
   document: {
     finishSkip: 'ENTER / A  ·  跳过', finishSkipTouch: '跳过', finishSkipAria: '跳过终点动画',

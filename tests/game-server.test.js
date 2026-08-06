@@ -707,6 +707,16 @@ test('two WebSocket clients can share a Racer with distinct loadouts through res
     assert.equal(hostPrepare.wireRaceId > 0, true);
     assert.equal(hostPrepare.roster.length, 8);
     const humanRoster = hostPrepare.roster.filter(entry => entry.controllerKind === 'human');
+    const aiRoster = hostPrepare.roster
+      .filter(entry => entry.controllerKind === 'ai')
+      .sort((a, b) => a.aiPlayerNumber - b.aiPlayerNumber);
+    assert.deepEqual(
+      aiRoster.map(({ displayName, aiPlayerNumber }) => ({ displayName, aiPlayerNumber })),
+      Array.from({ length: 6 }, (_, index) => ({
+        displayName: `AI player ${index + 1}`,
+        aiPlayerNumber: index + 1,
+      })),
+    );
     assert.deepEqual(humanRoster.map(entry => entry.characterId), ['kit', 'kit']);
     assert.deepEqual(
       humanRoster.map(({ participantId, paintId, avatarId }) => ({

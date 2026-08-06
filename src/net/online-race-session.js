@@ -22,6 +22,31 @@ const RECOVERY_BLEND_TIME = 0.5;
 const ITEM_ACTION_FRESHNESS = 0.25;
 const MAX_INPUT_HISTORY = 240;
 
+function aiDisplayName(label, number) {
+  return `${String(label || 'AI player').trim() || 'AI player'} ${number}`;
+}
+
+function rosterAiOrder(entry) {
+  if (Number.isInteger(entry?.aiPlayerNumber) && entry.aiPlayerNumber > 0) {
+    return entry.aiPlayerNumber;
+  }
+  const match = /^ai[-:](\d+)(?:[-:]|$)/u.exec(String(entry?.participantId || ''));
+  if (match) return Number(match[1]);
+  return Number.isInteger(entry?.kartIndex) ? entry.kartIndex : Number.MAX_SAFE_INTEGER;
+}
+
+function dedicatedAiNumbers(roster) {
+  const entries = roster
+    .filter((entry) => (entry.controllerKind || (entry.isAi ? 'ai' : 'human')) === 'ai')
+    .slice()
+    .sort((a, b) => rosterAiOrder(a) - rosterAiOrder(b));
+  return new Map(entries.map((entry, index) => [entry, (
+    Number.isInteger(entry.aiPlayerNumber) && entry.aiPlayerNumber > 0
+      ? entry.aiPlayerNumber
+      : index + 1
+  )]));
+}
+
 const KART_FIELDS = [
   'x', 'y', 'z', 'yaw', 'vx', 'vy', 'vz', 'speed', 'airborne',
   'visualYawOffset', 'visualRoll', 'visualPitch', 'visualScale', 'wheelSpin',
@@ -165,7 +190,10 @@ class OnlineItemView {
 }
 
 export class OnlineRaceSession {
-  constructor({ client, track, raceId, roster, localParticipantId, roomState = null }) {
+  constructor({
+    client, track, raceId, roster, localParticipantId, roomState = null,
+    aiPlayerLabel = 'AI player',
+  }) {
     this.kind = 'online';
     this.client = client;
     this.track = track;
@@ -206,6 +234,7 @@ export class OnlineRaceSession {
     this._correctionTime = 0.15;
     this._unsubscribers = [];
 
+    const aiNumbers = dedicatedAiNumbers(roster);
     for (const entry of [...roster].sort((a, b) => a.kartIndex - b.kartIndex)) {
       const index = entry.kartIndex;
       const character = getCharacter(entry.characterId);
@@ -219,11 +248,14 @@ export class OnlineRaceSession {
       });
       kart.participantId = entry.participantId ?? null;
       kart.controllerKind = entry.controllerKind || (entry.isAi ? 'ai' : 'human');
+      kart.aiPlayerNumber = aiNumbers.get(entry) ?? null;
       kart.connected = entry.connected !== false;
       kart.presenceState = kart.controllerKind === 'ai'
         ? null
         : (entry.presenceState || (kart.connected ? 'connected' : 'reconnecting'));
-      kart.name = entry.displayName || character.name;
+      kart.name = kart.aiPlayerNumber
+        ? aiDisplayName(aiPlayerLabel, kart.aiPlayerNumber)
+        : (entry.displayName || character.name);
       this._karts.push(kart);
       this._byIndex.set(index, kart);
       if (kart.participantId) this._byParticipantId.set(String(kart.participantId), kart);
@@ -287,6 +319,14 @@ export class OnlineRaceSession {
     return this._karts.slice().sort((a, b) => (a.rank - b.rank) || (a.index - b.index));
   }
   get isRaceOver() { return this.state === RACE_STATE.RESULTS; }
+
+  setAiPlayerLabel(label) {
+    for (const kart of this._karts) {
+      if (!kart.aiPlayerNumber) continue;
+      kart.displayName = aiDisplayName(label, kart.aiPlayerNumber);
+      kart.name = kart.displayName;
+    }
+  }
 
   resumeFromPrepare(message) {
     if (!message || message.raceId !== this.raceId) return false;

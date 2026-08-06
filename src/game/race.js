@@ -24,7 +24,11 @@ function randomAiAppearance(characterId, seed, slot, usedByCharacter) {
   return appearance;
 }
 
-function makeSinglePlayerRoster(playerCharacterId, seed, autopilot) {
+function aiDisplayName(label, number) {
+  return `${String(label || 'AI player').trim() || 'AI player'} ${number}`;
+}
+
+function makeSinglePlayerRoster(playerCharacterId, seed, autopilot, aiPlayerLabel) {
   const playerCharacter = getPlayableCharacter(playerCharacterId);
   const playerLoadout = defaultLoadoutForCharacter(playerCharacter.id);
   const usedAppearances = new Map([
@@ -49,7 +53,8 @@ function makeSinglePlayerRoster(playerCharacterId, seed, autopilot) {
 
   const roster = aiCharacters.map((character, index) => ({
     participantId: `ai:${index}:${character.id}`,
-    displayName: character.name,
+    displayName: aiDisplayName(aiPlayerLabel, index + 1),
+    aiPlayerNumber: index + 1,
     characterId: character.id,
     ...randomAiAppearance(character.id, seed, index, usedAppearances),
     controllerKind: CONTROLLER_KIND.AI,
@@ -79,6 +84,7 @@ export class RaceDirector extends RaceSimulation {
    * @param {number} [opts.laps]
    * @param {number|string} [opts.seed]
    * @param {boolean} [opts.autopilot]
+   * @param {string} [opts.aiPlayerLabel]
    */
   constructor(track, {
     playerCharacterId,
@@ -86,8 +92,11 @@ export class RaceDirector extends RaceSimulation {
     laps = track.laps,
     seed = 12345,
     autopilot = false,
+    aiPlayerLabel = 'AI player',
   } = {}) {
-    const roster = makeSinglePlayerRoster(playerCharacterId, seed, autopilot);
+    const roster = makeSinglePlayerRoster(
+      playerCharacterId, seed, autopilot, aiPlayerLabel,
+    );
     super(track, { roster, difficulty, laps, seed, mode: 'local' });
 
     this.autopilot = autopilot;
@@ -97,6 +106,17 @@ export class RaceDirector extends RaceSimulation {
   }
 
   get player() { return this._player; }
+
+  setAiPlayerLabel(label) {
+    for (let index = 0; index < this._roster.length; index++) {
+      const entry = this._roster[index];
+      if (!Number.isInteger(entry.aiPlayerNumber) || entry.aiPlayerNumber < 1) continue;
+      const displayName = aiDisplayName(label, entry.aiPlayerNumber);
+      entry.displayName = displayName;
+      this._karts[index].displayName = displayName;
+      this._karts[index].name = displayName;
+    }
+  }
 
   /** Preserve the legacy one-controls-object update contract. */
   update(dt, playerControls = null) {

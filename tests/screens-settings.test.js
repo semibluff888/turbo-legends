@@ -6,6 +6,7 @@ import { RACE_BGM_CHOICES } from '../src/audio/bgm.js';
 import { Screens } from '../src/ui/screens.js';
 
 const stylesSource = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
+const screensSource = readFileSync(new URL('../src/ui/screens.js', import.meta.url), 'utf8');
 
 function makeChoiceScreen(value, options = RACE_BGM_CHOICES) {
   const changes = [];
@@ -44,4 +45,23 @@ test('main menu labels stay centered between symmetrical icon and action columns
   assert.match(stylesSource, /\.main-menu-option \{[\s\S]*?grid-template-columns: 48px minmax\(0, 1fr\) 48px;/);
   assert.match(stylesSource, /\.main-menu-copy \{[\s\S]*?text-align: center;/);
   assert.match(stylesSource, /\.main-menu-option \{ grid-template-columns: 38px minmax\(0, 1fr\) 38px; gap: 9px; \}/);
+});
+
+test('changing language in settings skips only the refresh entry animation', () => {
+  assert.match(stylesSource, /\.settings-panel\.is-language-refresh\s*\{\s*animation: none;/);
+  assert.match(
+    screensSource,
+    /_buildSettings\(\{ suppressEntryAnimation: active === 'settings' \}\)/,
+  );
+  assert.match(
+    screensSource,
+    /settings-panel\$\{suppressEntryAnimation \? ' is-language-refresh' : ''\}/,
+  );
+  assert.doesNotMatch(
+    screensSource.slice(
+      screensSource.indexOf("else if (active === 'settings')"),
+      screensSource.indexOf("else if (active === 'help')"),
+    ),
+    /showSettings|_show\(/,
+  );
 });
