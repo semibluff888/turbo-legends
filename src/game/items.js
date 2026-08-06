@@ -15,11 +15,11 @@ import {
 import { clamp, lerp, damp, moveTowards, angleDelta, loopDelta } from '../core/mathx.js';
 
 // --- Local tuning (values with no constants.js equivalent) ------------------
-const ROULETTE_DURATION = 1.1;   // pinned in ARCHITECTURE.md (~1.1 s)
-const ROULETTE_TICK = 0.07;      // HUD face-cycle interval while spinning
-const BOX_PICKUP_RADIUS = 1.7;   // xz distance to collect an item box
-const BOX_PICKUP_HEIGHT = 2.2;   // |Δy| tolerance for box pickup
-const BOX_PICKUP_ARC_WINDOW = 6; // reject nearby geometry from another lap segment
+export const ROULETTE_DURATION = 1.1;   // pinned in ARCHITECTURE.md (~1.1 s)
+export const ROULETTE_TICK = 0.07;      // HUD face-cycle interval while spinning
+const BOX_PICKUP_RADIUS = 1.7;          // xz distance to collect an item box
+const BOX_PICKUP_HEIGHT = 2.2;          // |Δy| tolerance for box pickup
+const BOX_PICKUP_ARC_WINDOW = 6;        // reject nearby geometry from another lap segment
 const BOMB_ARM_TIME = 0.4;       // planted bombs are inert this long
 const SHELL_WALL_MARGIN = 1.0;   // shells ride this far past the road edge before the wall
 const SHELL_HEIGHT = 0.45;       // shells hover slightly above the road surface
@@ -45,6 +45,26 @@ function rankToRow(rank) {
   if (rank <= 5) return 2;
   if (rank <= 7) return 3;
   return 4;
+}
+
+/** Shared eligibility check used by authority and online presentation prediction. */
+export function canKartPickupItemBox(kart) {
+  return !!kart
+    && !kart.finished
+    && kart.rouletteTimer <= 0
+    && kart.item === ITEM.NONE
+    && kart.state !== KART_STATE.BULLET;
+}
+
+/** Shared geometric overlap check for authoritative and predicted item-box pickup. */
+export function kartOverlapsItemBox(kart, box, track) {
+  if (!kart || !box || !track) return false;
+  const arcGap = Math.abs(loopDelta(kart.s, box.s, track.length));
+  if (!Number.isFinite(arcGap) || arcGap > BOX_PICKUP_ARC_WINDOW) return false;
+  const dx = kart.x - box.x;
+  const dz = kart.z - box.z;
+  if (dx * dx + dz * dz > BOX_PICKUP_RADIUS * BOX_PICKUP_RADIUS) return false;
+  return Math.abs(kart.y - box.y) <= BOX_PICKUP_HEIGHT;
 }
 
 /** Resolve a kart by stable kart.index (karts is normally index-ordered). */
@@ -207,18 +227,11 @@ export class ItemSystem {
 
   _updatePickups(karts, raceTime) {
     const boxes = this.track.itemBoxes;
-    const r2 = BOX_PICKUP_RADIUS * BOX_PICKUP_RADIUS;
     for (const kart of karts) {
-      if (kart.finished || kart.rouletteTimer > 0 || kart.item !== ITEM.NONE) continue;
-      if (kart.state === KART_STATE.BULLET) continue;
+      if (!canKartPickupItemBox(kart)) continue;
       for (const box of boxes) {
         if (!box.active) continue;
-        const arcGap = Math.abs(loopDelta(kart.s, box.s, this.track.length));
-        if (!Number.isFinite(arcGap) || arcGap > BOX_PICKUP_ARC_WINDOW) continue;
-        const dx = kart.x - box.x;
-        const dz = kart.z - box.z;
-        if (dx * dx + dz * dz > r2) continue;
-        if (Math.abs(kart.y - box.y) > BOX_PICKUP_HEIGHT) continue;
+        if (!kartOverlapsItemBox(kart, box, this.track)) continue;
         this.track.consumeItemBox(box, raceTime);
         this.startRoulette(kart, kart.rank, karts.length);
         kart.emit('itembox', { boxId: box.id });

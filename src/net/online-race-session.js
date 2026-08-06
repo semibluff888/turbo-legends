@@ -2,12 +2,18 @@
 //
 // The server owns gameplay. This session mirrors snapshots into Kart-shaped
 // objects so existing rendering/HUD/audio can stay unchanged. The local kart
-// gets lightweight movement prediction; collisions, items, ranks, and events
-// always come from the server.
+// gets lightweight movement prediction. Item-box pickup may predict presentation
+// only; collisions, item ownership/outcomes, ranks, and events remain authoritative.
 
-import { FIXED_DT, KART_STATE, RACE, RACE_STATE, SURFACE } from '../core/constants.js';
+import { FIXED_DT, ITEM, KART_STATE, RACE, RACE_STATE, SURFACE } from '../core/constants.js';
 import { angleDelta, clamp, lerp, loopDelta } from '../core/mathx.js';
 import { getCharacter } from '../game/characters.js';
+import {
+  ROULETTE_DURATION,
+  ROULETTE_TICK,
+  canKartPickupItemBox,
+  kartOverlapsItemBox,
+} from '../game/items.js';
 import { Kart, makeControls } from '../game/kart.js';
 import { stepKartPhysics, syncKartPhysicsInputState } from '../game/physics.js';
 import { decodeKartSnapshot } from './protocol.js';
@@ -21,6 +27,11 @@ const MAX_CONTIGUOUS_SNAPSHOT_GAP_TICKS = 12;
 const RECOVERY_BLEND_TIME = 0.5;
 const ITEM_ACTION_FRESHNESS = 0.25;
 const MAX_INPUT_HISTORY = 240;
+const SPECULATIVE_PICKUP_MIN_TIMEOUT = 1;
+const SPECULATIVE_PICKUP_MAX_TIMEOUT = 2.5;
+const SPECULATIVE_ROULETTE_FACES = Object.freeze(
+  Object.values(ITEM).filter((item) => item !== ITEM.NONE),
+);
 
 function aiDisplayName(label, number) {
   return `${String(label || 'AI player').trim() || 'AI player'} ${number}`;
@@ -237,6 +248,9 @@ export class OnlineRaceSession {
     this._inputHistory = [];
     this._correction = { x: 0, y: 0, z: 0, yaw: 0 };
     this._correctionTime = 0.15;
+    this._authoritativeItemBoxActive = track.itemBoxes.map((box) => box.active !== false);
+    this._speculativeItemBoxPickup = null;
+    this._blockedSpeculativeItemBoxId = null;
     this._unsubscribers = [];
 
     const aiNumbers = dedicatedAiNumbers(roster);
@@ -341,6 +355,7 @@ export class OnlineRaceSession {
 
   update(dt, controls) {
     copyControls(this._player.controls, controls);
+    this._advanceSpeculativeItemBoxPickup(dt);
     if (this._pendingUseItem) {
       this._pendingUseItemAge += Math.max(0, dt);
       if (this._pendingUseItemAge > ITEM_ACTION_FRESHNESS) this._pendingUseItem = false;
@@ -356,6 +371,7 @@ export class OnlineRaceSession {
       stepKartPhysics(this._predictedKart, this.track, dt);
       this._predictedKart.clearEvents();
       this._updateLocalDisplay(dt);
+      this._trySpeculativeItemBoxPickup();
     }
     this._updateRemoteKarts(dt);
   }
@@ -456,6 +472,7 @@ export class OnlineRaceSession {
 
     this._items.applySnapshot(snapshot);
     this._applyItemBoxes(snapshot.itemBoxes);
+    this._reconcileSpeculativeItemBoxPickup();
     return true;
   }
 
@@ -499,6 +516,10 @@ export class OnlineRaceSession {
         : Object.fromEntries(
           Object.entries(event).filter(([key]) => !['eventId', 'kartIndex'].includes(key)),
         );
+      if (payload.type === 'itembox'
+        && this._handleSpeculativeItemBoxEvent(kart, payload.boxId)) {
+        continue;
+      }
       kart.events.push(payload);
     }
     const vfx = [];
@@ -514,6 +535,8 @@ export class OnlineRaceSession {
 
   applyResults(message) {
     if (!message || message.raceId !== this.raceId) return false;
+    this._clearSpeculativeItemBoxPickup();
+    this._blockedSpeculativeItemBoxId = null;
     this.state = RACE_STATE.RESULTS;
     for (const result of message.standings || message.results || []) {
       const kart = this._byIndex.get(result.index ?? result.kartIndex);
@@ -583,6 +606,7 @@ export class OnlineRaceSession {
       }
       this._applyRemoteSnapshot(display, snapshot, { blendFirstSnapshot: true, snapshotTick });
       restorePredictedKart(this._predictedKart, snapshot);
+      this._clearSpeculativeItemBoxPickup();
       return;
     }
     const controllerKind = snapshot.controllerKind ?? display.controllerKind;
@@ -596,6 +620,7 @@ export class OnlineRaceSession {
       this._predictionReady = false;
       this._applyRemoteSnapshot(display, snapshot, { blendFirstSnapshot: true, snapshotTick });
       restorePredictedKart(this._predictedKart, snapshot);
+      this._clearSpeculativeItemBoxPickup();
       this._hasLocalSnapshot = true;
       return;
     }
@@ -609,7 +634,10 @@ export class OnlineRaceSession {
     this._predictionReady = true;
     this._hasLocalSnapshot = true;
     const authoritativeTeleport = snapshot.state === KART_STATE.RESPAWNING;
-    if (authoritativeTeleport) this._inputHistory.length = 0;
+    if (authoritativeTeleport) {
+      this._inputHistory.length = 0;
+      this._clearSpeculativeItemBoxPickup();
+    }
 
     if (this.state === RACE_STATE.RACING && !snapshot.finished && !authoritativeTeleport) {
       for (const command of this._inputHistory) {
@@ -768,11 +796,127 @@ export class OnlineRaceSession {
     this._pendingUseItem = false;
     this._pendingUseItemAge = 0;
     this._prevUseItem = false;
+    this._clearSpeculativeItemBoxPickup();
+    this._blockedSpeculativeItemBoxId = null;
     this._predictionReady = false;
     this._correction.x = 0;
     this._correction.y = 0;
     this._correction.z = 0;
     this._correction.yaw = 0;
+  }
+
+  _speculativeItemBoxPickupTimeout() {
+    const latencySeconds = Math.max(0, finite(this.client?.latencyMs, 0)) / 1000;
+    return clamp(
+      latencySeconds * 2 + 0.35,
+      SPECULATIVE_PICKUP_MIN_TIMEOUT,
+      SPECULATIVE_PICKUP_MAX_TIMEOUT,
+    );
+  }
+
+  _applySpeculativeItemBoxPresentation() {
+    const pending = this._speculativeItemBoxPickup;
+    if (!pending) return;
+    const box = this.track.itemBoxes[pending.boxId];
+    if (box) box.active = false;
+    this._player.rouletteTimer = Math.max(ROULETTE_TICK, ROULETTE_DURATION - pending.age);
+    this._player.rouletteFace = SPECULATIVE_ROULETTE_FACES[pending.faceIndex];
+  }
+
+  _advanceSpeculativeItemBoxPickup(dt) {
+    const pending = this._speculativeItemBoxPickup;
+    if (!pending) return;
+    const delta = Math.max(0, dt);
+    pending.age += delta;
+    pending.faceElapsed += delta;
+    while (pending.faceElapsed >= ROULETTE_TICK) {
+      pending.faceElapsed -= ROULETTE_TICK;
+      pending.faceIndex = (pending.faceIndex + 1) % SPECULATIVE_ROULETTE_FACES.length;
+    }
+    const timeout = pending.confirmed
+      ? SPECULATIVE_PICKUP_MAX_TIMEOUT
+      : this._speculativeItemBoxPickupTimeout();
+    if (pending.age >= timeout) {
+      this._clearSpeculativeItemBoxPickup({ blockRetry: true });
+      return;
+    }
+    this._applySpeculativeItemBoxPresentation();
+  }
+
+  _trySpeculativeItemBoxPickup() {
+    if (this._speculativeItemBoxPickup || this.state !== RACE_STATE.RACING
+      || !this._transportConnected || !this._predictionReady
+      || this._player.controllerKind !== 'human'
+      || !canKartPickupItemBox(this._predictedKart)) return false;
+
+    if (this._blockedSpeculativeItemBoxId !== null) {
+      const blocked = this.track.itemBoxes[this._blockedSpeculativeItemBoxId];
+      if (blocked?.active && kartOverlapsItemBox(this._predictedKart, blocked, this.track)) {
+        return false;
+      }
+      this._blockedSpeculativeItemBoxId = null;
+    }
+
+    for (const box of this.track.itemBoxes) {
+      if (!box.active || !kartOverlapsItemBox(this._predictedKart, box, this.track)) continue;
+      const faceIndex = (box.id + Math.max(0, this._player.rank - 1))
+        % SPECULATIVE_ROULETTE_FACES.length;
+      this._speculativeItemBoxPickup = {
+        boxId: box.id,
+        age: 0,
+        faceElapsed: 0,
+        faceIndex,
+        confirmed: false,
+      };
+      box.active = false;
+      this._player.emit('itembox', { boxId: box.id, speculative: true });
+      this._applySpeculativeItemBoxPresentation();
+      return true;
+    }
+    return false;
+  }
+
+  _handleSpeculativeItemBoxEvent(kart, boxId) {
+    const pending = this._speculativeItemBoxPickup;
+    if (!pending || pending.boxId !== boxId) return false;
+    if (kart === this._player) {
+      pending.confirmed = true;
+      this._applySpeculativeItemBoxPresentation();
+    } else {
+      this._authoritativeItemBoxActive[pending.boxId] = false;
+      this._clearSpeculativeItemBoxPickup({ blockRetry: true });
+    }
+    return true;
+  }
+
+  _reconcileSpeculativeItemBoxPickup() {
+    const pending = this._speculativeItemBoxPickup;
+    if (!pending) return;
+    const authoritativePickup = this._predictedKart.rouletteTimer > 0
+      || this._predictedKart.item !== ITEM.NONE;
+    if (authoritativePickup) {
+      this._clearSpeculativeItemBoxPickup();
+      return;
+    }
+    if (this._authoritativeItemBoxActive[pending.boxId] === false) {
+      this._clearSpeculativeItemBoxPickup({ blockRetry: true });
+      return;
+    }
+    this._applySpeculativeItemBoxPresentation();
+  }
+
+  _clearSpeculativeItemBoxPickup({ blockRetry = false } = {}) {
+    const pending = this._speculativeItemBoxPickup;
+    if (!pending) return false;
+    this._speculativeItemBoxPickup = null;
+    if (blockRetry) this._blockedSpeculativeItemBoxId = pending.boxId;
+    const box = this.track.itemBoxes[pending.boxId];
+    if (box && this._authoritativeItemBoxActive[pending.boxId] !== undefined) {
+      box.active = this._authoritativeItemBoxActive[pending.boxId];
+    }
+    this._player.rouletteTimer = this._predictedKart.rouletteTimer;
+    this._player.rouletteFace = this._predictedKart.rouletteFace;
+    return true;
   }
 
   _applyItemBoxes(snapshots) {
@@ -782,7 +926,10 @@ export class OnlineRaceSession {
       const box = this.track.itemBoxes[index];
       if (!box) continue;
       if (Array.isArray(snapshot)) {
-        if (snapshot[0] !== undefined) box.active = !!snapshot[0];
+        if (snapshot[0] !== undefined) {
+          box.active = !!snapshot[0];
+          this._authoritativeItemBoxActive[index] = box.active;
+        }
         if (snapshot[1] !== undefined) box.respawnAt = snapshot[1];
       }
     }

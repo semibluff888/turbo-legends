@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { FIXED_DT, RACE_STATE } from '../src/core/constants.js';
+import { FIXED_DT, ITEM, RACE_STATE } from '../src/core/constants.js';
 import { OnlineRaceSession } from '../src/net/online-race-session.js';
 import { encodeKartSnapshot } from '../src/net/protocol.js';
 import { Track } from '../src/track/track.js';
@@ -115,6 +115,49 @@ function drivingSnapshotKart(track, index, extra = {}) {
     },
     ...state,
   });
+}
+
+function itemBoxSnapshotKart(track, index, box, extra = {}) {
+  const ground = track.toWorld(box.s, box.lateral, {});
+  return {
+    index,
+    x: box.x,
+    y: ground.y,
+    z: box.z,
+    yaw: ground.heading,
+    vx: 0,
+    vy: 0,
+    vz: 0,
+    speed: 0,
+    airborne: false,
+    state: 'normal',
+    item: ITEM.NONE,
+    itemUses: 0,
+    rouletteTimer: 0,
+    rouletteFace: ITEM.BANANA,
+    s: box.s,
+    lateral: box.lateral,
+    surface: 'road',
+    offTrackDepth: 0,
+    progress: box.s,
+    lap: 1,
+    rank: index + 1,
+    finished: false,
+    prevX: box.x,
+    prevZ: box.z,
+    controls: {
+      throttle: 0,
+      brake: 0,
+      steer: 0,
+      drift: false,
+      lookBack: false,
+    },
+    ...extra,
+  };
+}
+
+function itemBoxStates(track, consumedId = null) {
+  return track.itemBoxes.map((box) => [box.id !== consumedId, consumedId === box.id ? 5 : 0]);
 }
 
 test('online snapshot populates Kart-shaped state and item views', () => {
@@ -315,6 +358,123 @@ test('input is sampled at 60Hz and item presses use a monotonic action counter',
   session.update(FIXED_DT, controls);
   session.flushInput(controls);
   assert.equal(client.inputs.at(-1).useItemSeq, 2);
+});
+
+test('online item-box pickup predicts immediate feedback and keeps it across pre-confirmation snapshots', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  client.latencyMs = 300;
+  const session = new OnlineRaceSession({
+    client, track, raceId: 'race-item-predict', roster: roster(), localParticipantId: 'local',
+  });
+  client.ack('race-item-predict');
+  const box = track.itemBoxes[0];
+  const beforePickup = itemBoxSnapshotKart(track, 0, box);
+  session.applySnapshot({
+    raceId: 'race-item-predict', tick: 1, acks: snapshotAcks(), state: RACE_STATE.RACING,
+    karts: [beforePickup, snapshotKart(1)],
+    itemBoxes: itemBoxStates(track),
+  });
+
+  session.update(FIXED_DT, {});
+  assert.equal(box.active, false);
+  assert.equal(session.player.item, ITEM.NONE, 'prediction never grants an item');
+  assert.ok(session.player.rouletteTimer > 0, 'temporary roulette starts immediately');
+  assert.deepEqual(session.player.events.at(-1), {
+    type: 'itembox', boxId: box.id, speculative: true,
+  });
+
+  session.player.clearEvents();
+  session.applySnapshot({
+    raceId: 'race-item-predict', tick: 4, acks: snapshotAcks(), state: RACE_STATE.RACING,
+    karts: [beforePickup, snapshotKart(1)],
+    itemBoxes: itemBoxStates(track),
+  });
+  assert.equal(box.active, false, 'an older authoritative view cannot flash the box back on');
+  assert.ok(session.player.rouletteTimer > 0);
+
+  session.applyEvents({
+    raceId: 'race-item-predict',
+    events: [{ eventId: 10, kartIndex: 0, type: 'itembox', boxId: box.id }],
+  });
+  assert.equal(session.player.events.length, 0, 'the authoritative confirmation is not presented twice');
+
+  session.applySnapshot({
+    raceId: 'race-item-predict', tick: 7, acks: snapshotAcks(), state: RACE_STATE.RACING,
+    karts: [
+      itemBoxSnapshotKart(track, 0, box, {
+        rouletteTimer: 0.82,
+        rouletteFace: ITEM.RED_SHELL,
+      }),
+      snapshotKart(1),
+    ],
+    itemBoxes: itemBoxStates(track, box.id),
+  });
+  assert.equal(box.active, false);
+  assert.equal(session.player.rouletteTimer, 0.82);
+  assert.equal(session.player.rouletteFace, ITEM.RED_SHELL);
+});
+
+test('a rejected speculative item-box pickup rolls back and cannot retrigger while overlapping', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  client.latencyMs = 300;
+  const session = new OnlineRaceSession({
+    client, track, raceId: 'race-item-rollback', roster: roster(), localParticipantId: 'local',
+  });
+  client.ack('race-item-rollback');
+  const box = track.itemBoxes[0];
+  session.applySnapshot({
+    raceId: 'race-item-rollback', tick: 1, acks: snapshotAcks(), state: RACE_STATE.RACING,
+    karts: [itemBoxSnapshotKart(track, 0, box), snapshotKart(1)],
+    itemBoxes: itemBoxStates(track),
+  });
+  session.update(FIXED_DT, {});
+  session.player.clearEvents();
+
+  for (let index = 0; index < 130; index++) session.update(FIXED_DT, {});
+
+  assert.equal(box.active, true, 'the last authoritative active state is restored after timeout');
+  assert.equal(session.player.rouletteTimer, 0);
+  assert.equal(session.player.item, ITEM.NONE);
+  assert.equal(session.player.events.length, 0, 'remaining inside the box does not loop feedback');
+});
+
+test('a box consumed by another racer cancels the local temporary roulette', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const client = new FakeClient();
+  const session = new OnlineRaceSession({
+    client, track, raceId: 'race-item-contested', roster: roster(), localParticipantId: 'local',
+  });
+  client.ack('race-item-contested');
+  const box = track.itemBoxes[0];
+  const local = itemBoxSnapshotKart(track, 0, box);
+  session.applySnapshot({
+    raceId: 'race-item-contested', tick: 1, acks: snapshotAcks(), state: RACE_STATE.RACING,
+    karts: [local, snapshotKart(1)],
+    itemBoxes: itemBoxStates(track),
+  });
+  session.update(FIXED_DT, {});
+  assert.ok(session.player.rouletteTimer > 0);
+
+  session.player.clearEvents();
+  session.karts[1].clearEvents();
+  session.applyEvents({
+    raceId: 'race-item-contested',
+    events: [{ eventId: 20, kartIndex: 1, type: 'itembox', boxId: box.id }],
+  });
+  assert.equal(box.active, false);
+  assert.equal(session.player.rouletteTimer, 0);
+  assert.equal(session.karts[1].events.length, 0, 'the already-predicted box feedback is not doubled');
+
+  session.applySnapshot({
+    raceId: 'race-item-contested', tick: 4, acks: snapshotAcks(), state: RACE_STATE.RACING,
+    karts: [local, snapshotKart(1)],
+    itemBoxes: itemBoxStates(track, box.id),
+  });
+  assert.equal(box.active, false);
+  assert.equal(session.player.rouletteTimer, 0);
+  assert.equal(session.player.item, ITEM.NONE);
 });
 
 test('an unacknowledged drift press survives reconciliation with a pre-press snapshot', () => {

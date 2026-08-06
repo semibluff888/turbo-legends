@@ -103,7 +103,10 @@ the existing renderer and HUD:
   unacknowledged 60 Hz inputs as two 120 Hz steps each, then smooths small
   display corrections over 100 ms.
 - Collisions, item outcomes, ranks, lap state, results, projectiles, hazards,
-  and item-box activity are never client-authoritative.
+  and item-box activity are never client-authoritative. The local online kart may
+  speculatively hide an overlapping active box and start temporary pickup VFX,
+  audio, and roulette presentation; the next authoritative event/snapshot confirms
+  that presentation or rolls it back without granting an item client-side.
 - Event IDs are remembered in a bounded 1,024-entry deduplication window.
 
 ## Module map and ownership
