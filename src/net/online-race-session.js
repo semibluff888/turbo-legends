@@ -220,6 +220,7 @@ export class OnlineRaceSession {
     this.countdown = RACE.countdownDuration;
     this.elapsed = 0;
     this.laps = track.laps;
+    this._firstFinishTime = null;
     this.tick = 0;
     this.lastAck = -1;
     this._hasSnapshot = false;
@@ -334,6 +335,7 @@ export class OnlineRaceSession {
   get items() { return this._items; }
   get hasSnapshot() { return this._hasSnapshot; }
   get loadAcknowledged() { return this._loadAcknowledged; }
+  get firstFinishTime() { return this._firstFinishTime; }
   get standings() {
     return this._karts.slice().sort((a, b) => (a.rank - b.rank) || (a.index - b.index));
   }
@@ -468,6 +470,7 @@ export class OnlineRaceSession {
       if (!kart) continue;
       if (kart === this._player) this._applyLocalSnapshot(kartSnapshot, snapshotTick);
       else this._applyRemoteSnapshot(kart, kartSnapshot, { snapshotTick });
+      if (kartSnapshot.finished) this._recordFirstFinishTime(kartSnapshot.finishTime);
     }
 
     this._items.applySnapshot(snapshot);
@@ -520,6 +523,13 @@ export class OnlineRaceSession {
         && this._handleSpeculativeItemBoxEvent(kart, payload.boxId)) {
         continue;
       }
+      if (payload.type === 'finish') {
+        kart.finished = true;
+        kart.autoPlaced = Boolean(payload.autoPlaced);
+        if (Number.isFinite(payload.rank)) kart.rank = payload.rank;
+        if (Number.isFinite(payload.time)) kart.finishTime = payload.time;
+        if (!kart.autoPlaced) this._recordFirstFinishTime(kart.finishTime);
+      }
       kart.events.push(payload);
     }
     const vfx = [];
@@ -546,8 +556,20 @@ export class OnlineRaceSession {
       if (result.bestLap != null) kart.bestLap = result.bestLap;
       if (Array.isArray(result.lapTimes)) kart.lapTimes = result.lapTimes.slice();
       kart.finished = result.finished !== false;
+      if (kart.finished && result.autoPlaced !== true) {
+        this._recordFirstFinishTime(kart.finishTime);
+      }
     }
     return true;
+  }
+
+  _recordFirstFinishTime(value) {
+    if (!Number.isFinite(value) || value < 0) return false;
+    if (this._firstFinishTime === null || value < this._firstFinishTime) {
+      this._firstFinishTime = value;
+      return true;
+    }
+    return false;
   }
 
   dispose() {

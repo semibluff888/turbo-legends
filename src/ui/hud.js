@@ -42,10 +42,12 @@ export function standingsStatus(kart, raceState, language) {
 /** Seconds left after the first finisher before the race resolves globally. */
 export function postRaceSecondsRemaining(race) {
   if (!race || race.state !== RACE_STATE.RACING) return null;
+  let firstFinishTime = Number.isFinite(race.firstFinishTime)
+    ? race.firstFinishTime
+    : Infinity;
   const racers = Array.isArray(race.karts)
     ? race.karts
     : (Array.isArray(race.standings) ? race.standings : []);
-  let firstFinishTime = Infinity;
   for (const racer of racers) {
     if (!racer?.finished || !Number.isFinite(racer.finishTime)) continue;
     firstFinishTime = Math.min(firstFinishTime, racer.finishTime);

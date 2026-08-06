@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { FIXED_DT, ITEM, RACE_STATE } from '../src/core/constants.js';
+import { FIXED_DT, ITEM, RACE, RACE_STATE } from '../src/core/constants.js';
 import { OnlineRaceSession } from '../src/net/online-race-session.js';
 import { encodeKartSnapshot } from '../src/net/protocol.js';
 import { Track } from '../src/track/track.js';
 import { getTrackDef } from '../src/track/tracks.js';
+import { postRaceSecondsRemaining } from '../src/ui/hud.js';
 
 const INPUT_STEP = FIXED_DT * 2;
 
@@ -83,6 +84,56 @@ function snapshotKart(index, extra = {}) {
 function snapshotAcks(inputAck = 0, useItemAck = 0) {
   return [[0, inputAck, useItemAck], [1, -1, 0]];
 }
+
+test('first finisher leaving cannot restart the post-race countdown at second place', () => {
+  const track = new Track(getTrackDef('sunset-circuit'));
+  const session = new OnlineRaceSession({
+    client: new FakeClient(),
+    track,
+    raceId: 'race-finish-anchor',
+    roster: roster(),
+    localParticipantId: 'local',
+  });
+  session.state = RACE_STATE.RACING;
+  session.elapsed = 100;
+
+  session.applyEvents({
+    raceId: session.raceId,
+    events: [{
+      eventId: 1,
+      kartIndex: 1,
+      type: 'finish',
+      rank: 1,
+      time: 100,
+      autoPlaced: false,
+    }],
+  });
+  session.applyRoomState({
+    raceId: session.raceId,
+    members: [{
+      participantId: 'remote',
+      connected: false,
+      controllerKind: 'takeover-ai',
+      presenceState: 'left',
+    }],
+  });
+
+  session.elapsed = 110;
+  session.applyEvents({
+    raceId: session.raceId,
+    events: [{
+      eventId: 2,
+      kartIndex: 0,
+      type: 'finish',
+      rank: 2,
+      time: 110,
+      autoPlaced: false,
+    }],
+  });
+
+  assert.equal(session.firstFinishTime, 100);
+  assert.equal(postRaceSecondsRemaining(session), RACE.postRaceTimeout - 10);
+});
 
 function drivingSnapshotKart(track, index, extra = {}) {
   const s = 20 + index * 4;

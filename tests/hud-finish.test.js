@@ -45,6 +45,20 @@ test('post-race countdown starts at the first finisher and rounds up for display
   assert.equal(postRaceSecondsRemaining(race), null);
 });
 
+test('post-race countdown keeps an explicit first-finish anchor after that kart leaves view', () => {
+  const race = {
+    state: RACE_STATE.RACING,
+    elapsed: 112,
+    firstFinishTime: 100,
+    karts: [
+      { finished: true, finishTime: 112 },
+      { finished: false, finishTime: 0 },
+    ],
+  };
+
+  assert.equal(postRaceSecondsRemaining(race), RACE.postRaceTimeout - 12);
+});
+
 test('finish announcement keeps place and remaining time visible', () => {
   const hud = createHud('en');
 

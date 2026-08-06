@@ -207,6 +207,7 @@ export class RaceSimulation {
   get items() { return this._items; }
   get standings() { return this._standings; }
   get controllerKinds() { return this._controllerKinds; }
+  get firstFinishTime() { return this._firstFinishTime; }
   get isRaceOver() { return this.state === RACE_STATE.RESULTS; }
   get rubberBandTargetProgress() { return this._getRubberBandTargetProgress(); }
 
