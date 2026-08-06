@@ -126,7 +126,7 @@ export class UserStore {
     `);
     if (this.path !== ':memory:') this.db.exec('PRAGMA journal_mode = WAL;');
     const version = Number(this.db.prepare('PRAGMA user_version').get()?.user_version || 0);
-    if (version > 2) throw new Error(`Unsupported user database version: ${version}`);
+    if (version > 3) throw new Error(`Unsupported user database version: ${version}`);
     if (version === 0) this.db.exec(`
       BEGIN IMMEDIATE;
       CREATE TABLE users (
@@ -199,6 +199,25 @@ export class UserStore {
       );
       CREATE INDEX race_user_starts_user_idx ON race_user_starts(user_id, created_at DESC);
       PRAGMA user_version = 2;
+      COMMIT;
+    `);
+    const leaderboardVersion = Number(
+      this.db.prepare('PRAGMA user_version').get()?.user_version || 0,
+    );
+    if (leaderboardVersion < 3) this.db.exec(`
+      BEGIN IMMEDIATE;
+      CREATE INDEX users_rating_leaderboard_idx
+        ON users(rating DESC, firsts DESC, xp DESC, user_id ASC)
+        WHERE races > 0;
+      CREATE INDEX users_champions_leaderboard_idx
+        ON users(firsts DESC, rating DESC, xp DESC, user_id ASC)
+        WHERE firsts > 0;
+      CREATE INDEX users_level_leaderboard_idx
+        ON users(xp DESC, rating DESC, firsts DESC, user_id ASC)
+        WHERE races > 0;
+      CREATE INDEX user_track_records_leaderboard_idx
+        ON user_track_records(track_id, best_finish_time_ms ASC, updated_at ASC, user_id ASC);
+      PRAGMA user_version = 3;
       COMMIT;
     `);
   }
@@ -306,6 +325,77 @@ export class UserStore {
         finishTimeMs: records.get(trackId) ?? null,
       })),
     };
+  }
+
+  getLeaderboards(limitValue = 10) {
+    const limit = Math.max(1, Math.min(10, finiteInteger(limitValue, 10)));
+    const rankedUsers = (rows, fields) => rows.map((row, index) => {
+      const entry = {
+        position: index + 1,
+        displayName: row.display_name,
+      };
+      if (fields.includes('level')) entry.level = levelProgress(row.xp).level;
+      if (fields.includes('rating')) entry.rating = finiteInteger(row.rating, DEFAULT_RATING);
+      if (fields.includes('firsts')) entry.firsts = finiteInteger(row.firsts);
+      return entry;
+    });
+
+    const rating = rankedUsers(this.db.prepare(`
+      SELECT display_name, xp, rating
+      FROM users
+      WHERE races > 0
+      ORDER BY rating DESC, firsts DESC, xp DESC, user_id ASC
+      LIMIT ?
+    `).all(limit), ['level', 'rating']);
+    const champions = rankedUsers(this.db.prepare(`
+      SELECT display_name, xp, firsts
+      FROM users
+      WHERE firsts > 0
+      ORDER BY firsts DESC, rating DESC, xp DESC, user_id ASC
+      LIMIT ?
+    `).all(limit), ['level', 'firsts']);
+    const level = rankedUsers(this.db.prepare(`
+      SELECT display_name, xp
+      FROM users
+      WHERE races > 0
+      ORDER BY xp DESC, rating DESC, firsts DESC, user_id ASC
+      LIMIT ?
+    `).all(limit), ['level']);
+
+    const trackIds = this.trackIds.slice(0, limit);
+    let fastestByTrack = new Map();
+    if (trackIds.length) {
+      const placeholders = trackIds.map(() => '?').join(', ');
+      const rows = this.db.prepare(`
+        WITH ranked_records AS (
+          SELECT
+            r.track_id,
+            u.display_name,
+            r.best_finish_time_ms,
+            ROW_NUMBER() OVER (
+              PARTITION BY r.track_id
+              ORDER BY r.best_finish_time_ms ASC, r.updated_at ASC, r.user_id ASC
+            ) AS record_position
+          FROM user_track_records r
+          JOIN users u ON u.user_id = r.user_id
+          WHERE r.track_id IN (${placeholders})
+        )
+        SELECT track_id, display_name, best_finish_time_ms
+        FROM ranked_records
+        WHERE record_position = 1
+      `).all(...trackIds);
+      fastestByTrack = new Map(rows.map((row) => [row.track_id, row]));
+    }
+    const speed = trackIds.map((trackId) => {
+      const row = fastestByTrack.get(trackId);
+      return {
+        trackId,
+        displayName: row?.display_name ?? null,
+        finishTimeMs: row ? finiteInteger(row.best_finish_time_ms) : null,
+      };
+    });
+
+    return { rating, champions, level, speed };
   }
 
   _existingSettlement(raceId) {

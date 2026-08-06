@@ -97,6 +97,9 @@ troubleshooting guide.
 - Entering multiplayer creates or restores a guest profile through a long-lived
   HttpOnly cookie. The server persists nickname, XP/level, Rating, race/finish/
   escape rates, podium counts, and per-track fastest natural finish times.
+- The multiplayer lobby exposes cached Rating, wins, level, and per-track speed
+  leaderboards. One HTTP snapshot supplies all four tabs and is cached for 60
+  seconds by default, so opening tabs never polls SQLite.
 - Race progression ignores AI when calculating pairwise Rating. A natural finish
   locks the player's result, so leaving or disconnecting afterwards keeps normal
   rewards. Leaving before that point, or remaining disconnected for more than
@@ -106,8 +109,7 @@ troubleshooting guide.
 Rooms and live reconnect credentials remain process-memory state, so restarting
 the server clears active matches. Guest profiles and settled multiplayer results
 are stored in SQLite and survive restarts. The current release does not include
-password accounts, cross-device recovery, leaderboards, chat, or cross-process
-room migration.
+password accounts, cross-device recovery, or cross-process room migration.
 
 Invite links may include `?room=ROOMCODE`. Public rooms are joined automatically,
 while private rooms ask for a password. Missing, full, and racing rooms report an
@@ -164,6 +166,7 @@ the server race continues while the client sends neutral controls.
 | `USER_SESSION_CLEANUP_INTERVAL_MS` | `600000` | Expired guest-session cleanup interval; authentication still rejects expiry immediately |
 | `GUEST_CREATION_LIMIT` | `0` | Maximum new guest accounts created per client IP in one window; `0` disables the limit and valid session resumes are not counted |
 | `GUEST_CREATION_WINDOW_MS` | `600000` | New guest-account rate-limit window in milliseconds |
+| `LEADERBOARD_CACHE_TTL_MS` | `60000` | Shared in-memory and browser leaderboard cache lifetime in milliseconds |
 | `METRICS_TOKEN` | empty | Enables bearer-protected `GET /api/metrics`; empty keeps the route disabled |
 | `METRICS_LOG_INTERVAL_MS` | `60000` | Structured aggregate metrics log interval |
 | `TRUST_PROXY` | `false` | Trust proxy-sanitized forwarding headers for client IP and HTTPS cookies |

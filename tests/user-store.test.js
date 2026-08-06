@@ -90,7 +90,7 @@ test('file-backed SQLite profiles and sessions survive a store restart with WAL 
   }
 });
 
-test('schema version 1 migrates to race-start persistence without losing users or sessions', () => {
+test('schema version 1 migrates through leaderboard indexes without losing users or sessions', () => {
   const directory = mkdtempSync(join(tmpdir(), 'turbo-legends-users-v1-'));
   const path = join(directory, 'users.sqlite');
   let created;
@@ -101,6 +101,10 @@ test('schema version 1 migrates to race-start persistence without losing users o
       legacy.db.exec(`
         DROP INDEX race_user_starts_user_idx;
         DROP TABLE race_user_starts;
+        DROP INDEX users_rating_leaderboard_idx;
+        DROP INDEX users_champions_leaderboard_idx;
+        DROP INDEX users_level_leaderboard_idx;
+        DROP INDEX user_track_records_leaderboard_idx;
         PRAGMA user_version = 1;
       `);
     } finally {
@@ -109,7 +113,7 @@ test('schema version 1 migrates to race-start persistence without losing users o
 
     const migrated = new UserStore({ path });
     try {
-      assert.equal(migrated.db.prepare('PRAGMA user_version').get().user_version, 2);
+      assert.equal(migrated.db.prepare('PRAGMA user_version').get().user_version, 3);
       const table = migrated.db.prepare(`
         SELECT count(*) AS count FROM sqlite_master
         WHERE type = 'table' AND name = 'race_user_starts'
@@ -120,7 +124,49 @@ test('schema version 1 migrates to race-start persistence without losing users o
       migrated.close();
     }
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
+test('schema version 2 adds leaderboard indexes without changing profile data', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'turbo-legends-users-v2-'));
+  const path = join(directory, 'users.sqlite');
+  let created;
+  try {
+    const legacy = new UserStore({ path });
+    try {
+      created = createUser(legacy, 'Indexed Driver');
+      legacy.db.exec(`
+        DROP INDEX users_rating_leaderboard_idx;
+        DROP INDEX users_champions_leaderboard_idx;
+        DROP INDEX users_level_leaderboard_idx;
+        DROP INDEX user_track_records_leaderboard_idx;
+        PRAGMA user_version = 2;
+      `);
+    } finally {
+      legacy.close();
+    }
+
+    const migrated = new UserStore({ path });
+    try {
+      assert.equal(migrated.db.prepare('PRAGMA user_version').get().user_version, 3);
+      const indexes = migrated.db.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'index' AND name LIKE '%leaderboard_idx'
+        ORDER BY name
+      `).all().map((row) => row.name);
+      assert.deepEqual(indexes, [
+        'user_track_records_leaderboard_idx',
+        'users_champions_leaderboard_idx',
+        'users_level_leaderboard_idx',
+        'users_rating_leaderboard_idx',
+      ]);
+      assert.equal(migrated.resolveSession(created.token).profile.user.displayName, 'Indexed Driver');
+    } finally {
+      migrated.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
@@ -217,6 +263,88 @@ test('track records only replace slower natural finishes', () => {
       });
     }
     assert.equal(store.getProfile(user.userId).trackBestTimes[0].finishTimeMs, 95000);
+  } finally {
+    store.close();
+  }
+});
+
+test('leaderboards enforce eligibility, deterministic ordering, limits, and one record per track', () => {
+  let nextUserId = 0;
+  const store = new UserStore({
+    trackIds: ['track-a', 'track-b'],
+    userIdFactory: () => `user-${String(nextUserId++).padStart(2, '0')}`,
+  });
+  try {
+    const users = Array.from({ length: 13 }, (_, index) => createUser(store, `Driver ${index}`));
+    const setStats = (index, { races, xp, rating, firsts }) => {
+      store.db.prepare(`
+        UPDATE users SET races = ?, xp = ?, rating = ?, firsts = ? WHERE user_id = ?
+      `).run(races, xp, rating, firsts, users[index].userId);
+    };
+    setStats(0, { races: 0, xp: 9999, rating: 9999, firsts: 0 });
+    for (let index = 1; index < users.length; index++) {
+      setStats(index, {
+        races: index,
+        xp: index * 100,
+        rating: 1000 + index,
+        firsts: index,
+      });
+    }
+    setStats(1, { races: 1, xp: 100, rating: 1001, firsts: 0 });
+    setStats(10, { races: 10, xp: 1500, rating: 2000, firsts: 4 });
+    setStats(11, { races: 11, xp: 1400, rating: 2000, firsts: 5 });
+    setStats(12, { races: 12, xp: 1400, rating: 1900, firsts: 5 });
+
+    store.db.prepare(`
+      INSERT INTO user_track_records
+        (user_id, track_id, best_finish_time_ms, race_id, updated_at)
+      VALUES (?, ?, ?, NULL, ?)
+    `).run(users[9].userId, 'track-a', 95000, 20);
+    store.db.prepare(`
+      INSERT INTO user_track_records
+        (user_id, track_id, best_finish_time_ms, race_id, updated_at)
+      VALUES (?, ?, ?, NULL, ?)
+    `).run(users[10].userId, 'track-a', 90000, 20);
+    store.db.prepare(`
+      INSERT INTO user_track_records
+        (user_id, track_id, best_finish_time_ms, race_id, updated_at)
+      VALUES (?, ?, ?, NULL, ?)
+    `).run(users[11].userId, 'track-a', 90000, 10);
+    store.updateDisplayName(users[11].userId, 'Current Record Holder');
+
+    const leaderboards = store.getLeaderboards();
+    assert.equal(leaderboards.rating.length, 10);
+    assert.deepEqual(leaderboards.rating.slice(0, 3).map((row) => row.displayName), [
+      'Current Record Holder', 'Driver 10', 'Driver 12',
+    ]);
+    assert.deepEqual(
+      Object.keys(leaderboards.rating[0]),
+      ['position', 'displayName', 'level', 'rating'],
+    );
+    assert.equal(leaderboards.rating[0].rating, 2000);
+    assert.deepEqual(leaderboards.champions.slice(0, 3).map((row) => row.displayName), [
+      'Driver 9', 'Driver 8', 'Driver 7',
+    ]);
+    assert.deepEqual(
+      Object.keys(leaderboards.champions[0]),
+      ['position', 'displayName', 'level', 'firsts'],
+    );
+    assert.equal(leaderboards.champions[0].firsts, 9);
+    assert.deepEqual(leaderboards.level.slice(0, 3).map((row) => row.displayName), [
+      'Driver 10', 'Current Record Holder', 'Driver 12',
+    ]);
+    assert.deepEqual(
+      Object.keys(leaderboards.level[0]),
+      ['position', 'displayName', 'level'],
+    );
+    assert.equal(leaderboards.rating.some((row) => row.displayName === 'Driver 0'), false);
+    assert.equal(leaderboards.champions.some((row) => row.displayName === 'Driver 1'), false);
+    assert.equal(leaderboards.champions.every((row) => row.position >= 1 && row.position <= 10), true);
+    assert.deepEqual(leaderboards.speed, [
+      { trackId: 'track-a', displayName: 'Current Record Holder', finishTimeMs: 90000 },
+      { trackId: 'track-b', displayName: null, finishTimeMs: null },
+    ]);
+    assert.equal(JSON.stringify(leaderboards).includes('userId'), false);
   } finally {
     store.close();
   }

@@ -13,6 +13,7 @@ import { RuntimeMetrics } from './server/runtime-metrics.js';
 import {
   DEFAULT_GUEST_CREATION_LIMIT,
   DEFAULT_GUEST_CREATION_WINDOW_MS,
+  DEFAULT_LEADERBOARD_CACHE_TTL_MS,
   UserHttpApi,
 } from './server/user-http-api.js';
 import { DEFAULT_USER_SESSION_TTL_MS, UserStore } from './server/user-store.js';
@@ -384,6 +385,8 @@ export async function createGameServer({
     : Number(process.env.GUEST_CREATION_LIMIT),
   guestCreationWindowMs = Number(process.env.GUEST_CREATION_WINDOW_MS)
     || DEFAULT_GUEST_CREATION_WINDOW_MS,
+  leaderboardCacheTtlMs = Number(process.env.LEADERBOARD_CACHE_TTL_MS)
+    || DEFAULT_LEADERBOARD_CACHE_TTL_MS,
   trustProxy = process.env.TRUST_PROXY === 'true',
   metricsToken = process.env.METRICS_TOKEN || '',
   metricsLogIntervalMs = Number(process.env.METRICS_LOG_INTERVAL_MS) || 60_000,
@@ -405,6 +408,7 @@ export async function createGameServer({
     trustProxy,
     guestCreationLimit,
     guestCreationWindowMs,
+    leaderboardCacheTtlMs,
   });
   const manager = roomManager ?? createRoomManager({
     ...roomManagerOptions,

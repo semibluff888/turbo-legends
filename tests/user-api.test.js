@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import { createGameServer } from '../server.mjs';
@@ -172,6 +173,84 @@ test('trusted HTTPS forwarding adds Secure to the guest cookie', async () => {
       body: { displayName: 'Secure Guest' },
     });
     assert.match(response.headers['set-cookie']?.[0] || '', /; Secure(?:;|$)/);
+  } finally {
+    await server.shutdown();
+  }
+});
+
+test('leaderboard API returns one public cached snapshot with ETag revalidation', async () => {
+  const server = await createGameServer({
+    root: PROJECT_ROOT,
+    leaderboardCacheTtlMs: 40,
+    logger: { info() {}, warn() {}, error() {} },
+  });
+  const created = server.userStore.createOrResumeSession({ displayName: 'Ranked Driver' });
+  server.userStore.db.prepare(`
+    UPDATE users SET races = 3, xp = 300, rating = 1234, firsts = 2 WHERE user_id = ?
+  `).run(created.userId);
+  let queryCount = 0;
+  const getLeaderboards = server.userStore.getLeaderboards.bind(server.userStore);
+  server.userStore.getLeaderboards = (...args) => {
+    queryCount++;
+    return getLeaderboards(...args);
+  };
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  try {
+    const port = server.address().port;
+    const first = await httpRequest(port, '/api/leaderboards');
+    assert.equal(first.statusCode, 200);
+    assert.equal(first.body.ttlMs, 40);
+    assert.equal(first.body.rating[0].displayName, 'Ranked Driver');
+    assert.deepEqual(Object.keys(first.body.rating[0]), [
+      'position', 'displayName', 'level', 'rating',
+    ]);
+    assert.equal(first.body.speed.length, 6);
+    assert.equal(JSON.stringify(first.body).includes('userId'), false);
+    assert.match(first.headers['cache-control'], /^public, max-age=/u);
+    assert.match(first.headers.etag, /^"[A-Za-z0-9_-]+"$/u);
+    assert.equal(queryCount, 1);
+
+    const cached = await httpRequest(port, '/api/leaderboards');
+    assert.equal(cached.statusCode, 200);
+    assert.deepEqual(cached.body, first.body);
+    assert.equal(queryCount, 1);
+
+    const notModified = await httpRequest(port, '/api/leaderboards', {
+      headers: { 'If-None-Match': first.headers.etag },
+    });
+    assert.equal(notModified.statusCode, 304);
+    assert.equal(notModified.body, null);
+    assert.equal(queryCount, 1);
+
+    await delay(60);
+    const refreshed = await httpRequest(port, '/api/leaderboards');
+    assert.equal(refreshed.statusCode, 200);
+    assert.equal(queryCount, 2);
+    assert.ok(refreshed.body.generatedAt >= first.body.generatedAt);
+  } finally {
+    await server.shutdown();
+  }
+});
+
+test('default leaderboard cache advertises a sixty-second browser lifetime', async () => {
+  const server = await createGameServer({
+    root: PROJECT_ROOT,
+    logger: { info() {}, warn() {}, error() {} },
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  try {
+    const response = await httpRequest(server.address().port, '/api/leaderboards');
+    assert.equal(response.body.ttlMs, 60_000);
+    assert.match(response.headers['cache-control'], /max-age=60/u);
+    assert.deepEqual(response.body.rating, []);
+    assert.deepEqual(response.body.champions, []);
+    assert.deepEqual(response.body.level, []);
   } finally {
     await server.shutdown();
   }

@@ -8,6 +8,7 @@ import { TRACKS, TRACKS_BY_ID, getTrackDef } from './track/tracks.js';
 import { CHARACTERS, isPlayableCharacterId } from './game/characters.js';
 import { LocalRaceSession } from './session/local-race-session.js';
 import { OnlineClient } from './net/online-client.js';
+import { LeaderboardClient } from './net/leaderboard-client.js';
 import { UserProfileClient } from './net/user-profile-client.js';
 import { OnlineRaceSession } from './net/online-race-session.js';
 import { prewarmRaceRenderer } from './net/online-race-loader.js';
@@ -72,6 +73,7 @@ const networkStatus = new NetworkStatus(document.getElementById('network-status-
   language: gameSettings.language,
 });
 const onlineClient = new OnlineClient();
+const leaderboardClient = new LeaderboardClient();
 const userProfileClient = new UserProfileClient();
 
 /** Player selections, persisted across races in this session. */
@@ -208,6 +210,7 @@ const onlineScreens = new OnlineScreens({
   },
   onOpenSettings() { openPanel('settings'); },
   onOpenHelp() { openPanel('help'); },
+  onOpenLeaderboards({ force = false } = {}) { return loadOnlineLeaderboards({ force }); },
   onOpenProfile() { return refreshOnlineUserProfile(); },
   async onNicknameChange({ displayName }) {
     await persistOnlineDisplayName(displayName);
@@ -368,6 +371,23 @@ function refreshOnlineUserProfile() {
     if (onlineProfileRefreshPromise === request) onlineProfileRefreshPromise = null;
   });
   return request;
+}
+
+async function loadOnlineLeaderboards({ force = false } = {}) {
+  onlineScreens.setLeaderboardsLoading(true);
+  try {
+    const snapshot = await leaderboardClient.load({ force });
+    onlineScreens.updateLeaderboards(snapshot);
+    onlineScreens.setLeaderboardError(false);
+    return snapshot;
+  } catch (error) {
+    onlineScreens.setLeaderboardError(true, {
+      stale: Boolean(leaderboardClient.snapshot),
+    });
+    return leaderboardClient.snapshot;
+  } finally {
+    onlineScreens.setLeaderboardsLoading(false);
+  }
 }
 
 async function persistOnlineDisplayName(value) {

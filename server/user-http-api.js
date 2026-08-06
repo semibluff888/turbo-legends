@@ -1,9 +1,12 @@
+import { createHash } from 'node:crypto';
+
 import { validateDisplayName } from '../src/net/protocol.js';
 import { USER_SESSION_COOKIE, sessionTokenFromRequest } from './user-store.js';
 
 const MAX_BODY_BYTES = 4 * 1024;
 export const DEFAULT_GUEST_CREATION_LIMIT = 0;
 export const DEFAULT_GUEST_CREATION_WINDOW_MS = 10 * 60 * 1000;
+export const DEFAULT_LEADERBOARD_CACHE_TTL_MS = 60 * 1000;
 
 function positiveInteger(value, fallback) {
   const number = Number(value);
@@ -29,6 +32,13 @@ function jsonResponse(res, statusCode, body, headers = {}) {
     'Cache-Control': 'no-store',
     ...headers,
   }).end(serialized);
+}
+
+function requestAcceptsEtag(value, etag) {
+  return String(value || '')
+    .split(',')
+    .map((candidate) => candidate.trim().replace(/^W\//u, ''))
+    .some((candidate) => candidate === '*' || candidate === etag);
 }
 
 function requestIsSecure(req, trustProxy) {
@@ -89,6 +99,7 @@ export class UserHttpApi {
     trustProxy = false,
     guestCreationLimit = DEFAULT_GUEST_CREATION_LIMIT,
     guestCreationWindowMs = DEFAULT_GUEST_CREATION_WINDOW_MS,
+    leaderboardCacheTtlMs = DEFAULT_LEADERBOARD_CACHE_TTL_MS,
     now = () => Date.now(),
   } = {}) {
     if (!userStore) throw new TypeError('userStore is required.');
@@ -102,10 +113,16 @@ export class UserHttpApi {
       guestCreationWindowMs,
       DEFAULT_GUEST_CREATION_WINDOW_MS,
     );
+    this.leaderboardCacheTtlMs = positiveInteger(
+      leaderboardCacheTtlMs,
+      DEFAULT_LEADERBOARD_CACHE_TTL_MS,
+    );
     this.now = now;
     this.guestCreationAttempts = new Map();
     this.lastGuestCreationSweepAt = this.now();
     this.sessionMaxAgeSeconds = Math.max(0, Math.trunc(userStore.sessionTtlMs / 1000));
+    this.leaderboardCache = null;
+    this.leaderboardRefreshPromise = null;
   }
 
   _authenticated(req) {
@@ -135,7 +152,62 @@ export class UserHttpApi {
     return true;
   }
 
+  async _leaderboardSnapshot() {
+    const now = this.now();
+    if (this.leaderboardCache && now < this.leaderboardCache.expiresAt) {
+      return this.leaderboardCache;
+    }
+    if (this.leaderboardRefreshPromise) return this.leaderboardRefreshPromise;
+
+    const refresh = Promise.resolve().then(() => {
+      const generatedAt = this.now();
+      const body = {
+        generatedAt,
+        ttlMs: this.leaderboardCacheTtlMs,
+        ...this.userStore.getLeaderboards(10),
+      };
+      const serialized = JSON.stringify(body);
+      const etag = `"${createHash('sha256').update(serialized).digest('base64url')}"`;
+      const snapshot = {
+        body,
+        serialized,
+        etag,
+        expiresAt: generatedAt + this.leaderboardCacheTtlMs,
+      };
+      this.leaderboardCache = snapshot;
+      return snapshot;
+    });
+    this.leaderboardRefreshPromise = refresh;
+    try {
+      return await refresh;
+    } finally {
+      if (this.leaderboardRefreshPromise === refresh) this.leaderboardRefreshPromise = null;
+    }
+  }
+
+  _sendLeaderboardSnapshot(req, res, snapshot) {
+    const maxAgeSeconds = Math.max(0, Math.floor(this.leaderboardCacheTtlMs / 1000));
+    const headers = {
+      'Cache-Control': `public, max-age=${maxAgeSeconds}, stale-while-revalidate=${maxAgeSeconds * 5}`,
+      ETag: snapshot.etag,
+    };
+    if (requestAcceptsEtag(req.headers['if-none-match'], snapshot.etag)) {
+      res.writeHead(304, headers).end();
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': Buffer.byteLength(snapshot.serialized),
+      ...headers,
+    }).end(snapshot.serialized);
+  }
+
   async handle(req, res, pathname) {
+    if (pathname === '/api/leaderboards' && req.method === 'GET') {
+      this._sendLeaderboardSnapshot(req, res, await this._leaderboardSnapshot());
+      return true;
+    }
+
     if (pathname === '/api/user/session' && req.method === 'POST') {
       const body = await readJsonBody(req);
       const token = sessionTokenFromRequest(req);

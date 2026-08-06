@@ -16,6 +16,7 @@ import {
   normalizeRoomCode,
   normalizeRoomName,
   OnlineScreens,
+  ROOM_CHAT_SYSTEM_MESSAGE_TTL_MS,
   roomCodeFromSearch,
   roomStatusMessage,
 } from '../src/ui/online-screens.js';
@@ -46,16 +47,46 @@ test('room chat timestamps and localized rate-limit copy are ready for the messa
   assert.equal(getUiCopy('zh-CN').online.room.chatRateLimited, '发送消息过快，请稍后再试');
 });
 
-test('room chat is rendered below the racer list with nickname, time, content and input controls', () => {
+test('room status and chat are stacked below the racer list with chat anchored last', () => {
   assert.match(
     onlineScreensSource,
-    /online-room-left-column[\s\S]*online-members-card[\s\S]*online-chat-card/,
+    /online-room-left-column[\s\S]*online-members-card[\s\S]*data-room-status[\s\S]*online-chat-card/,
   );
   assert.match(onlineScreensSource, /data-room-chat-list[\s\S]*data-form="chat"/);
   assert.match(onlineScreensSource, /online-chat-name[\s\S]*online-chat-time[\s\S]*online-chat-content/);
   assert.match(onlineScreensSource, /appendRoomChatSystem\(/);
   assert.match(onlineStylesSource, /\.online-room-left-column[\s\S]*flex-direction: column/);
+  assert.match(onlineStylesSource, /\.online-room-left-column > \.online-room-state \{[\s\S]*width: 100%;[\s\S]*margin: 0;/);
   assert.match(onlineStylesSource, /\.online-chat-list[\s\S]*overflow-y: auto/);
+});
+
+test('room system chat messages coalesce and expire without affecting player messages', () => {
+  assert.equal(ROOM_CHAT_SYSTEM_MESSAGE_TTL_MS, 5000);
+  const screen = Object.assign(Object.create(OnlineScreens.prototype), {
+    copy: EN_COPY,
+    _chatRoomCode: 'ABC234',
+    _chatMessages: [],
+    _chatMessageSequence: 0,
+    _chatSystemTimers: new Map(),
+    _renderRoomChat() { this.renderCount = (this.renderCount || 0) + 1; },
+    _scheduleRoomChatSystemExpiry(messageId) { this.scheduledMessageId = messageId; },
+  });
+
+  assert.equal(screen.appendRoomChat({
+    roomCode: 'ABC234',
+    participantId: 'player-1',
+    displayName: 'Turbo',
+    sentAt: Date.now(),
+    content: 'Hello',
+  }), true);
+  assert.equal(screen.appendRoomChatSystem('Slow down'), true);
+  const systemId = screen.scheduledMessageId;
+  assert.equal(screen.appendRoomChatSystem('Slow down'), true);
+  assert.equal(screen._chatMessages.length, 2);
+  assert.equal(screen.scheduledMessageId, systemId);
+
+  assert.equal(screen._expireRoomChatSystemMessage(systemId), true);
+  assert.deepEqual(screen._chatMessages.map((message) => message.content), ['Hello']);
 });
 
 test('invite links preserve only the same-page room query', () => {
@@ -429,6 +460,36 @@ test('multiplayer profile and progression UI expose every V1 statistic in both l
     onlineScreensSource,
     /data-action="profile" data-busy-action[\s\S]*?this\._renderUserProfile\(\);[\s\S]*?this\._openDialog\('profile'[\s\S]*?this\._emit\('onOpenProfile'\)/,
   );
+});
+
+test('Lobby leaderboards expose four cached tabs, placeholders, retry state, and responsive tables', () => {
+  for (const marker of [
+    'data-page-action="leaderboards"',
+    'data-dialog="leaderboards"',
+    'data-leaderboard-loading',
+    'data-leaderboard-error',
+    'data-action="retry-leaderboards"',
+    'data-leaderboard-head',
+    'data-leaderboard-body',
+  ]) {
+    assert.equal(onlineScreensSource.includes(marker), true, `missing leaderboard UI marker: ${marker}`);
+  }
+  assert.match(onlineScreensSource, /\['rating', 'champions', 'speed', 'level'\]/u);
+  assert.match(onlineScreensSource, /data-leaderboard-tab="\$\{tab\}"/u);
+  assert.match(onlineScreensSource, /for \(let index = 0; index < 10; index\+\+\)/u);
+  assert.match(onlineScreensSource, /this\.tracks\.slice\(0, 10\)/u);
+  assert.match(onlineScreensSource, /waiting: '虚位以待'/u);
+  assert.match(onlineScreensSource, /ArrowLeft[\s\S]*ArrowRight[\s\S]*Home[\s\S]*End/u);
+  assert.match(onlineScreensSource, /onOpenLeaderboards[\s\S]*force: true/u);
+  assert.match(onlineScreensSource, /online-leaderboard-level-badge[\s\S]*`Lv\$\{level\}`/u);
+  assert.match(onlineScreensSource, /entry\.rating[\s\S]*entry\.firsts[\s\S]*: level/u);
+  assert.match(onlineStylesSource, /\.online-leaderboard-dialog[\s\S]*width: min\(780px/u);
+  assert.match(onlineStylesSource, /\.online-leaderboard-dialog[\s\S]*height: min\(760px, calc\(100vh - 28px\)\)/u);
+  assert.match(onlineStylesSource, /\.online-leaderboard-tab \{[\s\S]*justify-content: center;[\s\S]*text-align: center;/u);
+  assert.match(onlineStylesSource, /@media \(max-width: 680px\)[\s\S]*\.online-leaderboard-tabs/u);
+  assert.match(onlineStylesSource, /\.online-leaderboard-table-wrap[\s\S]*flex: 1 1 auto;[\s\S]*overflow: auto/u);
+  assert.match(onlineStylesSource, /data-leaderboard-category='speed'[\s\S]*width: 40%/u);
+  assert.match(onlineStylesSource, /\.online-leaderboard-table th,[\s\S]*text-align: center/u);
 });
 
 test('Lobby and Room use field feedback, direct page actions, and persistent room state', () => {

@@ -38,7 +38,7 @@ but do not decide authoritative physics, items, laps, ranks, or results.
   `src/net/binary-race-codec.js` is the shared zero-dependency binary race codec.
 - Rooms are local to one Node process. Guest profiles and settled race results
   are durable in SQLite, while active rooms/races still have no cross-process
-  migration. V1 has no password account system or leaderboard.
+  migration. The current release has no password account system.
 
 Run with Node 22.13 or newer:
 
@@ -58,6 +58,7 @@ Configuration:
 | `USER_SESSION_CLEANUP_INTERVAL_MS` | `600000` | Expired guest-session row cleanup interval |
 | `GUEST_CREATION_LIMIT` | `0` | Maximum new guest accounts per client IP in one rate-limit window; `0` disables the limit |
 | `GUEST_CREATION_WINDOW_MS` | `600000` | New guest-account rate-limit window in milliseconds |
+| `LEADERBOARD_CACHE_TTL_MS` | `60000` | Public leaderboard snapshot cache lifetime in milliseconds |
 | `TRUST_PROXY` | `false` | Trust sanitized forwarded IP/protocol headers, including HTTPS cookie detection |
 
 Public deployments must provide TLS and forward WebSocket Upgrade requests for
@@ -354,6 +355,9 @@ waiting → loading → countdown → racing → results → waiting
 - Final settlement filters escaped players out of the pairwise Elo pool, applies
   XP/podium/finish/escape changes, and updates track records in one transaction.
   `PRIMARY KEY (race_id, user_id)` prevents duplicate accumulation.
+- `GET /api/leaderboards` returns all four public leaderboard tabs without user
+  IDs. SQLite ranking queries are indexed and the serialized snapshot is reused
+  for the configured TTL; clients load it only when the Lobby dialog opens.
 - A natural finish locks that participant's result before the shared results
   phase. Leaving or disconnecting after this point cannot convert the finish
   into an escape; disconnects that began before the finish still require a

@@ -37,6 +37,7 @@ export const ONLINE_ROOM_CAPACITY = 8;
 export const ONLINE_ROOM_MIN_CAPACITY = 2;
 export const ONLINE_ROOM_CODE_LENGTH = 6;
 export const ONLINE_ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+export const ROOM_CHAT_SYSTEM_MESSAGE_TTL_MS = 5000;
 
 const ROOM_CODE_CHARS = new Set(ONLINE_ROOM_CODE_ALPHABET);
 const ROOM_TYPES = new Set(['public', 'private']);
@@ -60,12 +61,34 @@ const PROFILE_COPY = Object.freeze({
     levelUp: '升级！LV {level}', newRecord: '刷新地图纪录',
   },
 });
+const LEADERBOARD_COPY = Object.freeze({
+  en: {
+    open: 'Open leaderboards', title: 'LEADERBOARDS', rating: 'RATING', champions: 'CHAMPIONS',
+    level: 'LEVEL', speed: 'SPEED', position: 'RANK', nickname: 'RACER',
+    levelColumn: 'LEVEL', ratingColumn: 'RATING', championsColumn: 'WINS',
+    track: 'TRACK', player: 'RACER', record: 'BEST TIME',
+    waiting: 'WAITING FOR A CHALLENGER', loading: 'Loading leaderboards...',
+    unavailable: 'Leaderboards are unavailable. Please try again.',
+    stale: 'Could not refresh. Showing the last loaded rankings.', retry: 'RETRY', close: 'CLOSE',
+  },
+  'zh-CN': {
+    open: '打开排行榜', title: '排行榜', rating: '竞技积分', champions: '冠军', level: '等级', speed: '速度',
+    position: '名次', nickname: '昵称', levelColumn: '等级', ratingColumn: '竞技积分', championsColumn: '冠军数',
+    track: '地图', player: '玩家昵称', record: '最快记录', waiting: '虚位以待', loading: '正在加载排行榜…',
+    unavailable: '排行榜暂时无法加载，请重试。', stale: '刷新失败，当前显示上次加载的数据。', retry: '重试', close: '关闭',
+  },
+});
 const ERROR_COPY_KEYS = new Map(Object.entries(ERROR_CODES).map(([key, value]) => [value, key]));
 const LOADOUT_TABS = new Set(['racer', 'paint', 'avatar']);
+const LEADERBOARD_TABS = new Set(['rating', 'champions', 'speed', 'level']);
 const MAX_ROOM_CHAT_MESSAGES = 100;
 
 function userCopy(language) {
   return PROFILE_COPY[sanitizeLanguage(language)] || PROFILE_COPY.en;
+}
+
+function leaderboardCopy(language) {
+  return LEADERBOARD_COPY[sanitizeLanguage(language)] || LEADERBOARD_COPY.en;
 }
 
 function formatRate(value) {
@@ -618,6 +641,10 @@ export class OnlineScreens {
     this._resultsState = {};
     this._resultsTrackId = '';
     this._userProfile = null;
+    this._leaderboards = null;
+    this._leaderboardTab = 'rating';
+    this._leaderboardsLoading = false;
+    this._leaderboardError = null;
     this._progressionState = null;
     this._localParticipantId = '';
     this._activeDialog = null;
@@ -632,6 +659,8 @@ export class OnlineScreens {
     this._sharedUi = null;
     this._chatRoomCode = '';
     this._chatMessages = [];
+    this._chatMessageSequence = 0;
+    this._chatSystemTimers = new Map();
 
     this._buildLobby();
     this._buildRoom();
@@ -746,10 +775,15 @@ export class OnlineScreens {
     }
   }
 
-  _pageActionsMarkup() {
+  _pageActionsMarkup({ leaderboards = false } = {}) {
     const copy = this.copy.online.pageActions;
+    const rankings = leaderboardCopy(this.language);
     return `
       <div class="online-page-actions" aria-label="${copy.label}">
+        ${leaderboards ? `<button type="button" class="online-page-action" data-page-action="leaderboards"
+          aria-label="${rankings.open}" title="${rankings.open}">
+          <span class="online-page-action-icon online-leaderboard-action-icon" aria-hidden="true">&#127942;</span>
+        </button>` : ''}
         <button type="button" class="online-page-action" data-page-action="settings"
           aria-label="${copy.settings}" title="${copy.settings}">
           <span class="online-page-action-icon" aria-hidden="true">&#9881;</span>
@@ -793,7 +827,11 @@ export class OnlineScreens {
   _wirePageActions(root) {
     for (const item of root.querySelectorAll('[data-page-action]')) {
       this._listen(item, 'click', () => {
-        if (item.dataset.pageAction === 'settings') this._emit('onOpenSettings');
+        if (item.dataset.pageAction === 'leaderboards') {
+          this._renderLeaderboards();
+          this._openDialog('leaderboards', item);
+          this._emit('onOpenLeaderboards');
+        } else if (item.dataset.pageAction === 'settings') this._emit('onOpenSettings');
         else if (item.dataset.pageAction === 'help') this._emit('onOpenHelp');
       });
     }
@@ -1049,7 +1087,7 @@ export class OnlineScreens {
                 </button>
               </div>
             </div>
-            ${this._pageActionsMarkup()}
+            ${this._pageActionsMarkup({ leaderboards: true })}
           </div>
         </header>
 
@@ -1186,11 +1224,57 @@ export class OnlineScreens {
             <button type="button" class="online-action online-action-primary" data-action="close-dialog">${profileCopy.close}</button>
           </div>
         </section>
+      </div>
+
+      <div class="online-dialog-backdrop" data-dialog="leaderboards" hidden>
+        <section class="online-dialog online-leaderboard-dialog" role="dialog" aria-modal="true"
+          aria-labelledby="online-leaderboard-heading">
+          <div class="online-dialog-header">
+            <div><p class="online-eyebrow">TURBO LEGENDS</p><h3 id="online-leaderboard-heading">${leaderboardCopy(this.language).title}</h3></div>
+            <button type="button" class="online-dialog-close" data-action="close-dialog"
+              aria-label="${leaderboardCopy(this.language).close}">&#215;</button>
+          </div>
+          <div class="online-leaderboard-tabs" role="tablist" aria-label="${leaderboardCopy(this.language).title}">
+            ${['rating', 'champions', 'speed', 'level'].map((tab) => `
+              <button type="button" class="online-leaderboard-tab" role="tab"
+                id="online-leaderboard-tab-${tab}" data-leaderboard-tab="${tab}"
+                aria-controls="online-leaderboard-panel" aria-selected="${tab === 'rating'}">
+                ${leaderboardCopy(this.language)[tab]}
+              </button>`).join('')}
+          </div>
+          <div class="online-leaderboard-status is-loading" data-leaderboard-loading role="status">
+            ${leaderboardCopy(this.language).loading}
+          </div>
+          <div class="online-leaderboard-status is-error" data-leaderboard-error role="alert" hidden>
+            <span data-leaderboard-error-text>${leaderboardCopy(this.language).unavailable}</span>
+            <button type="button" class="online-action online-action-quiet" data-action="retry-leaderboards">
+              ${leaderboardCopy(this.language).retry}
+            </button>
+          </div>
+          <div class="online-leaderboard-table-wrap" id="online-leaderboard-panel" role="tabpanel"
+            aria-labelledby="online-leaderboard-tab-rating" data-leaderboard-content hidden>
+            <table class="online-leaderboard-table">
+              <thead data-leaderboard-head></thead>
+              <tbody data-leaderboard-body></tbody>
+            </table>
+          </div>
+          <div class="online-dialog-actions">
+            <button type="button" class="online-action online-action-primary" data-action="close-dialog">
+              ${leaderboardCopy(this.language).close}
+            </button>
+          </div>
+        </section>
       </div>`;
 
     this._listen(root, 'keydown', (event) => this._handleScreenKeydown(event));
     this._listen(root.querySelector('[data-action="back"]'), 'click', () => this._emit('onBackToTitle'));
     this._wirePageActions(root);
+    for (const tab of root.querySelectorAll('[data-leaderboard-tab]')) {
+      this._listen(tab, 'click', () => this._setLeaderboardTab(tab.dataset.leaderboardTab));
+    }
+    this._listen(root.querySelector('[data-action="retry-leaderboards"]'), 'click', () => {
+      this._emit('onOpenLeaderboards', { force: true });
+    });
     for (const profileBtn of root.querySelectorAll('[data-action="profile"]')) {
       this._listen(profileBtn, 'click', (event) => {
         this._renderUserProfile();
@@ -1202,6 +1286,7 @@ export class OnlineScreens {
     for (const button of root.querySelectorAll('[data-action="close-dialog"]')) {
       this._listen(button, 'click', () => this._closeDialog());
     }
+    this._renderLeaderboards();
 
     const nickname = root.querySelector('[data-field="nickname"]');
     const search = root.querySelector('[data-field="search"]');
@@ -1295,6 +1380,7 @@ export class OnlineScreens {
               <h3>${copy.racers}</h3>
               <ol class="online-member-list" data-member-list></ol>
             </section>
+            <p class="online-room-state" data-room-status role="status" aria-live="polite"></p>
             <section class="online-card online-chat-card">
               <h3>${copy.chat}</h3>
               <ol class="online-chat-list" data-room-chat-list role="log" aria-live="polite"
@@ -1350,7 +1436,6 @@ export class OnlineScreens {
             <p class="online-host-note" data-host-note></p>
           </section>
         </div>
-        <p class="online-room-state" data-room-status role="status" aria-live="polite"></p>
         <footer class="online-room-actions">
           <button type="button" class="online-action online-action-secondary" data-action="ready">${copy.readyUp}</button>
           <button type="button" class="online-action online-action-primary" data-action="start">${copy.start}</button>
@@ -1610,6 +1695,30 @@ export class OnlineScreens {
     list.scrollTop = list.scrollHeight;
   }
 
+  _cancelRoomChatSystemTimer(messageId) {
+    if (!this._chatSystemTimers.has(messageId)) return;
+    clearTimeout(this._chatSystemTimers.get(messageId));
+    this._chatSystemTimers.delete(messageId);
+  }
+
+  _expireRoomChatSystemMessage(messageId) {
+    this._chatSystemTimers.delete(messageId);
+    const index = this._chatMessages.findIndex((message) => message.messageId === messageId);
+    if (index < 0 || !this._chatMessages[index].system) return false;
+    this._chatMessages.splice(index, 1);
+    this._renderRoomChat();
+    return true;
+  }
+
+  _scheduleRoomChatSystemExpiry(messageId) {
+    this._cancelRoomChatSystemTimer(messageId);
+    const timer = setTimeout(
+      () => this._expireRoomChatSystemMessage(messageId),
+      ROOM_CHAT_SYSTEM_MESSAGE_TTL_MS,
+    );
+    this._chatSystemTimers.set(messageId, timer);
+  }
+
   appendRoomChat(message = {}) {
     const roomCode = normalizeRoomCode(message.roomCode);
     if (roomCode && this._chatRoomCode && roomCode !== this._chatRoomCode) return false;
@@ -1619,32 +1728,58 @@ export class OnlineScreens {
     if (!content || !Number.isFinite(sentAt) || !Number.isFinite(new Date(sentAt).getTime())) {
       return false;
     }
-    this._chatMessages.push({
+    const entry = {
+      messageId: ++this._chatMessageSequence,
       roomCode: roomCode || this._chatRoomCode,
       participantId: String(message.participantId || ''),
       displayName: String(message.displayName || this.copy.online.room.system),
       sentAt,
       content,
       system: Boolean(message.system),
-    });
+    };
+    this._chatMessages.push(entry);
     if (this._chatMessages.length > MAX_ROOM_CHAT_MESSAGES) {
-      this._chatMessages.splice(0, this._chatMessages.length - MAX_ROOM_CHAT_MESSAGES);
+      const removed = this._chatMessages.splice(
+        0,
+        this._chatMessages.length - MAX_ROOM_CHAT_MESSAGES,
+      );
+      for (const item of removed) this._cancelRoomChatSystemTimer(item.messageId);
     }
     this._renderRoomChat();
     return true;
   }
 
   appendRoomChatSystem(content = this.copy.online.room.chatRateLimited) {
-    return this.appendRoomChat({
+    const normalized = normalizeChatContent(content);
+    if (!normalized) return false;
+    let existing = null;
+    for (let index = this._chatMessages.length - 1; index >= 0; index--) {
+      const message = this._chatMessages[index];
+      if (message.system && message.content === normalized) {
+        existing = message;
+        break;
+      }
+    }
+    if (existing) {
+      existing.sentAt = Date.now();
+      this._scheduleRoomChatSystemExpiry(existing.messageId);
+      this._renderRoomChat();
+      return true;
+    }
+    const appended = this.appendRoomChat({
       roomCode: this._chatRoomCode,
       displayName: this.copy.online.room.system,
       sentAt: Date.now(),
-      content,
+      content: normalized,
       system: true,
     });
+    if (appended) this._scheduleRoomChatSystemExpiry(this._chatMessageSequence);
+    return appended;
   }
 
   clearRoomChat() {
+    for (const timer of this._chatSystemTimers.values()) clearTimeout(timer);
+    this._chatSystemTimers.clear();
     this._chatRoomCode = '';
     this._chatMessages.length = 0;
     this._renderRoomChat();
@@ -1853,6 +1988,21 @@ export class OnlineScreens {
       return;
     }
     if (!this._activeDialog) return;
+    if (this._activeDialog.name === 'leaderboards'
+      && event.target?.matches?.('[data-leaderboard-tab]')
+      && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+      const tabs = [...this._activeDialog.node.querySelectorAll('[data-leaderboard-tab]')];
+      const current = tabs.indexOf(event.target);
+      if (current >= 0 && tabs.length > 0) {
+        const next = event.key === 'Home' ? 0
+          : event.key === 'End' ? tabs.length - 1
+            : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+        event.preventDefault();
+        this._setLeaderboardTab(tabs[next].dataset.leaderboardTab);
+        tabs[next].focus();
+        return;
+      }
+    }
     if (this._activeDialog.name === 'loadout'
       && event.target?.matches?.('[data-loadout-tab]')
       && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
@@ -2016,7 +2166,9 @@ export class OnlineScreens {
     node.hidden = false;
     this._activeDialog = { name, node, opener, room };
     this._clearDialogFieldErrors(name);
-    const first = node.querySelector('input:not([type="hidden"]), select, button');
+    const first = name === 'leaderboards'
+      ? node.querySelector('[data-leaderboard-tab][aria-selected="true"]')
+      : node.querySelector('input:not([type="hidden"]), select, button');
     first?.focus();
   }
 
@@ -2477,6 +2629,162 @@ export class OnlineScreens {
   updateUserProfile(profile) {
     this._userProfile = profile || null;
     this._renderUserProfile();
+  }
+
+  updateLeaderboards(snapshot) {
+    this._leaderboards = snapshot && typeof snapshot === 'object' ? snapshot : null;
+    this._renderLeaderboards();
+  }
+
+  setLeaderboardsLoading(loading) {
+    this._leaderboardsLoading = Boolean(loading);
+    if (this._leaderboardsLoading) this._leaderboardError = null;
+    this._renderLeaderboardStatus();
+  }
+
+  setLeaderboardError(failed, { stale = false } = {}) {
+    this._leaderboardError = failed ? { stale: Boolean(stale) } : null;
+    this._renderLeaderboardStatus();
+  }
+
+  _setLeaderboardTab(value) {
+    const tab = String(value || '');
+    if (!LEADERBOARD_TABS.has(tab)) return false;
+    this._leaderboardTab = tab;
+    this._renderLeaderboards();
+    return true;
+  }
+
+  _renderLeaderboardStatus() {
+    const root = this.roots.lobby;
+    if (!root) return;
+    const copy = leaderboardCopy(this.language);
+    const hasData = Boolean(this._leaderboards);
+    const loading = root.querySelector('[data-leaderboard-loading]');
+    const error = root.querySelector('[data-leaderboard-error]');
+    const errorText = root.querySelector('[data-leaderboard-error-text]');
+    const retry = root.querySelector('[data-action="retry-leaderboards"]');
+    const content = root.querySelector('[data-leaderboard-content]');
+    if (loading) loading.hidden = !this._leaderboardsLoading || hasData;
+    if (error) error.hidden = !this._leaderboardError;
+    if (errorText && this._leaderboardError) {
+      errorText.textContent = this._leaderboardError.stale ? copy.stale : copy.unavailable;
+    }
+    if (retry) retry.disabled = this._leaderboardsLoading;
+    if (content) content.hidden = !hasData;
+  }
+
+  _renderLeaderboards() {
+    const root = this.roots.lobby;
+    if (!root) return;
+    const copy = leaderboardCopy(this.language);
+    const panel = root.querySelector('[data-leaderboard-content]');
+    const table = root.querySelector('.online-leaderboard-table');
+    const head = root.querySelector('[data-leaderboard-head]');
+    const body = root.querySelector('[data-leaderboard-body]');
+    if (!panel || !table || !head || !body) return;
+    table.dataset.leaderboardCategory = this._leaderboardTab;
+
+    for (const tab of root.querySelectorAll('[data-leaderboard-tab]')) {
+      const active = tab.dataset.leaderboardTab === this._leaderboardTab;
+      tab.setAttribute('aria-selected', String(active));
+      tab.tabIndex = active ? 0 : -1;
+      if (active) panel.setAttribute('aria-labelledby', tab.id);
+    }
+
+    head.innerHTML = '';
+    body.innerHTML = '';
+    const headerRow = createNode(this.doc, 'tr', '', head);
+    const headers = this._leaderboardTab === 'speed'
+      ? [copy.track, copy.player, copy.record]
+      : [
+        copy.position,
+        copy.nickname,
+        this._leaderboardTab === 'rating'
+          ? copy.ratingColumn
+          : this._leaderboardTab === 'champions' ? copy.championsColumn : copy.levelColumn,
+      ];
+    for (const label of headers) {
+      const cell = createNode(this.doc, 'th', '', headerRow, label);
+      cell.scope = 'col';
+    }
+
+    if (this._leaderboardTab === 'speed') {
+      const records = new Map(
+        (Array.isArray(this._leaderboards?.speed) ? this._leaderboards.speed : [])
+          .map((record) => [String(record?.trackId || ''), record]),
+      );
+      for (const track of this.tracks.slice(0, 10)) {
+        const row = createNode(this.doc, 'tr', '', body);
+        const localized = localizeTrack(track, this.language);
+        const trackName = localized?.name || track.name;
+        const trackCell = createNode(this.doc, 'td', 'online-leaderboard-track', row, trackName);
+        trackCell.title = trackName;
+        const record = records.get(track.id);
+        if (!record?.displayName || record.finishTimeMs === null || record.finishTimeMs === undefined) {
+          const waiting = createNode(this.doc, 'td', 'online-leaderboard-waiting', row, copy.waiting);
+          waiting.colSpan = 2;
+        } else {
+          const nameCell = createNode(this.doc, 'td', 'online-leaderboard-name', row, record.displayName);
+          nameCell.title = record.displayName;
+          const recordCell = createNode(
+            this.doc,
+            'td',
+            'online-leaderboard-value',
+            row,
+          );
+          createNode(
+            this.doc,
+            'span',
+            'online-leaderboard-score',
+            recordCell,
+            formatProfileBestTime(record.finishTimeMs, copy.waiting),
+          );
+        }
+      }
+    } else {
+      const entries = Array.isArray(this._leaderboards?.[this._leaderboardTab])
+        ? this._leaderboards[this._leaderboardTab]
+        : [];
+      for (let index = 0; index < 10; index++) {
+        const row = createNode(this.doc, 'tr', '', body);
+        const entry = entries[index];
+        createNode(this.doc, 'td', 'online-leaderboard-position', row, String(index + 1));
+        if (!entry) {
+          const waiting = createNode(this.doc, 'td', 'online-leaderboard-waiting', row, copy.waiting);
+          waiting.colSpan = 2;
+          continue;
+        }
+        const nameCell = createNode(this.doc, 'td', 'online-leaderboard-name', row);
+        const nameWrap = createNode(this.doc, 'span', 'online-leaderboard-name-wrap', nameCell);
+        const displayName = String(entry.displayName || '');
+        const name = createNode(this.doc, 'span', 'online-leaderboard-name-text', nameWrap, displayName);
+        name.title = displayName;
+        const level = Math.max(1, Math.trunc(Number(entry.level) || 1));
+        if (this._leaderboardTab !== 'level') {
+          createNode(this.doc, 'span', 'online-leaderboard-level-badge', nameWrap, `Lv${level}`);
+        }
+        const value = this._leaderboardTab === 'rating'
+          ? Math.max(0, Math.trunc(Number(entry.rating) || 0))
+          : this._leaderboardTab === 'champions'
+            ? Math.max(0, Math.trunc(Number(entry.firsts) || 0))
+            : level;
+        const valueCell = createNode(
+          this.doc,
+          'td',
+          'online-leaderboard-value',
+          row,
+        );
+        createNode(
+          this.doc,
+          'span',
+          `online-leaderboard-score is-${this._leaderboardTab}`,
+          valueCell,
+          this._leaderboardTab === 'level' ? `Lv${value}` : String(value),
+        );
+      }
+    }
+    this._renderLeaderboardStatus();
   }
 
   updateProgression(progression) {
