@@ -37,13 +37,10 @@ test('phone lobby keeps navigation on top with the account controls at the right
   assert.match(mobileMenus, /#screen-online-lobby \.online-lobby-account \{[\s\S]*?grid-column: 2;[\s\S]*?grid-row: 1;[\s\S]*?justify-self: end;/);
 });
 
-test('the lobby nickname field has readable width and a visible edit affordance', () => {
-  assert.match(mobileMenus, /#screen-online-lobby \.online-nickname-field \{[\s\S]*?width: min\(180px, 48vw\);/);
-  assert.match(mobileMenus, /grid-template-columns: minmax\(0, 1fr\) 20px;/);
-  assert.match(mobileMenus, /#screen-online-lobby \.online-nickname-edit \{[\s\S]*?display: grid;/);
-  assert.match(mobileMenus, /#screen-online-lobby \.online-nickname-field \{ width: min\(116px, 28vw\); \}/);
-  assert.match(mobileMenus, /#screen-online-lobby \.online-profile-button \{ min-width: 48px;/);
-  assert.match(mobileMenus, /#screen-online-lobby \.online-profile-button \.online-profile-mark \{ display: none; \}/);
+test('the lobby identity card has compact sizing and visible edit affordance', () => {
+  assert.match(mobileMenus, /#screen-online-lobby .online-identity-card \{ border-width: 1\.5px; \}/);
+  assert.match(mobileMenus, /#screen-online-lobby .online-profile-mark \{ width: 26px; height: 26px;/);
+  assert.match(mobileMenus, /#screen-online-lobby .online-identity-stats \{ font-size: 8px;/);
 });
 
 test('phone portrait menu overrides do not modify in-race UI selectors', () => {

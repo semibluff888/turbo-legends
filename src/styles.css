@@ -3629,26 +3629,43 @@ body.touch #hud:not([hidden]) .hud-item-impact-label { font-size: 9px; }
   gap: 11px;
 }
 
-#screen-online-lobby .online-nickname-field {
+/* -- Integrated identity card -------------------------------------------- */
+.online-identity-card {
   position: relative;
   min-width: 0;
-  width: min(260px, 25vw);
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 28px;
+  max-width: 220px;
+  display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 5px 8px;
-  border: 2px solid rgba(255, 255, 255, 0.25);
+  gap: 0;
+  border: 2px solid rgba(255, 255, 255, 0.18);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  background: rgba(255, 255, 255, 0.06);
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
 }
 
-#screen-online-lobby .online-nickname-field:focus-within {
-  border-color: #fff;
-  background: rgba(74, 168, 255, 0.16);
-  box-shadow: 0 0 0 3px #fff, 0 0 20px rgba(74, 168, 255, 0.5);
+.online-identity-card:focus-within {
+  border-color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.09);
 }
+
+.online-identity-avatar {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  padding: 5px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  border-radius: 999px 0 0 999px;
+  transition: transform 0.14s ease;
+}
+.online-identity-avatar:hover .online-profile-mark,
+.online-identity-avatar:focus-visible .online-profile-mark {
+  border-color: var(--accent);
+  box-shadow: 0 0 14px rgba(255, 210, 63, 0.65);
+  transform: scale(1.08);
+}
+.online-identity-avatar:focus-visible { outline: none; }
 
 .online-profile-mark {
   width: 34px;
@@ -3662,44 +3679,90 @@ body.touch #hud:not([hidden]) .hud-item-impact-label { font-size: 9px; }
   font-size: 11px;
   font-weight: 1000;
   box-shadow: 0 0 10px rgba(255, 210, 63, 0.4);
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+
+.online-identity-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 8px 4px 2px;
+}
+
+#screen-online-lobby .online-nickname-field {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 #screen-online-lobby .online-nickname-field .online-input {
-  min-height: 34px;
-  padding: 2px 4px;
+  min-height: 26px;
+  padding: 1px 2px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 6px;
   background: transparent;
   box-shadow: none;
   font-size: 14px;
   font-weight: 900;
   color: #fff;
+  flex: 1;
+  min-width: 0;
 }
 
 #screen-online-lobby .online-nickname-field .online-input:focus {
-  background: transparent;
+  background: rgba(74, 168, 255, 0.1);
   box-shadow: none;
 }
 
 .online-nickname-edit {
   display: grid;
   place-items: center;
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 16px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 14px;
   pointer-events: none;
   transition: color 0.15s;
+  flex: 0 0 auto;
 }
 
 #screen-online-lobby .online-nickname-field:focus-within .online-nickname-edit {
   color: var(--accent);
 }
 
+.online-identity-stats {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 0.06em;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.online-identity-stats:hover,
+.online-identity-stats:focus-visible {
+  color: var(--accent);
+}
+.online-identity-stats:focus-visible { outline: none; }
+.online-identity-stats [data-profile-level-badge] { color: var(--accent); }
+.online-identity-stats [data-profile-rating-badge] { color: rgba(255, 255, 255, 0.65); }
+.online-identity-stats:hover [data-profile-rating-badge] { color: var(--accent); }
+.online-identity-dot { font-size: 14px; line-height: 0; color: rgba(255, 255, 255, 0.28); }
+
 #screen-online-lobby .online-nickname-field .online-field-error {
   position: absolute;
   z-index: 3;
-  top: calc(100% + 5px);
-  left: 0;
-  width: 100%;
+  top: calc(100% + 8px);
+  left: -40px;
+  width: calc(100% + 40px);
   padding: 6px 8px;
   border-radius: 8px;
   background: rgba(70, 12, 34, 0.96);
@@ -3901,7 +3964,8 @@ body.touch #hud:not([hidden]) .hud-item-impact-label { font-size: 9px; }
   .online-lobby-brand small { display: none; }
   .online-lobby-back { padding: 8px 10px; }
   .online-lobby-account { gap: 6px; }
-  #screen-online-lobby .online-nickname-field { width: min(220px, 35vw); }
+  #screen-online-lobby .online-profile-mark { width: 30px; height: 30px; font-size: 9px; }
+  #screen-online-lobby .online-nickname-field .online-input { font-size: 13px; }
   #screen-online-lobby .online-page-action { width: 42px; height: 42px; }
   .online-lobby-layout { overflow: auto; grid-template-columns: 1fr; }
   .online-lobby-sidebar { overflow: visible; display: grid; grid-template-columns: minmax(220px, 0.75fr) minmax(300px, 1.25fr); align-items: start; }
@@ -3917,7 +3981,7 @@ body.touch #hud:not([hidden]) .hud-item-impact-label { font-size: 9px; }
   #screen-online-lobby .online-directory-header { grid-template-columns: auto minmax(0, 1fr); }
   .online-lobby-brand { grid-column: 1 / -1; grid-row: 2; }
   .online-lobby-account { grid-column: 2; grid-row: 1; }
-  #screen-online-lobby .online-nickname-field { width: min(210px, 54vw); }
+  #screen-online-lobby .online-nickname-field .online-input { font-size: 12px; min-height: 24px; }
   .online-lobby-sidebar { display: flex; }
   .online-create-card { display: flex; }
   .online-create-card-heading,
@@ -4421,17 +4485,15 @@ body.touch #hud:not([hidden]) .hud-item-impact-label { font-size: 9px; }
     justify-content: flex-end;
     gap: 5px;
   }
-  #screen-online-lobby .online-nickname-field {
-    width: 100%;
-    grid-template-columns: 30px minmax(0, 1fr) 22px;
-    gap: 5px;
-    padding: 4px 6px;
-  }
+  #screen-online-lobby .online-identity-card { border-width: 1.5px; }
+  #screen-online-lobby .online-identity-avatar { padding: 4px; }
   #screen-online-lobby .online-profile-mark { width: 28px; height: 28px; font-size: 9px; }
+  #screen-online-lobby .online-identity-info { padding: 3px 7px 3px 1px; }
   #screen-online-lobby .online-nickname-field .online-input {
-    min-height: 30px;
+    min-height: 24px;
     font-size: 12px;
   }
+  #screen-online-lobby .online-identity-stats { font-size: 9px; }
   #screen-online-lobby .online-page-action,
   #screen-online-room .online-page-action {
     width: 40px;
@@ -4627,39 +4689,7 @@ body.touch #hud:not([hidden]) .hud-item-impact-label { font-size: 9px; }
   }
 }
 
-/* Keep the nickname control compact but leave enough room for its edit affordance. */
-#screen-online-lobby .online-nickname-field {
-  width: min(180px, 48vw);
-  grid-template-columns: minmax(0, 1fr) 20px;
-  gap: 4px;
-  padding: 4px 6px;
-}
-#screen-online-lobby .online-profile-mark {
-  width: 28px;
-  height: 28px;
-  font-size: 9px;
-}
-
 /* Multiplayer user profile and post-race progression. */
-.online-profile-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 96px;
-  padding: 5px 10px 5px 6px;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.online-profile-button:hover,
-.online-profile-button:focus-visible { border-color: var(--accent); background: rgba(255, 255, 255, 0.13); }
-
-.online-profile-summary { display: grid; gap: 1px; text-align: left; line-height: 1; }
-.online-profile-summary strong { color: var(--accent); font-size: 11px; letter-spacing: 0.08em; }
-.online-profile-summary small { color: rgba(255, 255, 255, 0.72); font-size: 9px; font-weight: 900; }
 .online-profile-dialog { width: min(620px, calc(100vw - 28px)); }
 .online-profile-hero { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 .online-profile-hero > div {
@@ -4690,27 +4720,19 @@ body.touch #hud:not([hidden]) .hud-item-impact-label { font-size: 9px; }
 .online-progression-values span { color: #fff; font-size: 12px; font-weight: 900; }
 
 @media (max-width: 680px) {
-  .online-profile-button { min-width: 74px; padding-right: 7px; }
-  .online-profile-summary strong { font-size: 9px; }
-  .online-profile-summary small { font-size: 8px; }
   .online-profile-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .online-progression-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .online-identity-stats { font-size: 9px; gap: 4px; }
 }
 
 @media (orientation: portrait) and (max-width: 640px) {
   #screen-online-lobby .online-lobby-account { gap: 4px; }
-  #screen-online-lobby .online-nickname-field { width: min(116px, 28vw); }
-  #screen-online-lobby .online-profile-button { min-width: 48px; gap: 0; padding: 4px 6px; }
-  #screen-online-lobby .online-profile-button .online-profile-mark { display: none; }
+  #screen-online-lobby .online-identity-card { border-width: 1.5px; }
+  #screen-online-lobby .online-identity-avatar { padding: 3px; }
+  #screen-online-lobby .online-profile-mark { width: 26px; height: 26px; font-size: 8px; }
+  #screen-online-lobby .online-identity-info { padding: 3px 6px 3px 1px; }
+  #screen-online-lobby .online-nickname-field .online-input { min-height: 22px; font-size: 11px; }
+  #screen-online-lobby .online-identity-stats { font-size: 8px; gap: 3px; }
   #screen-online-lobby .online-page-actions { gap: 3px; }
   #screen-online-lobby .online-page-action { width: 34px; height: 34px; }
-}
-#screen-online-lobby .online-nickname-field .online-input {
-  min-width: 0;
-  min-height: 30px;
-  font-size: 12px;
-}
-#screen-online-lobby .online-nickname-edit {
-  display: grid;
-  font-size: 14px;
 }

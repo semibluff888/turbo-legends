@@ -1006,22 +1006,28 @@ export class OnlineScreens {
             <small>${copy.heading}</small>
           </div>
           <div class="online-lobby-account">
-            <button type="button" class="online-profile-button" data-action="profile" data-busy-action
-              aria-label="${profileCopy.open}">
-              <span class="online-profile-mark" aria-hidden="true">TL</span>
-              <span class="online-profile-summary">
-                <strong data-profile-level-badge>LV --</strong>
-                <small data-profile-rating-badge>R ----</small>
-              </span>
-            </button>
-            <label class="online-nickname-field">
-              <span class="sr-only">${copy.nickname}</span>
-              <input class="online-input" data-field="nickname" type="text" maxlength="20"
-                autocomplete="nickname" spellcheck="false" placeholder="${copy.nicknamePlaceholder}"
-                aria-describedby="online-nickname-error" />
-              <span class="online-nickname-edit" aria-hidden="true">&#9998;</span>
-              <span id="online-nickname-error" class="online-field-error" data-field-error="nickname" role="alert" hidden></span>
-            </label>
+            <div class="online-identity-card">
+              <button type="button" class="online-identity-avatar" data-action="profile" data-busy-action
+                aria-label="${profileCopy.open}">
+                <span class="online-profile-mark" aria-hidden="true">TL</span>
+              </button>
+              <div class="online-identity-info">
+                <label class="online-nickname-field">
+                  <span class="sr-only">${copy.nickname}</span>
+                  <input class="online-input" data-field="nickname" type="text" maxlength="20"
+                    autocomplete="nickname" spellcheck="false" placeholder="${copy.nicknamePlaceholder}"
+                    aria-describedby="online-nickname-error" />
+                  <span class="online-nickname-edit" aria-hidden="true">&#9998;</span>
+                  <span id="online-nickname-error" class="online-field-error" data-field-error="nickname" role="alert" hidden></span>
+                </label>
+                <button type="button" class="online-identity-stats" data-action="profile" data-busy-action
+                  aria-label="${profileCopy.open}">
+                  <span data-profile-level-badge>LV --</span>
+                  <span class="online-identity-dot" aria-hidden="true">&middot;</span>
+                  <span data-profile-rating-badge>----</span>
+                </button>
+              </div>
+            </div>
             ${this._pageActionsMarkup()}
           </div>
         </header>
@@ -1164,11 +1170,13 @@ export class OnlineScreens {
     this._listen(root, 'keydown', (event) => this._handleScreenKeydown(event));
     this._listen(root.querySelector('[data-action="back"]'), 'click', () => this._emit('onBackToTitle'));
     this._wirePageActions(root);
-    this._listen(root.querySelector('[data-action="profile"]'), 'click', (event) => {
-      this._renderUserProfile();
-      this._openDialog('profile', event.currentTarget);
-      this._emit('onOpenProfile');
-    });
+    for (const profileBtn of root.querySelectorAll('[data-action="profile"]')) {
+      this._listen(profileBtn, 'click', (event) => {
+        this._renderUserProfile();
+        this._openDialog('profile', event.currentTarget);
+        this._emit('onOpenProfile');
+      });
+    }
     this._listen(root.querySelector('[data-action="quick"]'), 'click', () => this._submitQuickMatch());
     for (const button of root.querySelectorAll('[data-action="close-dialog"]')) {
       this._listen(button, 'click', () => this._closeDialog());
@@ -2356,7 +2364,7 @@ export class OnlineScreens {
     const levelBadge = root.querySelector('[data-profile-level-badge]');
     const ratingBadge = root.querySelector('[data-profile-rating-badge]');
     if (levelBadge) levelBadge.textContent = profile ? `LV ${level}` : 'LV --';
-    if (ratingBadge) ratingBadge.textContent = profile ? `R ${rating}` : 'R ----';
+    if (ratingBadge) ratingBadge.textContent = profile ? `${rating}` : '----';
     const levelNode = root.querySelector('[data-profile-level]');
     const ratingNode = root.querySelector('[data-profile-rating]');
     if (levelNode) levelNode.textContent = `LV ${level}`;
