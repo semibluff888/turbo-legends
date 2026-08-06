@@ -1148,7 +1148,8 @@ export class OnlineScreens {
                 aria-label="${copy.copyInvite}" title="${copy.copyInvite}">
                 <span data-room-code>------</span>
                 <svg class="online-room-share-icon" aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-                  <path d="M14 5l5 5-5 5M19 10H9a5 5 0 0 0-5 5v4" />
+                  <path class="online-room-share-frame" d="M9.5 5H4.5v14.5h15V14" />
+                  <path class="online-room-share-arrow" d="M13 2v3.4c-4.8.75-7.8 3.6-8.8 8.8 2.25-2.7 5.2-4.05 8.8-4.1V14l10-6.6L13 2Z" />
                 </svg>
               </button>
             </div>
@@ -1198,7 +1199,6 @@ export class OnlineScreens {
               <span class="online-checkbox-mark" aria-hidden="true"></span>
               <span class="online-checkbox-copy">
                 <strong>${copy.autoFillAi}</strong>
-                <small>${copy.autoFillAiHelp}</small>
               </span>
             </label>
             <p class="online-host-note" data-host-note></p>
@@ -1849,7 +1849,6 @@ export class OnlineScreens {
       card.dataset.roomCode = room.roomCode;
       const title = createNode(this.doc, 'div', 'online-room-list-title', card);
       const titleLine = createNode(this.doc, 'div', 'online-room-list-title-line', title);
-      createNode(this.doc, 'h4', '', titleLine, room.roomName);
       const type = createNode(
         this.doc,
         'span',
@@ -1858,6 +1857,7 @@ export class OnlineScreens {
         room.roomType === 'private' ? copy.privateBadge : copy.publicBadge,
       );
       type.title = room.requiresPassword ? copy.passwordRequired : copy.noPasswordRequired;
+      createNode(this.doc, 'h4', '', titleLine, room.roomName);
       createNode(this.doc, 'span', 'online-room-list-code', title, room.roomCode);
 
       const track = createNode(this.doc, 'div', 'online-room-list-track', card);
@@ -2187,19 +2187,19 @@ export class OnlineScreens {
       const paintDot = createNode(this.doc, 'span', 'online-result-paint', racer);
       paintDot.style.background = paint ? cssColor(paint.color) : 'currentColor';
       createNode(this.doc, 'span', 'online-result-name', racer, result.displayName);
-      const character = this.characterById.get(result.characterId);
-      if (character) createNode(this.doc, 'span', 'online-result-character', racer, character.name);
       if (result.isLocal) createNode(this.doc, 'span', 'online-mini-chip', racer, this.copy.online.room.you);
       createNode(this.doc, 'td', 'online-result-time', row, result.finished ? formatOnlineTime(result.finishTime) : 'DNF');
       createNode(this.doc, 'td', 'online-result-time', row, formatOnlineTime(result.bestLap));
     });
     const countdown = view.autoReturnSeconds === null
       ? ''
-      : ` ${this.copy.online.results.autoReturn.replace(
+      : this.copy.online.results.autoReturn.replace(
         '{seconds}',
         String(Math.max(0, Math.ceil(view.autoReturnSeconds))),
-      )}`;
-    this.showStatus(`${context.status ?? this.copy.online.results.returnHint}${countdown}`, 'results');
+      );
+    const statusText = context.status ?? '';
+    const fullStatus = [statusText, countdown].filter(Boolean).join(' ');
+    this.showStatus(fullStatus, 'results');
     if (context.error) this.showError(context.error, 'results');
     else if (context.clearError) this.clearError('results');
     root.querySelector('[data-action="return"]').disabled = this._busy;

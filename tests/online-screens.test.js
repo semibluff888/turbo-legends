@@ -415,6 +415,9 @@ test('Lobby and Room refreshed layouts keep aligned controls and consistent butt
 
   assert.match(roomSource, /class="online-back online-room-back" data-action="leave"/);
   assert.match(roomSource, /class="online-room-share-icon"/);
+  assert.match(roomSource, /class="online-room-share-frame"/);
+  assert.match(roomSource, /class="online-room-share-arrow"/);
+  assert.match(onlineStylesSource, /\.online-room-share-arrow \{[\s\S]*?fill: currentColor;[\s\S]*?stroke: none;/);
   assert.match(roomSource, /data-room-track-preview/);
   assert.match(roomSource, /data-room-track-description/);
   assert.match(roomSource, /data-room-track-laps/);
