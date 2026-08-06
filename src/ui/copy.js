@@ -288,6 +288,9 @@ const ZH_COPY = {
   },
 };
 
+EN_COPY.online.errors.AUTHENTICATION_REQUIRED = 'Enter multiplayer again to restore your guest profile.';
+ZH_COPY.online.errors.AUTHENTICATION_REQUIRED = '请重新进入多人模式以恢复游客资料。';
+
 const ENTITY_COPY = deepFreeze({
   en: {
     characters: {}, tracks: {}, paints: {}, avatars: {},

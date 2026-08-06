@@ -12,6 +12,8 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: 5173
+      USER_DB_PATH: /data/users.sqlite
+      USER_SESSION_CLEANUP_INTERVAL_MS: 600000
       METRICS_TOKEN: ""
       METRICS_LOG_INTERVAL_MS: 60000
       TRUST_PROXY: "false"
@@ -23,6 +25,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+    volumes:
+      - turbo-legends-data:/data
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -33,3 +37,6 @@ services:
         max-size: "10m"
         max-file: "3"
     stop_grace_period: 15s
+
+volumes:
+  turbo-legends-data:

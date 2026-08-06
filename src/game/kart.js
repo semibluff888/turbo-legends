@@ -134,6 +134,7 @@ export class Kart {
     this.lap = 0;              // 0 until the first crossing of the line
     this.rank = index + 1;
     this.finished = false;
+    this.autoPlaced = false;
     this.finishTime = 0;
     this.lapTimes = [];
     this.currentLapStart = 0;
@@ -321,6 +322,7 @@ export class Kart {
     this.lap = 0;
     this.progress = 0;
     this.finished = false;
+    this.autoPlaced = false;
     this.finishTime = 0;
     this.lapTimes = [];
     this.currentLapStart = 0;

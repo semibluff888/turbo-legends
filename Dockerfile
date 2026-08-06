@@ -7,6 +7,8 @@ WORKDIR /app
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=5173 \
+    USER_DB_PATH=/data/users.sqlite \
+    USER_SESSION_CLEANUP_INTERVAL_MS=600000 \
     METRICS_TOKEN="" \
     METRICS_LOG_INTERVAL_MS=60000 \
     TRUST_PROXY=false \
@@ -25,6 +27,10 @@ COPY --chown=node:node server ./server
 COPY --chown=node:node src ./src
 COPY --chown=node:node vendor ./vendor
 COPY --chown=node:node sound ./sound
+
+RUN mkdir -p /data && chown node:node /data
+
+VOLUME ["/data"]
 
 USER node
 

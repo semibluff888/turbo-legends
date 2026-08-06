@@ -59,8 +59,18 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+let guestSequence = 0;
+
 async function connect(url, origin) {
-  const socket = new WebSocket(url, { headers: { Origin: origin } });
+  const session = await fetch(`${origin}/api/user/session`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ displayName: `Smoke Guest ${++guestSequence}` }),
+  });
+  if (!session.ok) throw new Error(`Guest bootstrap failed with HTTP ${session.status}.`);
+  const cookie = session.headers.get('set-cookie')?.split(';')[0];
+  if (!cookie) throw new Error('Guest bootstrap did not return a session cookie.');
+  const socket = new WebSocket(url, { headers: { Origin: origin, Cookie: cookie } });
   const messages = [];
   const waiters = [];
   const raceIds = new Map();

@@ -1,7 +1,7 @@
 # Docker 部署说明
 
-本项目由同一个 Node.js 进程提供网页、`/ws` WebSocket 联机服务、
-`/api/stats` 公开统计和 `/healthz` 健康检查。默认 Docker Compose 配置会将 VPS 的 TCP `8888`
+本项目由同一个 Node.js 进程提供网页、`/ws` WebSocket 联机服务、游客资料 API、
+`/api/stats` 公开统计和 `/healthz` 健康检查。多人用户资料保存在 SQLite 中。默认 Docker Compose 配置会将 VPS 的 TCP `8888`
 端口映射到容器内的 `5173` 端口。
 
 ## 1. VPS 准备
@@ -54,8 +54,8 @@ http://VPS的公网IP:8888/
 
 ## 3. 更新版本
 
-协议 v4 必须按“页面静态资源 + Node 服务端”同一镜像原子发布，不能只更新其中一侧。
-旧的 v3 页面会收到 `client_update_required` 并以 WebSocket `4006` 关闭，界面会要求
+协议 v5 必须按“页面静态资源 + Node 服务端”同一镜像原子发布，不能只更新其中一侧。
+旧协议页面会收到 `client_update_required` 并以 WebSocket `4006` 关闭，界面会要求
 刷新；这是预期行为，不应由代理把该连接自动改写为普通重连。
 
 ```bash
@@ -65,9 +65,9 @@ docker compose up -d --build
 docker compose ps
 ```
 
-发布失败时应整体回滚到上一镜像/上一 Git 提交，再重新构建并启动；不要尝试让 v3
-页面连接 v4 服务端，也不要单独回滚 `src/net/binary-race-codec.js`。由于房间和比赛均为
-内存状态，任何重启或回滚都会清空当前对局。
+发布失败时应整体回滚到上一镜像/上一 Git 提交，再重新构建并启动；不要尝试让旧协议
+页面连接 v5 服务端，也不要单独回滚 `src/net/binary-race-codec.js`。房间和比赛仍为
+内存状态，任何重启或回滚都会清空当前对局；已结算用户资料由数据卷保留。
 
 查看实时日志：
 
@@ -92,7 +92,10 @@ docker compose down
 ```
 
 房间、比赛和断线重连令牌只保存在进程内存中。重新构建、重启或停止容器
-都会清空当前房间和比赛，这是现有服务端的设计行为。项目不需要挂载数据卷。
+都会清空当前房间和比赛，这是现有服务端的设计行为。游客账号、已结算赛果、经验、
+Rating 和地图纪录保存在命名卷 `turbo-legends-data` 的 `/data/users.sqlite` 中，普通的
+`docker compose down`、重建和重启不会删除它。只有明确执行 `docker compose down -v`
+或手工删除该卷才会清除用户数据。
 Compose 已将容器日志限制为最多 3 个 10 MB 文件，避免长期运行无限占用磁盘。
 
 ## 5. 常见问题
@@ -102,14 +105,18 @@ Compose 已将容器日志限制为最多 3 个 10 MB 文件，避免长期运�
 - 页面能打开但联机失败：检查浏览器开发者工具中的 `/ws` 请求和容器日志；
   直连 IP 时请求地址应为 `ws://VPS_IP:8888/ws`。
 - 容器反复重启：运行 `docker compose logs --tail=200 turbo-legends` 查看启动错误。
+- 用户资料无法保存：检查 `docker volume inspect turbo-legends-data`，并确认容器内
+  `USER_DB_PATH=/data/users.sqlite` 且 `/data` 可写。
 - 后续使用域名和 HTTPS 时，需要让反向代理同时转发普通 HTTP 请求和 `/ws` 的
   WebSocket Upgrade 请求。浏览器会自动从 `ws://` 切换为 `wss://`。
 - 只有在可信反向代理会覆盖并清洗 `X-Forwarded-For` 时才设置 `TRUST_PROXY=true`；
-  直接暴露 Node 端口时保持默认 `false`。
+  代理还应正确设置 `X-Forwarded-Proto=https`，以便游客 Cookie 增加 `Secure`；直接暴露
+  Node 端口时保持默认 `false`。
 
 ## 6. 当前部署边界
 
-- 服务端是单进程、内存状态架构，只应运行一个副本；不能直接做多副本负载均衡。
+- 活跃房间是单进程内存状态架构，只应运行一个副本；SQLite 用户库也不能直接由多个
+  独立游戏副本共享后做无状态负载均衡。
 - 游戏服务端以 60 Hz 模拟活跃比赛，VPS 容量应按同时活跃的房间数量进行压测后确定。
 - 当前静态资源由 Node.js 直接提供：入口 HTML 使用 `no-cache`，其他未指纹资源使用
   `public, max-age=0, must-revalidate`；带 `v` 版本参数的 `/sound/*` 使用一年
@@ -123,6 +130,6 @@ Compose 已将容器日志限制为最多 3 个 10 MB 文件，避免长期运�
 - `/ws` 必须转发 HTTP/1.1 Upgrade/Connection 头、关闭代理缓冲并设置长于 30 秒恢复窗口的
   空闲超时；不要将 WebSocket 流量送入静态缓存或 CDN 页面缓存规则。
 - 代理必须透明转发 WebSocket 文本帧和二进制帧，不能把二进制比赛快照转换为文本、
-  启用 `perMessageDeflate` 或对 `/ws` 做内容缓存。协议 v4 的快照和输入分别是共享二进制
+  启用 `perMessageDeflate` 或对 `/ws` 做内容缓存。协议 v5 的快照和输入分别是共享二进制
   完整包与固定 28 字节包。
 - 直接使用公网 HTTP 不加密传输。域名准备好后应启用 HTTPS。

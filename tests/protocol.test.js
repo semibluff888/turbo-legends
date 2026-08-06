@@ -18,8 +18,8 @@ import {
   validateClientMessage,
 } from '../src/net/protocol.js';
 
-test('protocol v4 exports Lobby, Room, loading ACK, and matchmaking message names', () => {
-  assert.equal(PROTOCOL_VERSION, 4);
+test('protocol v5 exports Lobby, Room, progression, loading ACK, and matchmaking message names', () => {
+  assert.equal(PROTOCOL_VERSION, 5);
   assert.equal(CLIENT_UPDATE_CLOSE_CODE, 4006);
   assert.equal(CLIENT_MESSAGE_TYPES.ENTER_LOBBY, 'enter_lobby');
   assert.equal(CLIENT_MESSAGE_TYPES.CREATE_ROOM, 'create_room');
@@ -33,6 +33,7 @@ test('protocol v4 exports Lobby, Room, loading ACK, and matchmaking message name
   assert.equal(SERVER_MESSAGE_TYPES.PREPARE_RACE, 'prepare_race');
   assert.equal(SERVER_MESSAGE_TYPES.RACE_LOADED_ACK, 'race_loaded_ack');
   assert.equal(SERVER_MESSAGE_TYPES.SERVER_STATS, 'server_stats');
+  assert.equal(SERVER_MESSAGE_TYPES.USER_PROGRESSION, 'user_progression');
   assert.equal(ROOM_STATES.WAITING, 'waiting');
   assert.equal(ROOM_TYPES.PUBLIC, 'public');
   assert.equal(ROOM_TYPES.PRIVATE, 'private');
@@ -67,7 +68,7 @@ test('online loadouts validate atomically and can accompany room entry', () => {
   });
   assert.equal(join.ok, true);
   assert.deepEqual(join.value, {
-    type: 'join_room', v: PROTOCOL_VERSION, roomCode: 'ABC234', displayName: 'Kit',
+    type: 'join_room', v: PROTOCOL_VERSION, roomCode: 'ABC234',
     characterId: 'kit', paintId: 'pearl-flash', avatarId: 'rabbit',
   });
 });
@@ -113,7 +114,6 @@ test('create-room validation normalizes metadata and keeps a private password ca
     value: {
       type: 'create_room',
       v: PROTOCOL_VERSION,
-      displayName: 'Nova',
       roomName: 'Nova Night',
       roomType: 'private',
       maxPlayers: 6,
@@ -206,18 +206,20 @@ test('input validation rejects non-boolean button fields', () => {
   assert.equal(result.error.code, ERROR_CODES.INVALID_MESSAGE);
 });
 
-test('protocol rejects old versions, invalid names, and ambiguous room codes', () => {
+test('protocol rejects old versions and ambiguous room codes while ignoring client names', () => {
   assert.equal(normalizeRoomCode(' abC234 '), 'ABC234');
 
   const badVersion = validateClientMessage({ type: 'ping', v: 1 });
   assert.equal(badVersion.ok, false);
   assert.equal(badVersion.error.code, ERROR_CODES.UNSUPPORTED_VERSION);
 
-  const badName = validateClientMessage({
+  const ignoredName = validateClientMessage({
     type: 'quick_match', v: PROTOCOL_VERSION, displayName: 'A\u202eB',
   });
-  assert.equal(badName.ok, false);
-  assert.equal(badName.error.code, ERROR_CODES.NAME_INVALID);
+  assert.deepEqual(ignoredName, {
+    ok: true,
+    value: { type: 'quick_match', v: PROTOCOL_VERSION },
+  });
 
   const badCode = validateClientMessage({
     type: 'join_room', v: PROTOCOL_VERSION, roomCode: 'OI10LL', displayName: 'Pip',
@@ -226,7 +228,7 @@ test('protocol rejects old versions, invalid names, and ambiguous room codes', (
   assert.equal(badCode.error.code, ERROR_CODES.ROOM_NOT_FOUND);
 });
 
-test('join validation accepts nickname/code aliases and an optional password', () => {
+test('join validation accepts a code alias and optional password while ignoring nickname aliases', () => {
   const result = validateClientMessage({
     type: 'join_room', v: PROTOCOL_VERSION, code: 'abc234', nickname: '  Nova  ', password: 'PitLane9',
   });
@@ -237,7 +239,6 @@ test('join validation accepts nickname/code aliases and an optional password', (
       v: PROTOCOL_VERSION,
       roomCode: 'ABC234',
       password: 'PitLane9',
-      displayName: 'Nova',
     },
   });
 });

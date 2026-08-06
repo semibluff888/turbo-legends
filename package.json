@@ -13,7 +13,7 @@
     "ab:multiplayer-phase2": "node --expose-gc tools/multiplayer-phase2-ab.mjs"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.13"
   },
   "dependencies": {
     "ws": "^8.18.0"

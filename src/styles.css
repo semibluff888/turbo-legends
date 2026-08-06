@@ -4630,7 +4630,7 @@ body.touch #hud:not([hidden]) .hud-item-impact-label { font-size: 9px; }
 /* Keep the nickname control compact but leave enough room for its edit affordance. */
 #screen-online-lobby .online-nickname-field {
   width: min(180px, 48vw);
-  grid-template-columns: 28px minmax(0, 1fr) 20px;
+  grid-template-columns: minmax(0, 1fr) 20px;
   gap: 4px;
   padding: 4px 6px;
 }
@@ -4638,6 +4638,72 @@ body.touch #hud:not([hidden]) .hud-item-impact-label { font-size: 9px; }
   width: 28px;
   height: 28px;
   font-size: 9px;
+}
+
+/* Multiplayer user profile and post-race progression. */
+.online-profile-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 96px;
+  padding: 5px 10px 5px 6px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.online-profile-button:hover,
+.online-profile-button:focus-visible { border-color: var(--accent); background: rgba(255, 255, 255, 0.13); }
+
+.online-profile-summary { display: grid; gap: 1px; text-align: left; line-height: 1; }
+.online-profile-summary strong { color: var(--accent); font-size: 11px; letter-spacing: 0.08em; }
+.online-profile-summary small { color: rgba(255, 255, 255, 0.72); font-size: 9px; font-weight: 900; }
+.online-profile-dialog { width: min(620px, calc(100vw - 28px)); }
+.online-profile-hero { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.online-profile-hero > div {
+  display: grid;
+  gap: 3px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 14px;
+}
+.online-profile-hero span,
+.online-profile-stats span { color: rgba(255, 255, 255, 0.55); font-size: 10px; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; }
+.online-profile-hero strong { color: var(--accent); font-size: 24px; }
+.online-profile-progress { height: 8px; overflow: hidden; background: rgba(255, 255, 255, 0.09); border-radius: 999px; }
+.online-profile-progress span { display: block; width: 0; height: 100%; background: linear-gradient(90deg, var(--accent), #ff5fa2); transition: width 0.25s ease; }
+.online-profile-xp { margin: -7px 0 0; color: rgba(255, 255, 255, 0.65); font-size: 11px; font-weight: 800; text-align: right; }
+.online-profile-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.online-profile-stats > div { display: grid; gap: 4px; padding: 10px; background: rgba(0, 0, 0, 0.16); border-radius: 10px; }
+.online-profile-stats strong { font-size: 18px; }
+.online-profile-records-heading { margin: 3px 0 -5px; color: rgba(255, 255, 255, 0.68); font-size: 11px; letter-spacing: 0.1em; }
+.online-profile-records { display: grid; gap: 5px; max-height: 190px; overflow-y: auto; }
+.online-profile-record { display: flex; justify-content: space-between; gap: 14px; padding: 8px 10px; background: rgba(255, 255, 255, 0.05); border-radius: 9px; font-size: 12px; }
+.online-profile-record strong { color: var(--accent); font-variant-numeric: tabular-nums; }
+.online-progression-card { display: grid; gap: 8px; padding: 13px 16px; background: linear-gradient(120deg, rgba(255, 210, 63, 0.13), rgba(255, 95, 162, 0.1)); border: 1px solid rgba(255, 210, 63, 0.26); border-radius: 14px; }
+.online-progression-card p { margin: 0; color: rgba(255, 255, 255, 0.72); font-size: 12px; font-weight: 800; }
+.online-progression-values { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; }
+.online-progression-values strong { color: var(--accent); font-size: 17px; }
+.online-progression-values span { color: #fff; font-size: 12px; font-weight: 900; }
+
+@media (max-width: 680px) {
+  .online-profile-button { min-width: 74px; padding-right: 7px; }
+  .online-profile-summary strong { font-size: 9px; }
+  .online-profile-summary small { font-size: 8px; }
+  .online-profile-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .online-progression-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (orientation: portrait) and (max-width: 640px) {
+  #screen-online-lobby .online-lobby-account { gap: 4px; }
+  #screen-online-lobby .online-nickname-field { width: min(116px, 28vw); }
+  #screen-online-lobby .online-profile-button { min-width: 48px; gap: 0; padding: 4px 6px; }
+  #screen-online-lobby .online-profile-button .online-profile-mark { display: none; }
+  #screen-online-lobby .online-page-actions { gap: 3px; }
+  #screen-online-lobby .online-page-action { width: 34px; height: 34px; }
 }
 #screen-online-lobby .online-nickname-field .online-input {
   min-width: 0;

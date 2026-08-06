@@ -22,6 +22,7 @@ import {
   decodeInputPacket,
 } from '../src/net/binary-race-codec.js';
 import { asErrorMessage, GameError } from './game-error.js';
+import { sessionTokenFromRequest } from './user-store.js';
 
 const AUTH_ACTIONS = new Set([
   CLIENT_MESSAGE_TYPES.CREATE_ROOM,
@@ -139,10 +140,13 @@ export function attachGameWebSocket(httpServer, {
   slowClientBytes = SLOW_CLIENT_BACKPRESSURE_BYTES,
   stringify = JSON.stringify,
   metrics = null,
+  userStore = null,
   lobbyBroadcastDebounceMs = nonNegativeNumber(process.env.LOBBY_BROADCAST_DEBOUNCE_MS, 100),
   serverStatsDebounceMs = 250,
 } = {}) {
-  if (!httpServer || !roomManager) throw new TypeError('httpServer and roomManager are required.');
+  if (!httpServer || !roomManager || !userStore) {
+    throw new TypeError('httpServer, roomManager and userStore are required.');
+  }
 
   const originAllowlist = normalizeAllowedOrigins(allowedOrigins);
   const wss = new WebSocketServer({
@@ -323,6 +327,7 @@ export function attachGameWebSocket(httpServer, {
     send(session, serverMessage(SERVER_MESSAGE_TYPES.WELCOME, {
       connectionId: session.connectionId,
       serverTime: Date.now(),
+      user: userStore.getProfile(session.userId),
       ...sessionState,
       session: sessionState,
     }));
@@ -413,7 +418,12 @@ export function attachGameWebSocket(httpServer, {
         lobbySessions.delete(session);
         session.inLobby = false;
         try {
-          bindParticipant(session, await roomManager.createRoom(message));
+          const profile = userStore.getProfile(session.userId);
+          bindParticipant(session, await roomManager.createRoom({
+            ...message,
+            userId: session.userId,
+            displayName: profile.user.displayName,
+          }));
         } catch (error) {
           subscribeLobby(session, { sendState: false });
           throw error;
@@ -424,7 +434,12 @@ export function attachGameWebSocket(httpServer, {
         lobbySessions.delete(session);
         session.inLobby = false;
         try {
-          bindParticipant(session, await roomManager.joinRoom(message.roomCode, message));
+          const profile = userStore.getProfile(session.userId);
+          bindParticipant(session, await roomManager.joinRoom(message.roomCode, {
+            ...message,
+            userId: session.userId,
+            displayName: profile.user.displayName,
+          }));
         } catch (error) {
           subscribeLobby(session, { sendState: false });
           throw error;
@@ -435,7 +450,12 @@ export function attachGameWebSocket(httpServer, {
         lobbySessions.delete(session);
         session.inLobby = false;
         try {
-          bindParticipant(session, await roomManager.quickMatch(message));
+          const profile = userStore.getProfile(session.userId);
+          bindParticipant(session, await roomManager.quickMatch({
+            ...message,
+            userId: session.userId,
+            displayName: profile.user.displayName,
+          }));
         } catch (error) {
           subscribeLobby(session, { sendState: false });
           throw error;
@@ -447,7 +467,7 @@ export function attachGameWebSocket(httpServer, {
         session.inLobby = false;
         try {
           bindParticipant(session, roomManager.resume(
-            message.roomCode, message.participantId, message.resumeToken,
+            message.roomCode, message.participantId, message.resumeToken, session.userId,
           ));
         } catch (error) {
           session.inLobby = false;
@@ -480,7 +500,7 @@ export function attachGameWebSocket(httpServer, {
       case CLIENT_MESSAGE_TYPES.INPUT:
         throw new GameError(
           ERROR_CODES.INVALID_MESSAGE,
-          'Protocol v4 race input must use the binary input packet.',
+          'Protocol v5 race input must use the binary input packet.',
         );
       case CLIENT_MESSAGE_TYPES.RETURN_ROOM:
         roomManager.returnToRoom(session.participantId);
@@ -570,6 +590,12 @@ export function attachGameWebSocket(httpServer, {
       rejectUpgrade(socket, '403 Forbidden', 'Forbidden');
       return;
     }
+    const auth = userStore.resolveSession(sessionTokenFromRequest(request));
+    if (!auth) {
+      rejectUpgrade(socket, '401 Unauthorized', 'Authentication required');
+      return;
+    }
+    request.authUser = auth;
     wss.handleUpgrade(request, socket, head, (webSocket) => {
       wss.emit('connection', webSocket, request);
     });
@@ -580,6 +606,7 @@ export function attachGameWebSocket(httpServer, {
       socket,
       connectionId: connectionId(),
       ip: clientAddress(request, trustProxy),
+      userId: request.authUser.userId,
       participantId: null,
       roomCode: null,
       inLobby: false,
@@ -643,11 +670,11 @@ export function attachGameWebSocket(httpServer, {
       const raw = data.toString('utf8');
       try {
         const legacy = JSON.parse(raw);
-        if (legacy?.v === 3) {
-          metrics?.recordTraffic('inbound', 'protocol_v3', messageBytes);
+        if (Number.isInteger(legacy?.v) && legacy.v < PROTOCOL_VERSION) {
+          metrics?.recordTraffic('inbound', `protocol_v${legacy.v}`, messageBytes);
           metrics?.recordProtocolV3Rejected?.();
           const terminal = stringify({
-            v: 3,
+            v: legacy.v,
             type: SERVER_MESSAGE_TYPES.ERROR,
             code: ERROR_CODES.CLIENT_UPDATE_REQUIRED,
             message: 'The game was updated. Refresh the page to continue.',
@@ -679,6 +706,7 @@ export function attachGameWebSocket(httpServer, {
       connectionId: session.connectionId,
       serverTime: Date.now(),
       protocolVersion: PROTOCOL_VERSION,
+      user: request.authUser.profile,
       session: null,
     }));
     scheduleServerStats();

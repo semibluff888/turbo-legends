@@ -36,8 +36,37 @@ const ROOM_CODE_CHARS = new Set(ONLINE_ROOM_CODE_ALPHABET);
 const ROOM_TYPES = new Set(['public', 'private']);
 const IN_GAME_PHASES = new Set(['loading', 'countdown', 'racing', 'race', 'results', 'in_game', 'ingame']);
 const MEDALS = ['\u{1F947}', '\u{1F948}', '\u{1F949}'];
+const PROFILE_COPY = Object.freeze({
+  en: {
+    open: 'Open player profile', title: 'PLAYER PROFILE', level: 'Level', rating: 'Rating',
+    races: 'Races', finishes: 'Finishes', completionRate: 'Finish rate', escapes: 'Escapes',
+    escapeRate: 'Escape rate', firsts: 'Wins', seconds: 'Second', thirds: 'Third',
+    records: 'FASTEST FINISHES', noRecord: '--', close: 'Close', syncing: 'Syncing player stats...',
+    failed: 'Stats update failed', xp: 'Experience', unchanged: 'Rating unchanged',
+    levelUp: 'LEVEL UP! LV {level}', newRecord: 'NEW TRACK RECORD',
+  },
+  'zh-CN': {
+    open: '打开玩家资料', title: '玩家资料', level: '等级', rating: '竞技分',
+    races: '比赛场次', finishes: '完赛场次', completionRate: '完赛率', escapes: '逃跑次数',
+    escapeRate: '逃跑率', firsts: '冠军', seconds: '亚军', thirds: '季军',
+    records: '各地图最快完赛', noRecord: '--', close: '关闭', syncing: '正在同步用户数据…',
+    failed: '数据统计更新失败', xp: '经验', unchanged: '竞技分未变化',
+    levelUp: '升级！LV {level}', newRecord: '刷新地图纪录',
+  },
+});
 const ERROR_COPY_KEYS = new Map(Object.entries(ERROR_CODES).map(([key, value]) => [value, key]));
 const LOADOUT_TABS = new Set(['racer', 'paint', 'avatar']);
+
+function userCopy(language) {
+  return PROFILE_COPY[sanitizeLanguage(language)] || PROFILE_COPY.en;
+}
+
+function formatRate(value) {
+  const rate = Number(value);
+  return `${(Number.isFinite(rate) ? Math.max(0, rate) : 0) * 100}`
+    .replace(/(\.\d)\d+$/u, '$1')
+    .replace(/\.0$/u, '') + '%';
+}
 
 const cssColor = (value) => `#${(value >>> 0).toString(16).padStart(6, '0')}`;
 
@@ -247,6 +276,14 @@ export function formatOnlineTime(seconds) {
   const minutes = Math.floor(value / 60);
   const remainder = value - minutes * 60;
   return `${minutes}:${remainder < 10 ? '0' : ''}${remainder.toFixed(2)}`;
+}
+
+export function formatProfileBestTime(finishTimeMs, noRecord = '--') {
+  if (finishTimeMs === null || finishTimeMs === undefined || finishTimeMs === '') return noRecord;
+  const timeMs = Number(finishTimeMs);
+  return Number.isFinite(timeMs) && timeMs >= 0
+    ? formatOnlineTime(timeMs / 1000)
+    : noRecord;
 }
 
 /**
@@ -460,7 +497,9 @@ export function buildOnlineResultsView(resultState = {}, localParticipantId = ''
     const participantId = participantIdOf(row);
     const finishTime = finiteNumber(row.finishTime, row.totalTime, row.time);
     const bestLap = finiteNumber(row.bestLap, row.bestLapTime);
-    const finished = row.finished !== false && finishTime !== null;
+    const finished = row.completed === undefined
+      ? row.finished !== false && finishTime !== null
+      : Boolean(row.completed);
     const aiPlayerNumber = aiNumbers.get(row) ?? 0;
     return {
       participantId,
@@ -476,7 +515,7 @@ export function buildOnlineResultsView(resultState = {}, localParticipantId = ''
       paintId: String(firstDefined(row.paintId, DEFAULT_ONLINE_LOADOUT.paintId)),
       avatarId: String(firstDefined(row.avatarId, DEFAULT_ONLINE_LOADOUT.avatarId)),
       rank: Math.max(1, Math.trunc(finiteNumber(row.rank, row.position, index + 1) ?? index + 1)),
-      finishTime,
+      finishTime: finished ? finishTime : null,
       bestLap,
       finished,
       isLocal: participantId !== '' && participantId === String(localParticipantId || ''),
@@ -543,6 +582,8 @@ export class OnlineScreens {
     this._roomState = {};
     this._roomView = buildRoomView({}, '', { copy: this.copy });
     this._resultsState = {};
+    this._userProfile = null;
+    this._progressionState = null;
     this._localParticipantId = '';
     this._activeDialog = null;
     this._activeAlert = null;
@@ -935,6 +976,7 @@ export class OnlineScreens {
     const root = this.roots.lobby;
     if (!root) return;
     const copy = this.copy.online.lobby;
+    const profileCopy = userCopy(this.language);
     root.innerHTML = `
       <div class="online-panel online-directory-panel">
         <header class="online-directory-header">
@@ -948,9 +990,16 @@ export class OnlineScreens {
             <small>${copy.heading}</small>
           </div>
           <div class="online-lobby-account">
+            <button type="button" class="online-profile-button" data-action="profile"
+              aria-label="${profileCopy.open}">
+              <span class="online-profile-mark" aria-hidden="true">TL</span>
+              <span class="online-profile-summary">
+                <strong data-profile-level-badge>LV --</strong>
+                <small data-profile-rating-badge>R ----</small>
+              </span>
+            </button>
             <label class="online-nickname-field">
               <span class="sr-only">${copy.nickname}</span>
-              <span class="online-profile-mark" aria-hidden="true">TL</span>
               <input class="online-input" data-field="nickname" type="text" maxlength="20"
                 autocomplete="nickname" spellcheck="false" placeholder="${copy.nicknamePlaceholder}"
                 aria-describedby="online-nickname-error" />
@@ -1062,11 +1111,47 @@ export class OnlineScreens {
             <button type="submit" class="online-action online-action-secondary" data-busy-action>${copy.join}</button>
           </div>
         </form>
+      </div>
+
+      <div class="online-dialog-backdrop" data-dialog="profile" hidden>
+        <section class="online-dialog online-profile-dialog" role="dialog" aria-modal="true"
+          aria-labelledby="online-profile-heading">
+          <div class="online-dialog-header">
+            <div><p class="online-eyebrow">TURBO LEGENDS</p><h3 id="online-profile-heading">${profileCopy.title}</h3></div>
+            <button type="button" class="online-dialog-close" data-action="close-dialog"
+              aria-label="${profileCopy.close}">&#215;</button>
+          </div>
+          <div class="online-profile-hero">
+            <div><span>${profileCopy.level}</span><strong data-profile-level>LV 1</strong></div>
+            <div><span>${profileCopy.rating}</span><strong data-profile-rating>1000</strong></div>
+          </div>
+          <div class="online-profile-progress"><span data-profile-progress></span></div>
+          <p class="online-profile-xp" data-profile-xp></p>
+          <div class="online-profile-stats">
+            <div><span>${profileCopy.races}</span><strong data-profile-stat="races">0</strong></div>
+            <div><span>${profileCopy.finishes}</span><strong data-profile-stat="finishes">0</strong></div>
+            <div><span>${profileCopy.completionRate}</span><strong data-profile-stat="completionRate">0%</strong></div>
+            <div><span>${profileCopy.escapes}</span><strong data-profile-stat="escapes">0</strong></div>
+            <div><span>${profileCopy.escapeRate}</span><strong data-profile-stat="escapeRate">0%</strong></div>
+            <div><span>${profileCopy.firsts}</span><strong data-profile-stat="firsts">0</strong></div>
+            <div><span>${profileCopy.seconds}</span><strong data-profile-stat="seconds">0</strong></div>
+            <div><span>${profileCopy.thirds}</span><strong data-profile-stat="thirds">0</strong></div>
+          </div>
+          <h4 class="online-profile-records-heading">${profileCopy.records}</h4>
+          <div class="online-profile-records" data-profile-records></div>
+          <div class="online-dialog-actions">
+            <button type="button" class="online-action online-action-primary" data-action="close-dialog">${profileCopy.close}</button>
+          </div>
+        </section>
       </div>`;
 
     this._listen(root, 'keydown', (event) => this._handleScreenKeydown(event));
     this._listen(root.querySelector('[data-action="back"]'), 'click', () => this._emit('onBackToTitle'));
     this._wirePageActions(root);
+    this._listen(root.querySelector('[data-action="profile"]'), 'click', (event) => {
+      this._renderUserProfile();
+      this._openDialog('profile', event.currentTarget);
+    });
     this._listen(root.querySelector('[data-action="quick"]'), 'click', () => this._submitQuickMatch());
     for (const button of root.querySelectorAll('[data-action="close-dialog"]')) {
       this._listen(button, 'click', () => this._closeDialog());
@@ -1569,6 +1654,7 @@ export class OnlineScreens {
     const root = this.roots.results;
     if (!root) return;
     const copy = this.copy.online.results;
+    const profileCopy = userCopy(this.language);
     root.innerHTML = `
       <div class="online-panel online-results-panel">
         <header class="online-results-header">
@@ -1589,6 +1675,15 @@ export class OnlineScreens {
             <tbody></tbody>
           </table>
         </div>
+        <section class="online-progression-card" data-progression-card aria-live="polite">
+          <p data-progression-status>${profileCopy.syncing}</p>
+          <div class="online-progression-values" data-progression-values hidden>
+            <strong data-progression-xp></strong>
+            <strong data-progression-rating></strong>
+            <span data-progression-level></span>
+            <span data-progression-record></span>
+          </div>
+        </section>
         <p class="online-status" data-online-status role="status" aria-live="polite"></p>
         <p class="online-error" data-online-error role="alert" hidden></p>
         <footer class="online-results-actions">
@@ -1692,7 +1787,7 @@ export class OnlineScreens {
 
   _submitCreateRoom() {
     if (this._busy) return;
-    const displayName = this._commitNickname(true);
+    const displayName = this._commitNickname(false);
     if (!displayName) return;
     const root = this.roots.lobby;
     const roomNameInput = root.querySelector('[data-create-field="roomName"]');
@@ -1726,7 +1821,7 @@ export class OnlineScreens {
 
   _submitQuickMatch() {
     if (this._busy) return;
-    const displayName = this._commitNickname(true);
+    const displayName = this._commitNickname(false);
     if (!displayName) return;
     this._pendingAction = { kind: 'quick' };
     this._emit('onQuickMatch', { displayName });
@@ -1754,7 +1849,7 @@ export class OnlineScreens {
 
   _submitJoinRoom(room, password) {
     if (!room?.joinable || this._busy) return;
-    const displayName = this._commitNickname(true);
+    const displayName = this._commitNickname(false);
     if (!displayName) return;
     const payload = { displayName, roomCode: room.roomCode };
     if (room.requiresPassword) payload.password = String(password ?? '');
@@ -1956,6 +2051,8 @@ export class OnlineScreens {
       const input = this.roots.lobby?.querySelector('[data-field="nickname"]');
       if (input && this.doc.activeElement !== input) input.value = this._displayName;
     }
+    if (context.userProfile !== undefined) this._userProfile = context.userProfile;
+    this._renderUserProfile();
     if (!this._createFormInitialized) {
       const root = this.roots.lobby;
       const roomName = root?.querySelector('[data-create-field="roomName"]');
@@ -2163,6 +2260,7 @@ export class OnlineScreens {
     if (context.localParticipantId !== undefined) {
       this._localParticipantId = String(context.localParticipantId || '');
     }
+    if (context.progression !== undefined) this._progressionState = context.progression;
     const merged = {
       ...this._resultsState,
       ...(context.trackName === undefined ? {} : { trackName: context.trackName }),
@@ -2203,7 +2301,97 @@ export class OnlineScreens {
     if (context.error) this.showError(context.error, 'results');
     else if (context.clearError) this.clearError('results');
     root.querySelector('[data-action="return"]').disabled = this._busy;
+    this._renderProgression();
     return view;
+  }
+
+  updateUserProfile(profile) {
+    this._userProfile = profile || null;
+    this._renderUserProfile();
+  }
+
+  updateProgression(progression) {
+    this._progressionState = progression || null;
+    this._renderProgression();
+  }
+
+  _renderUserProfile() {
+    const root = this.roots.lobby;
+    if (!root) return;
+    const profile = this._userProfile;
+    const user = profile?.user || {};
+    const stats = profile?.stats || {};
+    const level = Math.max(1, Math.trunc(Number(user.level) || 1));
+    const rating = Math.max(0, Math.trunc(Number(user.rating) || 0));
+    const currentXp = Math.max(0, Number(user.currentLevelXp) || 0);
+    const nextXp = Math.max(1, Number(user.nextLevelXp) || 1);
+    const levelBadge = root.querySelector('[data-profile-level-badge]');
+    const ratingBadge = root.querySelector('[data-profile-rating-badge]');
+    if (levelBadge) levelBadge.textContent = profile ? `LV ${level}` : 'LV --';
+    if (ratingBadge) ratingBadge.textContent = profile ? `R ${rating}` : 'R ----';
+    const levelNode = root.querySelector('[data-profile-level]');
+    const ratingNode = root.querySelector('[data-profile-rating]');
+    if (levelNode) levelNode.textContent = `LV ${level}`;
+    if (ratingNode) ratingNode.textContent = String(rating);
+    const progress = root.querySelector('[data-profile-progress]');
+    if (progress) progress.style.width = `${Math.min(100, currentXp / nextXp * 100)}%`;
+    const xp = root.querySelector('[data-profile-xp]');
+    if (xp) xp.textContent = `${Math.trunc(currentXp)} / ${Math.trunc(nextXp)} XP`;
+    for (const key of ['races', 'finishes', 'escapes', 'firsts', 'seconds', 'thirds']) {
+      const node = root.querySelector(`[data-profile-stat="${key}"]`);
+      if (node) node.textContent = String(Math.max(0, Math.trunc(Number(stats[key]) || 0)));
+    }
+    for (const key of ['completionRate', 'escapeRate']) {
+      const node = root.querySelector(`[data-profile-stat="${key}"]`);
+      if (node) node.textContent = formatRate(stats[key]);
+    }
+    const records = root.querySelector('[data-profile-records]');
+    if (records) {
+      records.innerHTML = '';
+      const recordByTrack = new Map((profile?.trackBestTimes || []).map((record) => [record.trackId, record]));
+      for (const track of this.tracks) {
+        const row = createNode(this.doc, 'div', 'online-profile-record', records);
+        createNode(this.doc, 'span', '', row, localizeTrack(track, this.language)?.name || track.name);
+        createNode(this.doc, 'strong', '', row, formatProfileBestTime(
+          recordByTrack.get(track.id)?.finishTimeMs,
+          userCopy(this.language).noRecord,
+        ));
+      }
+    }
+  }
+
+  _renderProgression() {
+    const root = this.roots.results;
+    if (!root) return;
+    const copy = userCopy(this.language);
+    const progression = this._progressionState;
+    const status = root.querySelector('[data-progression-status]');
+    const values = root.querySelector('[data-progression-values]');
+    if (!progression || progression.status === 'pending') {
+      if (status) status.textContent = copy.syncing;
+      if (values) values.hidden = true;
+      return;
+    }
+    if (progression.status === 'error') {
+      if (status) status.textContent = copy.failed;
+      if (values) values.hidden = true;
+      return;
+    }
+    if (status) status.textContent = '';
+    if (values) values.hidden = false;
+    const xp = root.querySelector('[data-progression-xp]');
+    const rating = root.querySelector('[data-progression-rating]');
+    const level = root.querySelector('[data-progression-level]');
+    const record = root.querySelector('[data-progression-record]');
+    const ratingDelta = Math.trunc(Number(progression.ratingDelta) || 0);
+    if (xp) xp.textContent = `+${Math.max(0, Math.trunc(Number(progression.xpDelta) || 0))} XP`;
+    if (rating) rating.textContent = ratingDelta === 0
+      ? copy.unchanged
+      : `${copy.rating} ${ratingDelta > 0 ? '+' : ''}${ratingDelta}`;
+    if (level) level.textContent = progression.levelAfter > progression.levelBefore
+      ? formatCopy(copy.levelUp, { level: progression.levelAfter })
+      : '';
+    if (record) record.textContent = progression.bestTimeUpdated ? copy.newRecord : '';
   }
 
   setBusy(busy) {

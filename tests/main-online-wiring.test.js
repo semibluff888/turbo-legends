@@ -11,7 +11,7 @@ test('main maps every online screen action to the transport client', () => {
     'onlineClient.enterLobby({ discardRoomSession: true })',
     'onlineClient.createRoom({',
     'onlineClient.joinRoom({',
-    'onlineClient.quickMatch({ displayName: savedName, ...onlineLoadout })',
+    'onlineClient.quickMatch({ ...onlineLoadout })',
     'onlineClient.selectCharacter(characterId)',
     'onlineClient.setLoadout(loadout)',
     'onlineClient.setRoom(settings)',
@@ -146,12 +146,14 @@ test('main protects prepare/loading ordering with cancellable GPU warmup and ACK
   assert.match(source, /function endRace\(\)[\s\S]*onlineLoadGeneration\+\+[\s\S]*disposeSceneDeep\(race\.world\.scene\)/);
 });
 
-test('main persists v2 nicknames and routes Room exits back to the Lobby', () => {
+test('main migrates local nicknames into server profiles and routes Room exits back to the Lobby', () => {
   assert.match(source, /let onlineDisplayName = '';/);
   assert.match(source, /function ensureOnlineDisplayName\(\)[\s\S]*loadOnlineDisplayName\(\)/);
   assert.match(source, /function openOnlineLobby[\s\S]*ensureOnlineDisplayName\(\)/);
-  assert.match(source, /onNicknameChange\(\{ displayName \}\)[\s\S]*acceptOnlineDisplayName\(displayName\)/);
+  assert.match(source, /onNicknameChange\(\{ displayName \}\)[\s\S]*persistOnlineDisplayName\(displayName\)/);
   assert.match(source, /function acceptOnlineDisplayName\(value\)[\s\S]*saveOnlineDisplayName\(value\)[\s\S]*code: 'name_invalid'/);
+  assert.match(source, /function persistOnlineDisplayName\(value\)[\s\S]*userProfileClient\.updateDisplayName\(saved\)/);
+  assert.match(source, /userProfileClient\.bootstrap\(displayName\)[\s\S]*onlineClient\.enterLobby/);
   assert.match(source, /function leaveCurrentOnlineRoom\(\)[\s\S]*onlineClient\.leaveRoom\(\)[\s\S]*showOnlineLobby\(/);
   assert.match(source, /onQuit\(\)[\s\S]*race\?\.session\.kind === 'online'[\s\S]*leaveCurrentOnlineRoom\(\)/);
 });
@@ -176,7 +178,8 @@ test('invalid invite codes report an error and rewrite the URL before entering L
 test('results use a settled presentation loop and stop continuous engine audio', () => {
   assert.match(source, /race\.chase\.settle\?\.\(\);\s*audio\.stopEngine\(\);/);
   assert.match(source, /function updateResultsFrame\(dt\)/);
-  assert.doesNotMatch(source, /if \(mode === 'online-results'\)[\s\S]*?updateRaceFrame\(dt\);/);
+  const frameBranch = source.slice(source.lastIndexOf("if (mode === 'online-results')"));
+  assert.match(frameBranch, /if \(mode === 'online-results'\) \{\s*if \(race\) \{\s*updateResultsFrame\(dt\);/);
 });
 
 test('main keeps paused online panels alive and neutralizes hidden-page controls', () => {

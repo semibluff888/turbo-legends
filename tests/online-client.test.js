@@ -269,7 +269,6 @@ test('create, join and quick match reuse the existing Lobby socket', () => {
     {
       v: PROTOCOL_VERSION,
       type: 'create_room',
-      displayName: 'Nova',
       roomName: 'Nova Grid',
       roomType: 'private',
       maxPlayers: 6,
@@ -283,14 +282,13 @@ test('create, join and quick match reuse the existing Lobby socket', () => {
       v: PROTOCOL_VERSION,
       type: 'join_room',
       roomCode: 'AB2CD3',
-      displayName: 'Nova',
       password: 'FastPass',
       characterId: 'kit',
       paintId: 'pearl-flash',
       avatarId: 'rabbit',
     },
     {
-      v: PROTOCOL_VERSION, type: 'quick_match', displayName: 'Nova',
+      v: PROTOCOL_VERSION, type: 'quick_match',
       characterId: 'kit', paintId: 'violet-volt', avatarId: 'fox',
     },
   ]);
@@ -325,7 +323,7 @@ test('a command issued while connecting is queued behind enter_lobby', () => {
   socket.open();
   assert.deepEqual(socket.sent, [
     { v: PROTOCOL_VERSION, type: 'enter_lobby' },
-    { v: PROTOCOL_VERSION, type: 'quick_match', displayName: 'Drift Comet' },
+    { v: PROTOCOL_VERSION, type: 'quick_match' },
   ]);
 });
 

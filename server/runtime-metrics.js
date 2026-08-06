@@ -96,6 +96,10 @@ export class RuntimeMetrics {
         v3Rejected: 0,
         invalidBinary: 0,
       },
+      user: {
+        startErrors: 0,
+        settlementErrors: 0,
+      },
     };
     this.traffic = {
       inbound: createTrafficDirection(),

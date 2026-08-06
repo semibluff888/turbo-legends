@@ -473,6 +473,7 @@ export class RaceSimulation {
 
   _finishKart(kart, autoPlaced) {
     kart.finished = true;
+    kart.autoPlaced = Boolean(autoPlaced);
     kart.finishTime = this.elapsed;
     kart.wrongWay = false;
     kart.cancelDrift();

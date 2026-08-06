@@ -1,6 +1,6 @@
-// Local protocol v3/v4 A/B runner. The v3 server is extracted from the phase-2
+// Local protocol v3/current A/B runner. The v3 server is extracted from the phase-2
 // baseline commit into an OS temp directory; the main worktree is never reset
-// or checked out. The v4 leg also runs for 60 seconds by default so memory
+// or checked out. The current leg also runs for 60 seconds by default so memory
 // samples can expose sustained growth.
 import { execFile } from 'node:child_process';
 import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises';
@@ -127,8 +127,19 @@ class ABRaceSimulation {
   }
 }
 
-async function connectClient({ url, origin, protocolVersion, decodeSnapshot }) {
-  const socket = new WebSocket(url, { headers: { Origin: origin } });
+async function connectClient({ url, origin, protocolVersion, decodeSnapshot, displayName }) {
+  const headers = { Origin: origin };
+  if (protocolVersion >= 5) {
+    const response = await fetch(`${origin}/api/user/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ displayName }),
+    });
+    if (!response.ok) throw new Error(`Guest bootstrap failed with HTTP ${response.status}.`);
+    headers.Cookie = response.headers.get('set-cookie')?.split(';')[0];
+    if (!headers.Cookie) throw new Error('Guest bootstrap did not return a session cookie.');
+  }
+  const socket = new WebSocket(url, { headers });
   const messages = [];
   const waiters = [];
   const raceIds = new Map();
@@ -229,7 +240,13 @@ async function runScenario(targetRoot, durationMs) {
   let memoryTimer = null;
   try {
     for (let index = 0; index < 8; index++) {
-      clients.push(await connectClient({ url, origin, protocolVersion, decodeSnapshot }));
+      clients.push(await connectClient({
+        url,
+        origin,
+        protocolVersion,
+        decodeSnapshot,
+        displayName: `AB Racer ${index + 1}`,
+      }));
     }
     const host = clients[0];
     host.send({
@@ -379,7 +396,7 @@ try {
   const tickP99DeltaMs = current.tick.p99Ms - baseline.tick.p99Ms;
   const checks = {
     baselineIsV3: baseline.protocolVersion === 3,
-    currentIsV4: current.protocolVersion === 4,
+    currentIsV5: current.protocolVersion === 5,
     standardSnapshotAtMost1536Bytes: current.snapshot.averageWireBytes <= 1_536,
     fixedInputIs28Bytes: current.input.averageWireBytes === 28,
     totalWireReductionAtLeast50Percent: totalWireReduction >= 0.50,

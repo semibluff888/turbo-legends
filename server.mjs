@@ -10,10 +10,14 @@ import { brotliCompress, gzip } from 'node:zlib';
 import { RoomManager } from './server/room-manager.js';
 import { createDefaultRaceFactory } from './server/race-factory.js';
 import { RuntimeMetrics } from './server/runtime-metrics.js';
+import { UserHttpApi } from './server/user-http-api.js';
+import { DEFAULT_USER_SESSION_TTL_MS, UserStore } from './server/user-store.js';
+import { TRACKS } from './src/track/tracks.js';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const PORT = Number(process.env.PORT) || 5173;
 const HOST = process.env.HOST || '127.0.0.1';
+export const DEFAULT_USER_SESSION_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 const compressBrotli = promisify(brotliCompress);
 const compressGzip = promisify(gzip);
 const COMPRESSIBLE_EXTENSIONS = new Set([
@@ -177,6 +181,7 @@ export function createStaticServer(root = ROOT, {
   statsProvider = null,
   metricsProvider = null,
   metricsToken = '',
+  userApi = null,
   compressionCacheBytes = Number(process.env.STATIC_COMPRESSION_CACHE_BYTES) || 16_777_216,
 } = {}) {
   const staticRoot = realpathSync(resolve(root));
@@ -185,6 +190,7 @@ export function createStaticServer(root = ROOT, {
   return createServer(async (req, res) => {
     const [pathname = '/', rawQuery = ''] = (req.url || '/').split('?', 2);
     const assetVersion = new URLSearchParams(rawQuery).get('v');
+    if (userApi && await userApi.dispatch(req, res, pathname)) return;
     if (statsProvider && req.method === 'GET' && pathname === '/api/stats') {
       const body = JSON.stringify(statsProvider());
       res.writeHead(200, {
@@ -364,6 +370,12 @@ export async function createGameServer({
   allowedOrigins = process.env.ALLOWED_ORIGINS || '',
   logger = console,
   webSocketOptions = {},
+  userStore = null,
+  userDbPath = ':memory:',
+  userSessionTtlMs = DEFAULT_USER_SESSION_TTL_MS,
+  userSessionCleanupIntervalMs = Number(process.env.USER_SESSION_CLEANUP_INTERVAL_MS)
+    || DEFAULT_USER_SESSION_CLEANUP_INTERVAL_MS,
+  trustProxy = process.env.TRUST_PROXY === 'true',
   metricsToken = process.env.METRICS_TOKEN || '',
   metricsLogIntervalMs = Number(process.env.METRICS_LOG_INTERVAL_MS) || 60_000,
   maintenanceIntervalMs = Number(process.env.MAINTENANCE_INTERVAL_MS) || 500,
@@ -373,11 +385,20 @@ export async function createGameServer({
   if (!version) throw new Error('package.json must define a non-empty version.');
 
   const metrics = new RuntimeMetrics({ logger, logIntervalMs: metricsLogIntervalMs });
+  const ownsUserStore = !userStore;
+  const users = userStore ?? new UserStore({
+    path: userDbPath,
+    sessionTtlMs: userSessionTtlMs,
+    trackIds: TRACKS.map((track) => track.id),
+  });
+  const userApi = new UserHttpApi({ userStore: users, trustProxy });
   const manager = roomManager ?? createRoomManager({
     ...roomManagerOptions,
     metrics: roomManagerOptions.metrics ?? metrics,
+    userStore: roomManagerOptions.userStore ?? users,
   });
   if (roomManager && !roomManager.metrics) roomManager.metrics = metrics;
+  if (roomManager && !roomManager.userStore) roomManager.userStore = users;
   let gateway = null;
   const server = createStaticServer(root, {
     metadataProvider: () => ({ version }),
@@ -390,6 +411,7 @@ export async function createGameServer({
     }),
     metricsProvider: () => metrics.snapshot(),
     metricsToken,
+    userApi,
     healthProvider: () => ({
       uptimeSeconds: process.uptime(),
       rooms: manager.roomCount,
@@ -403,6 +425,8 @@ export async function createGameServer({
     allowedOrigins,
     logger,
     metrics,
+    userStore: users,
+    trustProxy,
     ...webSocketOptions,
   });
 
@@ -432,6 +456,14 @@ export async function createGameServer({
     }
   }, maintenanceIntervalMs);
   maintenanceTimer.unref?.();
+  const userSessionCleanupTimer = setInterval(() => {
+    try {
+      users.deleteExpiredSessions();
+    } catch (error) {
+      logger.error?.('[multiplayer] user session cleanup failed', error);
+    }
+  }, userSessionCleanupIntervalMs);
+  userSessionCleanupTimer.unref?.();
 
   const onManagerError = (error) => logger.error?.('[multiplayer] room error', error);
   manager.on('managerError', onManagerError);
@@ -441,16 +473,19 @@ export async function createGameServer({
     disposed = true;
     clearInterval(tickTimer);
     clearInterval(maintenanceTimer);
+    clearInterval(userSessionCleanupTimer);
     manager.off('managerError', onManagerError);
     await gateway.close();
     manager.close();
     metrics.close();
+    if (ownsUserStore) users.close();
   }
 
   server.once('close', () => { void disposeGameServices(); });
   server.roomManager = manager;
   server.webSocketGateway = gateway;
   server.runtimeMetrics = metrics;
+  server.userStore = users;
   server.shutdown = async () => {
     await disposeGameServices();
     if (!server.listening) return;
@@ -462,7 +497,9 @@ export async function createGameServer({
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const server = await createGameServer();
+  const server = await createGameServer({
+    userDbPath: process.env.USER_DB_PATH || join(ROOT, 'data', 'users.sqlite'),
+  });
   server.listen(PORT, HOST, () => {
     console.log(`\n  🏁  Turbo Legends running at  http://${HOST}:${PORT}/\n`);
     console.log(`  Multiplayer WebSocket:    ws://${HOST}:${PORT}/ws\n`);

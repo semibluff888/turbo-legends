@@ -110,6 +110,28 @@ async function startTwoPlayerRace(harness) {
   return { ...players, race };
 }
 
+function progressionStore(settlements) {
+  return {
+    settleRace(settlement) {
+      settlements.push(structuredClone(settlement));
+      return new Map(settlement.participants.map((participant) => [participant.userId, {
+        xpDelta: participant.escaped ? 0 : 20,
+        ratingDelta: 0,
+        levelBefore: 1,
+        levelAfter: 1,
+        bestTimeUpdated: false,
+        profile: null,
+      }]));
+    },
+  };
+}
+
+async function finishHarnessRace(harness) {
+  harness.simulations[0].state = ROOM_STATES.RESULTS;
+  harness.advance(17);
+  await harness.manager.tick();
+}
+
 test('waiting room allows duplicate names and racers while loadout changes reset only that racer', async () => {
   const harness = createHarness();
   const { host, guest } = await addTwoPlayers(harness);
@@ -181,6 +203,33 @@ test('waiting room allows duplicate names and racers while loadout changes reset
     [false, false, false],
   );
   assert.equal(harness.manager.getRoomState(host.roomCode).settings.autoFillAi, true);
+});
+
+test('one user cannot occupy two active room participants and resume requires the same user', async () => {
+  const harness = createHarness();
+  const host = await harness.manager.createRoom({
+    userId: 'user-one', displayName: 'Host', roomName: 'Identity Room',
+    roomType: ROOM_TYPES.PUBLIC, maxPlayers: 3,
+  });
+
+  await assert.rejects(
+    harness.manager.joinRoom(host.roomCode, { userId: 'user-one', displayName: 'Duplicate' }),
+    (error) => error.code === ERROR_CODES.ALREADY_IN_ROOM,
+  );
+
+  harness.manager.disconnect(host.participantId);
+  assert.throws(
+    () => harness.manager.resume(host.roomCode, host.participantId, host.resumeToken, 'user-two'),
+    (error) => error.code === ERROR_CODES.SESSION_NOT_FOUND,
+  );
+  assert.equal(
+    harness.manager.resume(host.roomCode, host.participantId, host.resumeToken, 'user-one').resumed,
+    true,
+  );
+  assert.equal(
+    JSON.stringify(harness.manager.getRoomState(host.roomCode)).includes('user-one'),
+    false,
+  );
 });
 
 test('duplicate human racers keep independent appearances in the announced roster', async () => {
@@ -518,7 +567,11 @@ test('start prepares one deterministic eight-kart roster and launches after all 
     assert.equal(new Set(looks).size, looks.length,
       `${characterId} duplicates should have distinct appearances`);
   }
-  assert.deepEqual(prepare.roster, simulation.args.roster);
+  assert.deepEqual(
+    prepare.roster,
+    simulation.args.roster.map(({ userId: _userId, ...entry }) => entry),
+  );
+  assert.equal(prepare.roster.some((entry) => Object.hasOwn(entry, 'userId')), false);
   assert.deepEqual(prepare.roster.map((entry) => entry.kartIndex), [0, 1, 2, 3, 4, 5, 6, 7]);
   assert.equal(race.seed, 424242);
   const protocolMessages = harness.messages.map((event) => event.message.type);
@@ -812,6 +865,210 @@ test('disconnect immediately transfers host and takeover AI can be reclaimed wit
   assert.equal(harness.manager.getRoomState(host.roomCode).hostParticipantId, guest.participantId);
 });
 
+test('a reconnect before the deadline settles normally and emits private progression', async () => {
+  const settlements = [];
+  const harness = createHarness({ userStore: progressionStore(settlements) });
+  const { host, guest, race } = await startTwoPlayerRace(harness);
+  const simulation = harness.simulations[0];
+  const hostKart = simulation.karts[race.roster.find(
+    (entry) => entry.participantId === host.participantId,
+  ).kartIndex];
+  const guestKart = simulation.karts[race.roster.find(
+    (entry) => entry.participantId === guest.participantId,
+  ).kartIndex];
+  hostKart.rank = 1;
+  hostKart.finished = true;
+  hostKart.finishTime = 90;
+  guestKart.rank = 2;
+  guestKart.finished = true;
+  guestKart.finishTime = 95;
+
+  harness.manager.disconnect(guest.participantId);
+  harness.advance(10_000);
+  harness.manager.resume(guest.roomCode, guest.participantId, guest.resumeToken);
+  await finishHarnessRace(harness);
+
+  assert.equal(settlements.length, 1);
+  assert.equal(
+    settlements[0].participants.find((entry) => entry.participantId === guest.participantId).escaped,
+    false,
+  );
+  assert.equal(
+    harness.messages.some((event) => event.participantId === guest.participantId
+      && event.message.type === 'user_progression'
+      && event.message.status === 'ok'),
+    true,
+  );
+});
+
+test('a natural finisher can leave before shared results without being marked escaped', async () => {
+  const settlements = [];
+  const harness = createHarness({ userStore: progressionStore(settlements) });
+  const { guest, race } = await startTwoPlayerRace(harness);
+  const guestKart = harness.simulations[0].karts[race.roster.find(
+    (entry) => entry.participantId === guest.participantId,
+  ).kartIndex];
+  guestKart.rank = 1;
+  guestKart.finished = true;
+  guestKart.autoPlaced = false;
+  guestKart.finishTime = 90;
+
+  harness.manager.leave(guest.participantId);
+  await finishHarnessRace(harness);
+
+  const participant = settlements[0].participants.find(
+    (entry) => entry.participantId === guest.participantId,
+  );
+  assert.equal(participant.completed, true);
+  assert.equal(participant.finishTimeMs, 90_000);
+  assert.equal(participant.escaped, false);
+});
+
+test('disconnecting after a natural finish settles normally without waiting for reconnect', async () => {
+  const settlements = [];
+  const harness = createHarness({ userStore: progressionStore(settlements) });
+  const { guest, race } = await startTwoPlayerRace(harness);
+  const guestKart = harness.simulations[0].karts[race.roster.find(
+    (entry) => entry.participantId === guest.participantId,
+  ).kartIndex];
+  guestKart.rank = 2;
+  guestKart.finished = true;
+  guestKart.autoPlaced = false;
+  guestKart.finishTime = 95;
+
+  harness.manager.disconnect(guest.participantId);
+  await finishHarnessRace(harness);
+
+  assert.equal(settlements.length, 1);
+  assert.equal(
+    settlements[0].participants.find((entry) => entry.participantId === guest.participantId).escaped,
+    false,
+  );
+});
+
+test('results wait for a disconnected racer and expiry settles them as escaped', async () => {
+  const settlements = [];
+  const harness = createHarness({ userStore: progressionStore(settlements) });
+  const { host, guest, race } = await startTwoPlayerRace(harness);
+  harness.manager.disconnect(guest.participantId);
+  const guestKart = harness.simulations[0].karts[race.roster.find(
+    (entry) => entry.participantId === guest.participantId,
+  ).kartIndex];
+  guestKart.finished = true;
+  guestKart.autoPlaced = false;
+  guestKart.finishTime = 95;
+
+  await finishHarnessRace(harness);
+  assert.equal(settlements.length, 0);
+  const results = harness.messages.find((event) => event.message.type === 'race_results')?.message;
+  assert.equal(results.progressionPending, true);
+
+  harness.advance(30_001);
+  harness.manager.maintenance();
+  assert.equal(settlements.length, 1);
+  assert.equal(
+    settlements[0].participants.find((entry) => entry.participantId === guest.participantId).escaped,
+    true,
+  );
+  assert.equal(
+    harness.messages.some((event) => event.participantId === host.participantId
+      && event.message.type === 'user_progression'
+      && event.message.status === 'ok'),
+    true,
+  );
+});
+
+test('a post-result reconnect defers private progression until the resumed socket can bind', async () => {
+  const settlements = [];
+  const harness = createHarness({ userStore: progressionStore(settlements) });
+  const { guest } = await startTwoPlayerRace(harness);
+  harness.manager.disconnect(guest.participantId);
+  await finishHarnessRace(harness);
+  assert.equal(settlements.length, 0);
+
+  const mark = harness.messages.length;
+  harness.manager.resume(guest.roomCode, guest.participantId, guest.resumeToken);
+  assert.equal(
+    harness.messages.slice(mark).some((event) => event.message.type === 'user_progression'),
+    false,
+  );
+
+  await Promise.resolve();
+  assert.equal(settlements.length, 1);
+  assert.equal(
+    harness.messages.slice(mark).some((event) => event.participantId === guest.participantId
+      && event.message.type === 'user_progression'
+      && event.message.status === 'ok'),
+    true,
+  );
+});
+
+test('leaving while post-race settlement is waiting resolves the escape immediately', async () => {
+  const settlements = [];
+  const harness = createHarness({ userStore: progressionStore(settlements) });
+  const { guest } = await startTwoPlayerRace(harness);
+  harness.manager.disconnect(guest.participantId);
+  await finishHarnessRace(harness);
+  assert.equal(settlements.length, 0);
+
+  harness.manager.leave(guest.participantId);
+  assert.equal(settlements.length, 1);
+  assert.equal(
+    settlements[0].participants.find((entry) => entry.participantId === guest.participantId).escaped,
+    true,
+  );
+});
+
+test('auto-placed racers are public DNF entries and cannot set natural finish records', async () => {
+  const settlements = [];
+  const harness = createHarness({ userStore: progressionStore(settlements) });
+  const { guest, race } = await startTwoPlayerRace(harness);
+  const simulation = harness.simulations[0];
+  const guestKart = simulation.karts[race.roster.find(
+    (entry) => entry.participantId === guest.participantId,
+  ).kartIndex];
+  guestKart.rank = 2;
+  guestKart.finished = true;
+  guestKart.autoPlaced = true;
+  guestKart.finishTime = 123.45;
+
+  await finishHarnessRace(harness);
+  const result = harness.messages.find((event) => event.message.type === 'race_results')
+    ?.message.results.find((entry) => entry.participantId === guest.participantId);
+  assert.equal(result.completed, false);
+  assert.equal(result.finishTime, null);
+  const participant = settlements[0].participants.find(
+    (entry) => entry.participantId === guest.participantId,
+  );
+  assert.equal(participant.completed, false);
+  assert.equal(participant.finishTimeMs, null);
+  assert.equal(participant.escaped, false);
+});
+
+test('a database settlement failure preserves race results and sends progression failure', async () => {
+  const harness = createHarness({
+    userStore: {
+      settleRace() { throw new Error('database unavailable'); },
+    },
+  });
+  const { host, guest } = await startTwoPlayerRace(harness);
+  await finishHarnessRace(harness);
+
+  assert.equal(
+    harness.messages.some((event) => event.message.type === 'race_results'),
+    true,
+  );
+  assert.equal(harness.managerErrors.length, 1);
+  for (const participantId of [host.participantId, guest.participantId]) {
+    assert.equal(
+      harness.messages.some((event) => event.participantId === participantId
+        && event.message.type === 'user_progression'
+        && event.message.status === 'error'),
+      true,
+    );
+  }
+});
+
 test('room state distinguishes reconnecting, disconnected and explicit leave presence', async () => {
   const harness = createHarness();
   const { host, guest, race } = await startTwoPlayerRace(harness);
@@ -924,6 +1181,29 @@ test('loading timeout cancels a race when fewer than two clients finish loading'
   assert.deepEqual(roomState.members.map((member) => member.ready), [false, false]);
   assert.deepEqual(roomState.members.map((member) => member.controllerKind), ['human', 'human']);
   assert.deepEqual(harness.managerErrors, []);
+});
+
+test('race participation is recorded only after loading successfully reaches countdown', async () => {
+  const starts = [];
+  const userStore = {
+    startRace(race) { starts.push(structuredClone(race)); },
+    settleRace() { return new Map(); },
+  };
+  const cancelled = createHarness({ userStore, loadTimeoutMs: 10 });
+  const cancelledPlayers = await addTwoPlayers(cancelled);
+  cancelled.manager.setReady(cancelledPlayers.host.participantId, true);
+  cancelled.manager.setReady(cancelledPlayers.guest.participantId, true);
+  const cancelledRace = cancelled.manager.startRace(cancelledPlayers.host.participantId);
+  await cancelled.manager.markRaceLoaded(cancelledPlayers.host.participantId, cancelledRace.raceId);
+  cancelled.advance(11);
+  cancelled.manager.maintenance();
+  await cancelled.manager.rooms.get(cancelledPlayers.host.roomCode)?.race?.launchPromise;
+  assert.equal(starts.length, 0);
+
+  const started = createHarness({ userStore });
+  await startTwoPlayerRace(started);
+  assert.equal(starts.length, 1);
+  assert.equal(starts[0].participants.length, 2);
 });
 
 test('two loaded players start at timeout while a late third player keeps AI until fresh movement', async () => {

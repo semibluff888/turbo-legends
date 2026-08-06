@@ -36,10 +36,6 @@ function normalizeCode(code) {
   return String(code || '').trim().toUpperCase();
 }
 
-function displayNameOf(value) {
-  return String(value || '').trim().replace(/\s+/gu, ' ');
-}
-
 function roomCommandPayload(value, legacyDisplayName) {
   if (value && typeof value === 'object') return value;
   return { roomCode: value, displayName: legacyDisplayName };
@@ -162,15 +158,13 @@ export class OnlineClient {
 
   /** Create a Room through the already-subscribed Lobby connection. */
   createRoom(options = {}) {
-    const value = typeof options === 'string' ? { displayName: options } : options;
+    const value = typeof options === 'string' ? {} : options;
     this._clearRoomSession();
     this.scope = 'lobby';
-    const displayName = displayNameOf(value.displayName);
     const roomType = String(value.roomType || ROOM_TYPES.PUBLIC).trim().toLowerCase();
     const message = {
       type: CLIENT_MESSAGE_TYPES.CREATE_ROOM,
-      displayName,
-      roomName: String(value.roomName ?? `${displayName}'s Room`).trim().replace(/\s+/gu, ' '),
+      roomName: String(value.roomName || 'Racing Room').trim().replace(/\s+/gu, ' '),
       roomType,
       maxPlayers: Number(value.maxPlayers ?? 8),
     };
@@ -192,7 +186,6 @@ export class OnlineClient {
     const message = {
       type: CLIENT_MESSAGE_TYPES.JOIN_ROOM,
       roomCode: normalizeCode(value.roomCode),
-      displayName: displayNameOf(value.displayName),
     };
     if (value.password !== undefined && value.password !== '') {
       message.password = String(value.password);
@@ -205,12 +198,11 @@ export class OnlineClient {
 
   /** Ask the server to atomically choose and join an available public Room. */
   quickMatch(options = {}) {
-    const value = typeof options === 'string' ? { displayName: options } : options;
+    const value = typeof options === 'string' ? {} : options;
     this._clearRoomSession();
     this.scope = 'lobby';
     const message = {
       type: CLIENT_MESSAGE_TYPES.QUICK_MATCH,
-      displayName: displayNameOf(value.displayName),
     };
     if (value.characterId) message.characterId = String(value.characterId);
     if (value.paintId) message.paintId = String(value.paintId);

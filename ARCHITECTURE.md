@@ -31,14 +31,16 @@ but do not decide authoritative physics, items, laps, ranks, or results.
   `server/`, tests, repository metadata, and design documents are not browser
   assets.
 - `server/` owns process-memory rooms, WebSocket connections, authoritative
-  race scheduling, snapshots, event delivery, and cleanup.
+  race scheduling, snapshots, event delivery, cleanup, and the SQLite-backed
+  multiplayer guest profile service.
 - `src/net/protocol.js` is browser-safe and imported by both client and server;
-  it is the canonical source for protocol v4 JSON message names and validation.
+  it is the canonical source for protocol v5 JSON message names and validation.
   `src/net/binary-race-codec.js` is the shared zero-dependency binary race codec.
-- Rooms are local to one Node process. There is no database, durable result
-  store, account system, or cross-process room migration.
+- Rooms are local to one Node process. Guest profiles and settled race results
+  are durable in SQLite, while active rooms/races still have no cross-process
+  migration. V1 has no password account system or leaderboard.
 
-Run with Node 18 or newer:
+Run with Node 22.13 or newer:
 
 ```bash
 npm install
@@ -52,6 +54,9 @@ Configuration:
 | `HOST` | `127.0.0.1` | HTTP/WebSocket listen address |
 | `PORT` | `5173` | Shared HTTP/WebSocket port |
 | `ALLOWED_ORIGINS` | empty | Comma-separated extra origins accepted by `/ws`; same-origin is always accepted |
+| `USER_DB_PATH` | `data/users.sqlite` | SQLite guest-profile database path |
+| `USER_SESSION_CLEANUP_INTERVAL_MS` | `600000` | Expired guest-session row cleanup interval |
+| `TRUST_PROXY` | `false` | Trust sanitized forwarded IP/protocol headers, including HTTPS cookie detection |
 
 Public deployments must provide TLS and forward WebSocket Upgrade requests for
 `/ws`. Browser clients automatically choose `ws://` or `wss://` from the page
@@ -126,13 +131,16 @@ the existing renderer and HUD:
 | `src/game/race-simulation.js` | Generic eight-kart authoritative race pipeline |
 | `src/game/race.js` | Backward-compatible single-player `RaceDirector` adapter |
 | `src/session/local-race-session.js` | Presentation-facing wrapper for local races |
-| `src/net/protocol.js` | Shared protocol v4 JSON constants, limits, errors, and client-message validation |
+| `src/net/protocol.js` | Shared protocol v5 JSON constants, limits, errors, and client-message validation |
+| `src/net/user-profile-client.js` | Guest bootstrap and current-profile HTTP client |
 | `src/net/binary-race-codec.js` | Shared little-endian snapshot/input codec and strict wire validation |
 | `src/net/online-client.js` | Browser transport, lobby subscription, room commands, credentials, and reconnect loop |
 | `src/net/online-race-session.js` | Snapshot mirror, input sampling, prediction, and correction |
 | `src/net/online-race-loader.js` | Cancellable shader compilation and first-frame warmup barrier |
 | `server/room-manager.js` | Room lifecycle, scheduler, authoritative input and snapshot flow |
 | `server/websocket-game-server.js` | Upgrade/origin checks, connection limits, routing, and heartbeat |
+| `server/user-store.js` | SQLite schema, guest sessions, progression, Rating, and track records |
+| `server/user-http-api.js` | Guest session/profile HTTP endpoints and secure Cookie handling |
 | `server/race-factory.js` | Builds a Track and `RaceSimulation` for an online room |
 | `src/render/racer-model-builders.js` | Shared procedural bodies for the six available Racers; reused by production and Demo |
 | `src/render/racer-models.js` | Normalizes shared bodies into the live wheel/effect/material/disposal contract |
@@ -286,8 +294,10 @@ waiting → loading → countdown → racing → results → waiting
 - A room accepts humans only while in `waiting` and below its own capacity.
   Reserved reconnect seats count toward the displayed occupancy and capacity.
 - Nicknames are 1–20 visible characters, may repeat, and reject control or
-  bidirectional formatting characters. `participantId` is the only identity
-  used for host permissions, reconnects, input ownership, and results.
+  bidirectional formatting characters. `participantId` is the public room/race
+  identity for host permissions, input ownership, and results. The internal
+  authenticated `userId` additionally prevents concurrent room seats and must
+  match when a participant session resumes.
 - Human racer, paint, and avatar selections may repeat. Locked prototype IDs are
   rejected with `character_locked`. AI prefers unused available Racers for visual
   variety, then deterministically cycles the six-Racer playable catalog.
@@ -329,10 +339,30 @@ waiting → loading → countdown → racing → results → waiting
   occupancy, host, or status changes. Quick match atomically chooses an available
   public waiting room and never creates a room implicitly.
 
-## Protocol v4
+## Multiplayer user data
+
+- `UserStore` uses `node:sqlite` with foreign keys, WAL for file-backed stores,
+  `busy_timeout=5000`, and `synchronous=NORMAL`.
+- `users` stores XP, Rating, and counters. Level and completion/escape rates are
+  derived when reading a profile. `user_sessions` stores only SHA-256 token
+  digests. `user_track_records` keeps one fastest natural finish per track.
+- `races` stores public race metadata. `race_user_starts` records humans when a
+  loaded race reaches countdown so the race counter survives a mid-race process
+  restart. `race_user_results` stores the idempotent final per-user outcome.
+- Final settlement filters escaped players out of the pairwise Elo pool, applies
+  XP/podium/finish/escape changes, and updates track records in one transaction.
+  `PRIMARY KEY (race_id, user_id)` prevents duplicate accumulation.
+- A natural finish locks that participant's result before the shared results
+  phase. Leaving or disconnecting after this point cannot convert the finish
+  into an escape; disconnects that began before the finish still require a
+  reconnect inside the normal 30-second window.
+- User-owned rows cascade on manual user deletion. Shared race metadata remains;
+  V1 intentionally exposes no deletion endpoint or administration command.
+
+## Protocol v5
 
 The WebSocket endpoint is `/ws`. Lobby, room, authentication, event, result,
-telemetry, and error messages remain JSON objects with `v: 4` and a `type`.
+telemetry, and error messages remain JSON objects with `v: 5` and a `type`.
 Unknown fields in JSON client messages are discarded by the shared validator.
 Race snapshots and race inputs use binary codec revision 1 instead.
 
@@ -350,7 +380,7 @@ Server → client:
 ```text
 welcome, lobby_state, room_state, prepare_race,
 race_loaded_ack, snapshot, race_events, race_results,
-kicked, error, pong, server_stats
+kicked, user_progression, error, pong, server_stats
 ```
 
 In those lists, `input` and `snapshot` are logical message types rather than
@@ -361,16 +391,17 @@ and announces both the business `raceId` and a nonzero `wireRaceId: uint32`.
 `lobby_state` contains public-safe summaries for both public and private rooms:
 room code/name/type, selected track, password requirement, occupied/capacity counts,
 host display name, status, and whether the room is joinable. It never contains member IDs,
-resume tokens, passwords, or password digests. `create_room` supplies room
+resume tokens, user IDs, passwords, or password digests. `create_room` supplies room
 name/type/capacity/track and an optional private-room password; `join_room` supplies
-the password only when needed.
+the password only when needed. Create/join/quick-match nickname fields are
+ignored; the server uses the authenticated guest profile nickname.
 
 The authoritative driving packet is exactly 28 bytes:
 
 ```js
 {
   type: 'input',
-  v: 4,
+  v: 5,
   wireRaceId,
   seq,
   useItemSeq,
@@ -402,26 +433,39 @@ buffer exceeds `max(16 KiB, 2 * snapshotBytes)`. Events, results, and
 room state are not intentionally skipped. Any connection above 512 KiB total
 output backlog is closed. `race_events` carries globally increasing event IDs.
 
-A v3 JSON message receives a terminal `client_update_required` error and close
-code `4006`. A v4 browser treats that close code, a damaged binary packet, or a
+A message from any older protocol receives a terminal `client_update_required`
+error and close code `4006`. A v5 browser treats that close code, a damaged binary packet, or a
 missing `wireRaceId` as terminal and presents a refresh action without entering
 the normal reconnect loop.
 
 `welcome` returns opaque `participantId` and `resumeToken` credentials after a
-room action. The browser keeps them only in memory and automatically retries
+room action plus a current-user profile summary. The browser keeps room
+credentials only in memory and automatically retries
 with delays of 250, 500, 1,000, 2,000, and 4,000 ms within the 30-second resume
-window. Refreshing or opening another tab does not transfer those credentials.
+window. Resume must also match the user ID represented by the current guest
+cookie. Refreshing or opening another tab does not transfer room credentials.
+
+Before `/ws`, multiplayer calls `POST /api/user/session`. The 32-byte random
+token is stored only in an HttpOnly, SameSite=Strict cookie; SQLite stores its
+SHA-256 digest. `GET /api/me` returns the current profile and `PATCH /api/me`
+updates its nickname. The API does not impose a per-IP guest-creation limit.
+
+At results, `race_results` can set `progressionPending: true`. The private
+`user_progression` message later reports XP/Rating deltas, level changes, record
+updates, and the latest profile. Settlement waits for unresolved pre-result
+disconnects until they reconnect or their 30-second window expires.
 
 ## WebSocket safety and health
 
-- Upgrade requests must target `/ws` and include an allowed browser Origin.
+- Upgrade requests must target `/ws`, include an allowed browser Origin, and
+  carry a valid guest session cookie; otherwise the upgrade receives HTTP 401.
   Same-origin HTTP/HTTPS is accepted; `ALLOWED_ORIGINS` adds explicit origins.
 - Client frames are limited to 2 KiB and use per-connection message and byte
   token buckets: 120 messages/second with a burst of 180, plus 64 KiB/second
   with a 128 KiB burst.
 - Create/join/quick-match/resume attempts are limited to 20 per IP per minute
   by default. Wrong private-room passwords consume the same budget.
-- Binary client frames are accepted only when they are valid fixed 28-byte v4
+- Binary client frames are accepted only when they are valid fixed 28-byte v5
   race inputs. Other binary frames close the connection. Per-message
   compression is disabled.
 - Ping/pong heartbeat runs every 15 seconds and terminates dead sockets.
@@ -439,8 +483,8 @@ window. Refreshing or opening another tab does not transfer those credentials.
 settings/help, and result modes. Both race types are mounted through the common
 session interface, then share Track/Kart visuals, Effects, camera, HUD, and audio.
 
-`OnlineClient` owns transport and room commands; `online-screens.js` owns DOM
-lobby/room/result views. Entering multiplayer keeps one WebSocket subscribed to
+`UserProfileClient` bootstraps the guest profile before `OnlineClient` opens the
+transport; `online-screens.js` owns DOM lobby/room/result views. Entering multiplayer keeps one WebSocket subscribed to
 `lobby_state`; create, join, and quick match reuse it. Leaving a room returns the
 same connection to lobby subscription, while an active room reconnect uses the
 in-memory participant credentials. `prepare_race` builds the Track and
@@ -450,10 +494,11 @@ failed invitations fall back to the Lobby. Successful room entry synchronizes th
 query string, and leaving the room clears it.
 
 The first multiplayer visit selects a Chinese combination nickname from bundled
-word pools regardless of the selected UI language.
-Valid edited names are kept in `localStorage`; names may repeat and are never
-used as identifiers. Active room credentials are never written to browser
-storage, and obsolete v1/v2 session records are removed on client startup.
+word pools regardless of the selected UI language. That local value is a
+one-time migration input when the guest profile is created. Later edits are
+persisted through `PATCH /api/me`; names may repeat and are never identifiers.
+Active room credentials are never written to browser storage, and obsolete
+v1/v2 session records are removed on client startup.
 
 Online pause and `visibilitychange` set neutral controls but continue session
 updates, snapshot processing, rendering, and server time. Local pause stops the
@@ -474,7 +519,7 @@ The Node test suite covers:
 - physics, items, AI, full deterministic local races, and multiplayer
   `RaceSimulation` controller/RNG behavior;
 - the shared JSON validator plus binary golden bytes, round trips, boundaries,
-  corruption rejection, v3 termination, and v4 recovery ordering;
+  corruption rejection, old-protocol termination, and v5 recovery ordering;
 - room creation, permissions, loading, input ordering, takeover/reconnect,
   results, expiry, and scheduler behavior;
 - WebSocket origin, limits, routing, and combined game-server health behavior;

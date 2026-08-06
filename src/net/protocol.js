@@ -1,4 +1,4 @@
-// Turbo Legends multiplayer protocol v4.
+// Turbo Legends multiplayer protocol v5.
 //
 // This module is intentionally browser-safe: both the Node server and the
 // native browser WebSocket client import the same message names and input
@@ -6,7 +6,7 @@
 
 import { isAvatarId, isPaintId } from '../game/appearance.js';
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 export const CLIENT_UPDATE_CLOSE_CODE = 4006;
 export const MAX_CLIENT_MESSAGE_BYTES = 2 * 1024;
 export const MAX_CLIENT_MESSAGES_PER_SECOND = 120;
@@ -43,6 +43,7 @@ export const SERVER_MESSAGE_TYPES = Object.freeze({
   SNAPSHOT: 'snapshot',
   RACE_EVENTS: 'race_events',
   RACE_RESULTS: 'race_results',
+  USER_PROGRESSION: 'user_progression',
   ERROR: 'error',
   PONG: 'pong',
   SERVER_STATS: 'server_stats',
@@ -166,6 +167,7 @@ export const ERROR_CODES = Object.freeze({
   RATE_LIMITED: 'rate_limited',
   SERVER_BUSY: 'server_busy',
   CLIENT_UPDATE_REQUIRED: 'client_update_required',
+  AUTHENTICATION_REQUIRED: 'authentication_required',
   INTERNAL_ERROR: 'internal_error',
 });
 
@@ -297,8 +299,6 @@ export function validateClientMessage(message) {
     case CLIENT_MESSAGE_TYPES.CREATE_ROOM:
     case CLIENT_MESSAGE_TYPES.JOIN_ROOM:
     case CLIENT_MESSAGE_TYPES.QUICK_MATCH: {
-      const name = validateDisplayName(message.displayName ?? message.nickname);
-      if (!name.ok) return name;
       if (!optionalId(message.characterId)) {
         return fail(ERROR_CODES.CHARACTER_INVALID, 'Invalid character id.');
       }
@@ -337,7 +337,6 @@ export function validateClientMessage(message) {
         if (!password.ok) return password;
         if (password.value !== undefined) base.password = password.value;
       }
-      base.displayName = name.value;
       if (message.characterId !== undefined) base.characterId = message.characterId;
       if (message.paintId !== undefined) base.paintId = message.paintId;
       if (message.avatarId !== undefined) base.avatarId = message.avatarId;

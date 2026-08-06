@@ -16,6 +16,7 @@ import { TRACKS } from '../src/track/tracks.js';
 import {
   CONTROLLER_KINDS,
   ERROR_CODES,
+  PROTOCOL_VERSION,
   ROOM_STATES,
   ROOM_TYPES,
   SERVER_MESSAGE_TYPES,
@@ -172,9 +173,8 @@ function prepareBinarySnapshotSource(room, serverTime) {
 function defaultRaceResults(room) {
   const simulation = room.race.simulation;
   const supplied = simulation.getResults?.();
-  if (supplied) return supplied;
   const rosterByIndex = new Map(room.race.roster.map((entry) => [entry.kartIndex, entry]));
-  return (simulation.standings ?? simulation.karts ?? []).map((kart, index) => {
+  const rawResults = supplied ?? (simulation.standings ?? simulation.karts ?? []).map((kart, index) => {
     const entry = rosterByIndex.get(kart.index);
     return {
       rank: kart.rank ?? index + 1,
@@ -189,6 +189,17 @@ function defaultRaceResults(room) {
       bestLap: finiteOrNull(kart.bestLap),
       lapTimes: Array.isArray(kart.lapTimes) ? kart.lapTimes.slice() : [],
       finished: Boolean(kart.finished),
+      autoPlaced: Boolean(kart.autoPlaced),
+    };
+  });
+  return rawResults.map((result) => {
+    const completed = result.completed === undefined
+      ? Boolean(result.finished && !result.autoPlaced)
+      : Boolean(result.completed);
+    return {
+      ...result,
+      completed,
+      finishTime: completed ? finiteOrNull(result.finishTime) : null,
     };
   });
 }
@@ -236,6 +247,7 @@ export class RoomManager extends EventEmitter {
     passwordSaltFactory = () => randomBytes(16),
     scryptQueue = defaultScryptQueue,
     metrics = null,
+    userStore = null,
     roomReceiverCountProvider = null,
   } = {}) {
     super();
@@ -270,11 +282,14 @@ export class RoomManager extends EventEmitter {
     this.passwordSaltFactory = passwordSaltFactory;
     this.scryptQueue = scryptQueue;
     this.metrics = metrics;
+    this.userStore = userStore;
     this.roomReceiverCountProvider = roomReceiverCountProvider;
     this._passwordVerifiers = new WeakMap();
     this.rooms = new Map();
     this.activeRaceRooms = new Set();
     this.participantRooms = new Map();
+    this.userParticipants = new Map();
+    this.pendingSettlements = new Map();
     this._joinOrder = 0;
     this._lobbySignature = '[]';
     this._roomErrorLastAt = new WeakMap();
@@ -318,6 +333,7 @@ export class RoomManager extends EventEmitter {
   }
 
   async createRoom(options = {}) {
+    const userId = options.userId ?? null;
     const displayName = requireValid(validateDisplayName(options.displayName));
     const characterId = options.characterId;
     const paintId = options.paintId;
@@ -366,7 +382,7 @@ export class RoomManager extends EventEmitter {
     let session;
     try {
       session = this._addParticipant(room, {
-        displayName, characterId, paintId, avatarId,
+        userId, displayName, characterId, paintId, avatarId,
       }, now);
     } catch (error) {
       this.rooms.delete(roomCode);
@@ -378,7 +394,7 @@ export class RoomManager extends EventEmitter {
   }
 
   async joinRoom(roomCode, {
-    displayName, characterId, paintId, avatarId, password,
+    userId = null, displayName, characterId, paintId, avatarId, password,
   } = {}) {
     const room = this._requireRoom(roomCode);
     if (room.state !== ROOM_STATES.WAITING) {
@@ -398,14 +414,14 @@ export class RoomManager extends EventEmitter {
       throw new GameError(ERROR_CODES.ROOM_FULL, 'This room is full.');
     }
     const session = this._addParticipant(room, {
-      displayName, characterId, paintId, avatarId,
+      userId, displayName, characterId, paintId, avatarId,
     }, this.now());
     if (!room.hostParticipantId) this._migrateHost(room);
     this._broadcastRoomState(room);
     return { ...session, roomCode: room.code, roomState: this.getRoomState(room.code) };
   }
 
-  async quickMatch({ displayName, characterId, paintId, avatarId } = {}) {
+  async quickMatch({ userId = null, displayName, characterId, paintId, avatarId } = {}) {
     displayName = requireValid(validateDisplayName(displayName));
     const candidates = [...this.rooms.values()].map((room) => ({
       room,
@@ -431,14 +447,16 @@ export class RoomManager extends EventEmitter {
       Math.max(0, Math.floor(this.random() * preferredCandidates.length)),
     );
     return await this.joinRoom(preferredCandidates[index].room.code, {
-      displayName, characterId, paintId, avatarId,
+      userId, displayName, characterId, paintId, avatarId,
     });
   }
 
-  resume(roomCode, participantId, resumeToken) {
+  resume(roomCode, participantId, resumeToken, userId = null) {
     const room = this._requireRoom(roomCode, ERROR_CODES.SESSION_NOT_FOUND);
     const member = room.members.get(participantId);
-    if (!member || member.resumeToken !== resumeToken || (member.abandoned && !member.resumeExpired)) {
+    if (!member || member.resumeToken !== resumeToken
+      || (userId && member.userId !== userId)
+      || (member.abandoned && !member.resumeExpired)) {
       throw new GameError(ERROR_CODES.SESSION_NOT_FOUND, 'That session cannot be resumed.');
     }
     if (member.resumeExpired) {
@@ -459,6 +477,9 @@ export class RoomManager extends EventEmitter {
       this._setController(room, member, CONTROLLER_KINDS.TAKEOVER_AI, true);
     }
     if (!room.hostParticipantId) this._migrateHost(room);
+    // Let the WebSocket gateway bind the resumed connection before a delayed
+    // settlement emits the private progression message for this participant.
+    queueMicrotask(() => this._resolvePendingParticipant(participantId, false, now));
     this._broadcastRoomState(room);
     return {
       roomCode: room.code,
@@ -474,6 +495,7 @@ export class RoomManager extends EventEmitter {
     const { room, member } = this._findParticipant(participantId, false) ?? {};
     if (!room || !member || !member.connected) return false;
     const now = this.now();
+    member.resultLocked = member.resultLocked || this._memberNaturallyFinished(room, member);
     member.connected = false;
     member.resumeExpired = false;
     member.disconnectedAt = now;
@@ -493,6 +515,8 @@ export class RoomManager extends EventEmitter {
     if (room.state === ROOM_STATES.WAITING) {
       this._removeParticipant(room, member);
     } else {
+      const now = this.now();
+      member.resultLocked = member.resultLocked || this._memberNaturallyFinished(room, member);
       member.abandoned = true;
       member.resumeExpired = false;
       member.connected = false;
@@ -501,6 +525,7 @@ export class RoomManager extends EventEmitter {
         this._setController(room, member, CONTROLLER_KINDS.TAKEOVER_AI);
       }
       if (room.hostParticipantId === participantId) this._migrateHost(room);
+      this._resolvePendingParticipant(participantId, !member.resultLocked, now);
     }
     if (![...room.members.values()].some((candidate) => candidate.connected)) room.emptySince = this.now();
     if (this._maybeReturnRoom(room)) return;
@@ -634,6 +659,7 @@ export class RoomManager extends EventEmitter {
     const roster = this._buildRoster(room, seed);
     for (const member of members) {
       member.postRaceState = null;
+      member.resultLocked = false;
       member.raceLoaded = false;
       member.kartIndex = roster.find((entry) => entry.participantId === member.participantId)?.kartIndex ?? null;
       member.controllerKind = CONTROLLER_KINDS.TAKEOVER_AI;
@@ -914,6 +940,7 @@ export class RoomManager extends EventEmitter {
         this._isolateRoomError(room, error, now);
       }
     }
+    this._settlePendingRaces(now);
   }
 
   setRoomReceiverCountProvider(provider) {
@@ -922,12 +949,17 @@ export class RoomManager extends EventEmitter {
 
   close() {
     for (const room of [...this.rooms.values()]) this._destroyRoom(room);
+    this.pendingSettlements.clear();
+    this.userParticipants.clear();
     this.removeAllListeners();
   }
 
   _addParticipant(room, {
-    displayName, characterId, paintId, avatarId,
+    userId = null, displayName, characterId, paintId, avatarId,
   }, now) {
+    if (userId && this.userParticipants.has(userId)) {
+      throw new GameError(ERROR_CODES.ALREADY_IN_ROOM, 'This user is already in a room.');
+    }
     const validatedName = validateDisplayName(displayName);
     if (!validatedName.ok) {
       throw new GameError(validatedName.error.code, validatedName.error.message);
@@ -951,7 +983,9 @@ export class RoomManager extends EventEmitter {
     }
     const participantId = this.participantIdFactory();
     const resumeToken = this.resumeTokenFactory();
+    const resolvedUserId = userId || `participant:${participantId}`;
     const member = {
+      userId: resolvedUserId,
       participantId,
       resumeToken,
       displayName,
@@ -961,6 +995,7 @@ export class RoomManager extends EventEmitter {
       ready: false,
       connected: true,
       abandoned: false,
+      resultLocked: false,
       resumeExpired: false,
       disconnectedAt: null,
       resumeExpiresAt: null,
@@ -979,6 +1014,7 @@ export class RoomManager extends EventEmitter {
     };
     room.members.set(participantId, member);
     this.participantRooms.set(participantId, room.code);
+    this.userParticipants.set(resolvedUserId, participantId);
     room.emptySince = null;
     return { participantId, resumeToken };
   }
@@ -987,6 +1023,7 @@ export class RoomManager extends EventEmitter {
     const roster = [...room.members.values()]
       .filter((member) => !member.abandoned)
       .map((member) => ({
+        userId: member.userId,
         participantId: member.participantId,
         displayName: member.displayName,
         characterId: member.characterId,
@@ -1089,6 +1126,7 @@ export class RoomManager extends EventEmitter {
         if (kind === CONTROLLER_KINDS.HUMAN) member.lastInputAt = now;
         this._setController(room, member, kind, true);
       }
+      this._recordRaceStart(room);
       this._broadcastRoomState(room);
     })().catch((error) => {
       if (room.state === ROOM_STATES.LOADING && room.race === race) {
@@ -1210,7 +1248,7 @@ export class RoomManager extends EventEmitter {
       const durationMs = performance.now() - startedAt;
       this.metrics?.recordSnapshotEncoding?.({ bytes: binaryData.byteLength, durationMs });
       return {
-        v: 4,
+        v: PROTOCOL_VERSION,
         type: SERVER_MESSAGE_TYPES.SNAPSHOT,
         raceId: room.race.raceId,
         wireRaceId: room.race.wireRaceId,
@@ -1240,6 +1278,8 @@ export class RoomManager extends EventEmitter {
     room.state = ROOM_STATES.RESULTS;
     room.race.resultsAt = now;
     room.race.results = defaultRaceResults(room);
+    const settlement = this._createRaceSettlement(room);
+    if (settlement) this.pendingSettlements.set(settlement.raceId, settlement);
     for (const member of room.members.values()) {
       member.ready = false;
       member.postRaceState = member.abandoned ? null : POST_RACE_STATES.RESULTS;
@@ -1248,8 +1288,123 @@ export class RoomManager extends EventEmitter {
     this._emitToRoom(room, serverMessage(SERVER_MESSAGE_TYPES.RACE_RESULTS, {
       raceId: room.race.raceId,
       results: room.race.results,
+      progressionPending: Boolean(settlement),
     }));
     this._broadcastRoomState(room);
+    if (settlement) this._trySettleRace(settlement, now);
+  }
+
+  _recordRaceStart(room) {
+    if (typeof this.userStore?.startRace !== 'function') return false;
+    const participants = room.race.roster.flatMap((entry) => {
+      const member = room.members.get(entry.participantId);
+      return member?.userId && entry.aiPlayerNumber == null
+        ? [{ userId: member.userId, participantId: member.participantId }]
+        : [];
+    });
+    try {
+      this.userStore.startRace({
+        raceId: room.race.raceId,
+        trackId: room.race.trackId,
+        roomType: room.roomType,
+        participants,
+      });
+      return true;
+    } catch (error) {
+      this.metrics?.increment?.('user', 'startErrors');
+      this.emit('managerError', error);
+      return false;
+    }
+  }
+
+  _createRaceSettlement(room) {
+    if (!this.userStore) return null;
+    const resultsByParticipant = new Map(room.race.results
+      .filter((result) => result.participantId)
+      .map((result) => [result.participantId, result]));
+    const participants = [];
+    const pending = new Map();
+    for (const rosterEntry of room.race.roster) {
+      const member = room.members.get(rosterEntry.participantId);
+      if (!member?.userId || rosterEntry.aiPlayerNumber != null) continue;
+      const result = resultsByParticipant.get(member.participantId);
+      if (!result) continue;
+      const participant = {
+        userId: member.userId,
+        participantId: member.participantId,
+        officialRank: result.rank,
+        kartIndex: result.kartIndex,
+        completed: Boolean(result.completed),
+        finishTimeMs: result.completed && Number.isFinite(result.finishTime)
+          ? Math.round(result.finishTime * 1000)
+          : null,
+        escaped: Boolean(member.abandoned && !member.resultLocked),
+      };
+      if (!participant.escaped && !member.resultLocked
+        && !member.connected && member.resumeExpiresAt !== null) {
+        pending.set(member.participantId, member.resumeExpiresAt);
+      }
+      participants.push(participant);
+    }
+    return {
+      raceId: room.race.raceId,
+      trackId: room.race.trackId,
+      roomType: room.roomType,
+      participants,
+      pending,
+    };
+  }
+
+  _resolvePendingParticipant(participantId, escaped, now = this.now()) {
+    for (const settlement of this.pendingSettlements.values()) {
+      if (!settlement.pending.has(participantId)) continue;
+      settlement.pending.delete(participantId);
+      const participant = settlement.participants.find(
+        (candidate) => candidate.participantId === participantId,
+      );
+      if (participant) participant.escaped = Boolean(escaped);
+      this._trySettleRace(settlement, now);
+    }
+  }
+
+  _settlePendingRaces(now = this.now()) {
+    for (const settlement of [...this.pendingSettlements.values()]) {
+      this._trySettleRace(settlement, now);
+    }
+  }
+
+  _trySettleRace(settlement, now = this.now()) {
+    for (const [participantId, deadline] of [...settlement.pending]) {
+      if (now <= deadline) continue;
+      settlement.pending.delete(participantId);
+      const participant = settlement.participants.find(
+        (candidate) => candidate.participantId === participantId,
+      );
+      if (participant) participant.escaped = true;
+    }
+    if (settlement.pending.size > 0) return false;
+    this.pendingSettlements.delete(settlement.raceId);
+    try {
+      const updates = this.userStore.settleRace(settlement);
+      for (const participant of settlement.participants) {
+        const update = updates.get(participant.userId);
+        if (!update) continue;
+        this._emitToParticipant(participant.participantId, serverMessage(
+          SERVER_MESSAGE_TYPES.USER_PROGRESSION,
+          { raceId: settlement.raceId, status: 'ok', ...update },
+        ));
+      }
+    } catch (error) {
+      this.metrics?.increment?.('user', 'settlementErrors');
+      this.emit('managerError', error);
+      for (const participant of settlement.participants) {
+        this._emitToParticipant(participant.participantId, serverMessage(
+          SERVER_MESSAGE_TYPES.USER_PROGRESSION,
+          { raceId: settlement.raceId, status: 'error' },
+        ));
+      }
+    }
+    return true;
   }
 
   _returnRoom(room) {
@@ -1281,6 +1436,7 @@ export class RoomManager extends EventEmitter {
       member.awaitingFreshInput = false;
       member.pendingUseItems = 0;
       member.postRaceState = null;
+      member.resultLocked = false;
     }
     this._migrateHost(room);
   }
@@ -1311,6 +1467,16 @@ export class RoomManager extends EventEmitter {
     room.race?.simulation?.setController?.(member.kartIndex, kind);
   }
 
+  _memberNaturallyFinished(room, member) {
+    if (member.resultLocked) return true;
+    const result = room.race?.results?.find(
+      (candidate) => candidate.participantId === member.participantId,
+    );
+    if (result) return Boolean(result.completed);
+    const kart = room.race?.simulation?.karts?.[member.kartIndex];
+    return Boolean(kart?.finished && !kart.autoPlaced);
+  }
+
   _canStart(room) {
     if (room.state !== ROOM_STATES.WAITING) return false;
     const members = [...room.members.values()].filter((member) => !member.abandoned);
@@ -1321,6 +1487,7 @@ export class RoomManager extends EventEmitter {
     let changed = false;
     for (const member of [...room.members.values()]) {
       if (!member.connected && member.resumeExpiresAt !== null && now > member.resumeExpiresAt) {
+        this._resolvePendingParticipant(member.participantId, true, now);
         this._removeParticipant(room, member);
         changed = true;
       }
@@ -1338,6 +1505,7 @@ export class RoomManager extends EventEmitter {
         member.resumeExpiresAt = null;
         member.abandoned = true;
         member.resumeExpired = true;
+        this._resolvePendingParticipant(member.participantId, !member.resultLocked, now);
         changed = true;
       }
     }
@@ -1347,6 +1515,9 @@ export class RoomManager extends EventEmitter {
   _removeParticipant(room, member) {
     room.members.delete(member.participantId);
     this.participantRooms.delete(member.participantId);
+    if (this.userParticipants.get(member.userId) === member.participantId) {
+      this.userParticipants.delete(member.userId);
+    }
     if (room.hostParticipantId === member.participantId) this._migrateHost(room);
   }
 
@@ -1361,7 +1532,12 @@ export class RoomManager extends EventEmitter {
   _destroyRoom(room) {
     this.activeRaceRooms.delete(room);
     room.race?.simulation?.dispose?.();
-    for (const participantId of room.members.keys()) this.participantRooms.delete(participantId);
+    for (const member of room.members.values()) {
+      this.participantRooms.delete(member.participantId);
+      if (this.userParticipants.get(member.userId) === member.participantId) {
+        this.userParticipants.delete(member.userId);
+      }
+    }
     this.rooms.delete(room.code);
     this.emit('roomDestroyed', { roomCode: room.code });
     this._emitLobbyChangedIfNeeded();

@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { request } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
-import { createGameServer } from '../server.mjs';
+import { createGameServer, DEFAULT_USER_SESSION_CLEANUP_INTERVAL_MS } from '../server.mjs';
 import {
   ROOM_PRESENCE_HEARTBEAT_INTERVAL_MS,
   SLOW_CLIENT_BACKPRESSURE_BYTES,
@@ -44,7 +44,16 @@ function readJson(port, path) {
 }
 
 async function connectClient(WebSocket, url, origin, options = {}) {
-  const socket = new WebSocket(url, { ...options, headers: { Origin: origin } });
+  const {
+    guestDisplayName = 'Test Driver',
+    headers: optionHeaders = {},
+    ...webSocketOptions
+  } = options;
+  const cookie = optionHeaders.Cookie || await createGuestCookie(origin, guestDisplayName);
+  const socket = new WebSocket(url, {
+    ...webSocketOptions,
+    headers: { ...optionHeaders, Origin: origin, Cookie: cookie },
+  });
   const messages = [];
   const waiters = [];
   const raceIds = new Map();
@@ -70,6 +79,7 @@ async function connectClient(WebSocket, url, origin, options = {}) {
   });
   return {
     socket,
+    cookie,
     next(predicate, after = 0) {
       const existing = messages.slice(after).find(predicate);
       if (existing) return Promise.resolve(existing);
@@ -94,8 +104,39 @@ async function connectClient(WebSocket, url, origin, options = {}) {
   };
 }
 
+function createGuestCookie(origin, displayName = 'Test Driver') {
+  const url = new URL('/api/user/session', origin);
+  const body = JSON.stringify({ displayName });
+  return new Promise((resolve, reject) => {
+    const req = request({
+      host: url.hostname,
+      port: url.port,
+      path: url.pathname,
+      method: 'POST',
+      agent: false,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, res => {
+      res.resume();
+      res.on('end', () => {
+        const setCookie = res.headers['set-cookie']?.[0];
+        if (!setCookie) reject(new Error('Guest session did not return a cookie.'));
+        else resolve(setCookie.split(';')[0]);
+      });
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
 test('Room presence heartbeat is shorter than the reconnect window', () => {
   assert.equal(ROOM_PRESENCE_HEARTBEAT_INTERVAL_MS, 3_000);
+});
+
+test('expired user-session cleanup defaults to ten minutes instead of the room maintenance cadence', () => {
+  assert.equal(DEFAULT_USER_SESSION_CLEANUP_INTERVAL_MS, 600_000);
 });
 
 test('snapshot backpressure skips only stale snapshots and closes at the total output cap', () => {
@@ -125,6 +166,39 @@ test('snapshot backpressure skips only stale snapshots and closes at the total o
   }), 'close');
 });
 
+test('WebSocket upgrades require a valid guest session cookie', {
+  skip: wsModule ? false : 'ws dependency is not installed in this workspace',
+}, async () => {
+  const { WebSocket } = wsModule;
+  const server = await createGameServer({
+    root: PROJECT_ROOT,
+    logger: { info() {}, warn() {}, error() {} },
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const port = server.address().port;
+  const origin = `http://127.0.0.1:${port}`;
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+    headers: { Origin: origin },
+  });
+  try {
+    const statusCode = await new Promise((resolve, reject) => {
+      socket.once('unexpected-response', (_request, response) => {
+        response.resume();
+        resolve(response.statusCode);
+      });
+      socket.once('open', () => reject(new Error('Unauthenticated WebSocket unexpectedly opened.')));
+      socket.once('error', reject);
+    });
+    assert.equal(statusCode, 401);
+  } finally {
+    socket.terminate();
+    await server.shutdown();
+  }
+});
+
 test('a silent Room connection is broadcast as reconnecting before it resumes', {
   skip: wsModule ? false : 'ws dependency is not installed in this workspace',
 }, async () => {
@@ -146,7 +220,7 @@ test('a silent Room connection is broadcast as reconnecting before it resumes', 
   let guest;
   let resumedGuest;
   try {
-    host = await connectClient(WebSocket, url, origin);
+    host = await connectClient(WebSocket, url, origin, { guestDisplayName: 'Host' });
     host.send({
       type: 'create_room',
       displayName: 'Host',
@@ -159,7 +233,7 @@ test('a silent Room connection is broadcast as reconnecting before it resumes', 
     const hostWelcome = await host.next(message => message.type === 'welcome' && message.session);
     await host.next(message => message.type === 'room_state' && message.members.length === 1);
 
-    guest = await connectClient(WebSocket, url, origin, { autoPong: false });
+    guest = await connectClient(WebSocket, url, origin, { autoPong: false, guestDisplayName: 'Guest' });
     guest.send({
       type: 'join_room',
       roomCode: hostWelcome.roomCode,
@@ -184,7 +258,7 @@ test('a silent Room connection is broadcast as reconnecting before it resumes', 
     );
 
     const resumeMark = host.mark();
-    resumedGuest = await connectClient(WebSocket, url, origin);
+    resumedGuest = await connectClient(WebSocket, url, origin, { headers: { Cookie: guest.cookie } });
     resumedGuest.send({
       type: 'resume',
       roomCode: hostWelcome.roomCode,
@@ -294,7 +368,7 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
     assert.equal(metadata.headers['cache-control'], 'no-store');
     assert.deepEqual(metadata.body, { version: packageMetadata.version });
 
-    host = await connectClient(WebSocket, url, origin);
+    host = await connectClient(WebSocket, url, origin, { guestDisplayName: 'Host' });
     assert.equal((await host.next(message => message.type === 'welcome')).session, null);
     host.send({ type: 'enter_lobby' });
     assert.deepEqual((await host.next(message => message.type === 'lobby_state')).rooms, []);
@@ -318,7 +392,7 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
     assert.equal(hostRoom.settings.trackId, 'harbor-loop');
 
     const twoClientMark = host.mark();
-    guest = await connectClient(WebSocket, url, origin);
+    guest = await connectClient(WebSocket, url, origin, { guestDisplayName: 'Guest' });
     const twoClientStats = await host.next(
       message => message.type === 'server_stats' && message.onlineCount === 2,
       twoClientMark,
@@ -367,7 +441,7 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
     assert.equal(oneClientStats.onlineCount, 1);
 
     const resumeMark = host.mark();
-    resumedGuest = await connectClient(WebSocket, url, origin);
+    resumedGuest = await connectClient(WebSocket, url, origin, { headers: { Cookie: guest.cookie } });
     resumedGuest.send({
       type: 'resume',
       code: guestWelcome.roomCode,
@@ -428,7 +502,7 @@ test('a host can kick a guest back to the Lobby with an explicit notification', 
   let host;
   let guest;
   try {
-    host = await connectClient(WebSocket, url, origin);
+    host = await connectClient(WebSocket, url, origin, { guestDisplayName: 'Host' });
     host.send({
       type: 'create_room', displayName: 'Host', characterId: 'pip',
       roomName: 'Kick Test', roomType: 'public', maxPlayers: 4,
@@ -436,7 +510,7 @@ test('a host can kick a guest back to the Lobby with an explicit notification', 
     const hostWelcome = await host.next(message => message.type === 'welcome' && message.session);
     await host.next(message => message.type === 'room_state' && message.members.length === 1);
 
-    guest = await connectClient(WebSocket, url, origin);
+    guest = await connectClient(WebSocket, url, origin, { guestDisplayName: 'Guest' });
     guest.send({
       type: 'join_room', roomCode: hostWelcome.roomCode,
       displayName: 'Guest', characterId: 'nova',
@@ -482,14 +556,14 @@ test('quick match stays subscribed after no-match and can join a later public ro
   let browser;
   let host;
   try {
-    browser = await connectClient(WebSocket, url, origin);
+    browser = await connectClient(WebSocket, url, origin, { guestDisplayName: 'Same Name' });
     browser.send({ type: 'enter_lobby' });
     await browser.next(message => message.type === 'lobby_state');
     browser.send({ type: 'quick_match', displayName: 'Same Name' });
     const noMatch = await browser.next(message => message.type === 'error');
     assert.equal(noMatch.code, 'no_matching_room');
 
-    host = await connectClient(WebSocket, url, origin);
+    host = await connectClient(WebSocket, url, origin, { guestDisplayName: 'Same Name' });
     host.send({
       type: 'create_room', displayName: 'Same Name', roomName: 'Open Sprint',
       roomType: 'public', maxPlayers: 2, characterId: 'pip',
@@ -568,7 +642,10 @@ test('a protocol v3 client receives a terminal update error and closes with 4006
   });
   const port = server.address().port;
   const origin = `http://127.0.0.1:${port}`;
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { Origin: origin } });
+  const cookie = await createGuestCookie(origin, 'Legacy Driver');
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+    headers: { Origin: origin, Cookie: cookie },
+  });
   try {
     const terminal = new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Timed out waiting for v3 rejection')), 2_000);
@@ -635,7 +712,7 @@ test('two WebSocket clients can share a Racer with distinct loadouts through res
   let host;
   let guest;
   try {
-    host = await connectClient(WebSocket, url, origin);
+    host = await connectClient(WebSocket, url, origin, { guestDisplayName: 'Host' });
     host.send({
       type: 'create_room', displayName: 'Host', characterId: 'kit',
       paintId: 'turbo-blue', avatarId: 'cat',
@@ -643,7 +720,7 @@ test('two WebSocket clients can share a Racer with distinct loadouts through res
     });
     const hostWelcome = await host.next(message => message.type === 'welcome' && message.session);
 
-    guest = await connectClient(WebSocket, url, origin);
+    guest = await connectClient(WebSocket, url, origin, { guestDisplayName: 'Guest' });
     guest.send({
       type: 'join_room',
       roomCode: hostWelcome.roomCode,

@@ -9,6 +9,7 @@ import {
   buildOnlineResultsView,
   buildRoomView,
   formatOnlineTime,
+  formatProfileBestTime,
   isValidRoomPassword,
   normalizeDisplayName,
   normalizeRoomCode,
@@ -359,7 +360,7 @@ test('authoritative results use participant ids and do not invent times', () => 
     standings: [
       { participantId: 'p2', name: 'Turbo', rank: 2, finishTime: 72.5, bestLap: 34.25, paintId: 'crimson-heat', avatarId: 'dog' },
       { participantId: 'p1', name: 'Turbo', rank: 1, finishTime: 70, bestLap: 33, paintId: 'turbo-blue', avatarId: 'cat' },
-      { participantId: 'ai-2-nova', name: 'NEON RAZOR', rank: 3, finished: false, finishTime: null, bestLap: null },
+      { participantId: 'ai-2-nova', name: 'NEON RAZOR', rank: 3, completed: false, finishTime: 999, bestLap: null },
     ],
   }, 'p2');
 
@@ -370,8 +371,35 @@ test('authoritative results use participant ids and do not invent times', () => 
   assert.equal(view.standings[1].avatarId, 'dog');
   assert.equal(view.standings[2].displayName, 'AI玩家 1');
   assert.equal(view.standings[2].finished, false);
+  assert.equal(view.standings[2].finishTime, null);
   assert.equal(formatOnlineTime(view.standings[0].finishTime), '1:10.00');
   assert.equal(formatOnlineTime(view.standings[2].bestLap), '—');
+});
+
+test('profile track records keep missing times empty instead of coercing null to zero', () => {
+  assert.equal(formatProfileBestTime(null), '--');
+  assert.equal(formatProfileBestTime(undefined, 'No record'), 'No record');
+  assert.equal(formatProfileBestTime(90_000), '1:30.00');
+});
+
+test('multiplayer profile and progression UI expose every V1 statistic in both languages', () => {
+  for (const marker of [
+    'data-action="profile"',
+    'data-profile-level-badge',
+    'data-profile-rating-badge',
+    'data-profile-stat="completionRate"',
+    'data-profile-stat="escapeRate"',
+    'data-profile-records',
+    'data-progression-card',
+    'data-progression-xp',
+    'data-progression-rating',
+  ]) {
+    assert.equal(onlineScreensSource.includes(marker), true, `missing profile UI marker: ${marker}`);
+  }
+  assert.match(onlineScreensSource, /正在同步用户数据/);
+  assert.match(onlineScreensSource, /Stats update failed/);
+  assert.match(onlineStylesSource, /\.online-profile-stats \{[\s\S]*?grid-template-columns:/);
+  assert.match(onlineStylesSource, /@media \(max-width: 680px\)[\s\S]*?\.online-profile-stats \{ grid-template-columns: repeat\(2,/);
 });
 
 test('Lobby and Room use field feedback, direct page actions, and persistent room state', () => {
