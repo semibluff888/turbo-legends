@@ -162,6 +162,8 @@ the server race continues while the client sends neutral controls.
 | `ALLOWED_ORIGINS` | empty | Comma-separated extra WebSocket origins; same-origin is always accepted |
 | `USER_DB_PATH` | `data/users.sqlite` | SQLite guest-profile database path |
 | `USER_SESSION_CLEANUP_INTERVAL_MS` | `600000` | Expired guest-session cleanup interval; authentication still rejects expiry immediately |
+| `GUEST_CREATION_LIMIT` | `0` | Maximum new guest accounts created per client IP in one window; `0` disables the limit and valid session resumes are not counted |
+| `GUEST_CREATION_WINDOW_MS` | `600000` | New guest-account rate-limit window in milliseconds |
 | `METRICS_TOKEN` | empty | Enables bearer-protected `GET /api/metrics`; empty keeps the route disabled |
 | `METRICS_LOG_INTERVAL_MS` | `60000` | Structured aggregate metrics log interval |
 | `TRUST_PROXY` | `false` | Trust proxy-sanitized forwarding headers for client IP and HTTPS cookies |

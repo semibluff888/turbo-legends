@@ -1128,10 +1128,62 @@ test('auto-placed racers are public DNF entries and cannot set natural finish re
   assert.equal(participant.escaped, false);
 });
 
-test('a database settlement failure preserves race results and sends progression failure', async () => {
+test('a transient database settlement failure retries and eventually sends progression success', async () => {
+  let attempts = 0;
+  const settlements = [];
   const harness = createHarness({
+    settlementRetryDelaysMs: [100],
     userStore: {
-      settleRace() { throw new Error('database unavailable'); },
+      settleRace(settlement) {
+        attempts++;
+        if (attempts === 1) throw new Error('database unavailable');
+        settlements.push(structuredClone(settlement));
+        return new Map(settlement.participants.map((participant) => [participant.userId, {
+          xpDelta: 20,
+          ratingDelta: 0,
+          levelBefore: 1,
+          levelAfter: 1,
+          bestTimeUpdated: false,
+          profile: null,
+        }]));
+      },
+    },
+  });
+  const { host, guest } = await startTwoPlayerRace(harness);
+  await finishHarnessRace(harness);
+
+  assert.equal(attempts, 1);
+  assert.equal(settlements.length, 0);
+  assert.equal(harness.manager.pendingSettlements.size, 1);
+  assert.equal(
+    harness.messages.some((event) => event.message.type === 'user_progression'),
+    false,
+  );
+
+  harness.advance(100);
+  harness.manager.maintenance();
+  assert.equal(attempts, 2);
+  assert.equal(settlements.length, 1);
+  assert.equal(harness.manager.pendingSettlements.size, 0);
+  for (const participantId of [host.participantId, guest.participantId]) {
+    assert.equal(
+      harness.messages.some((event) => event.participantId === participantId
+        && event.message.type === 'user_progression'
+        && event.message.status === 'ok'),
+      true,
+    );
+  }
+});
+
+test('repeated database settlement failures stop after the configured retries', async () => {
+  let attempts = 0;
+  const harness = createHarness({
+    settlementRetryDelaysMs: [100, 200],
+    userStore: {
+      settleRace() {
+        attempts++;
+        throw new Error('database unavailable');
+      },
     },
   });
   const { host, guest } = await startTwoPlayerRace(harness);
@@ -1141,7 +1193,15 @@ test('a database settlement failure preserves race results and sends progression
     harness.messages.some((event) => event.message.type === 'race_results'),
     true,
   );
-  assert.equal(harness.managerErrors.length, 1);
+  assert.equal(attempts, 1);
+  harness.advance(100);
+  harness.manager.maintenance();
+  assert.equal(attempts, 2);
+  harness.advance(200);
+  harness.manager.maintenance();
+  assert.equal(attempts, 3);
+  assert.equal(harness.manager.pendingSettlements.size, 0);
+  assert.equal(harness.managerErrors.length, 3);
   for (const participantId of [host.participantId, guest.participantId]) {
     assert.equal(
       harness.messages.some((event) => event.participantId === participantId

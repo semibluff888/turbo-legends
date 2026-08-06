@@ -10,7 +10,11 @@ import { brotliCompress, gzip } from 'node:zlib';
 import { RoomManager } from './server/room-manager.js';
 import { createDefaultRaceFactory } from './server/race-factory.js';
 import { RuntimeMetrics } from './server/runtime-metrics.js';
-import { UserHttpApi } from './server/user-http-api.js';
+import {
+  DEFAULT_GUEST_CREATION_LIMIT,
+  DEFAULT_GUEST_CREATION_WINDOW_MS,
+  UserHttpApi,
+} from './server/user-http-api.js';
 import { DEFAULT_USER_SESSION_TTL_MS, UserStore } from './server/user-store.js';
 import { TRACKS } from './src/track/tracks.js';
 
@@ -375,6 +379,11 @@ export async function createGameServer({
   userSessionTtlMs = DEFAULT_USER_SESSION_TTL_MS,
   userSessionCleanupIntervalMs = Number(process.env.USER_SESSION_CLEANUP_INTERVAL_MS)
     || DEFAULT_USER_SESSION_CLEANUP_INTERVAL_MS,
+  guestCreationLimit = process.env.GUEST_CREATION_LIMIT === undefined
+    ? DEFAULT_GUEST_CREATION_LIMIT
+    : Number(process.env.GUEST_CREATION_LIMIT),
+  guestCreationWindowMs = Number(process.env.GUEST_CREATION_WINDOW_MS)
+    || DEFAULT_GUEST_CREATION_WINDOW_MS,
   trustProxy = process.env.TRUST_PROXY === 'true',
   metricsToken = process.env.METRICS_TOKEN || '',
   metricsLogIntervalMs = Number(process.env.METRICS_LOG_INTERVAL_MS) || 60_000,
@@ -391,7 +400,12 @@ export async function createGameServer({
     sessionTtlMs: userSessionTtlMs,
     trackIds: TRACKS.map((track) => track.id),
   });
-  const userApi = new UserHttpApi({ userStore: users, trustProxy });
+  const userApi = new UserHttpApi({
+    userStore: users,
+    trustProxy,
+    guestCreationLimit,
+    guestCreationWindowMs,
+  });
   const manager = roomManager ?? createRoomManager({
     ...roomManagerOptions,
     metrics: roomManagerOptions.metrics ?? metrics,

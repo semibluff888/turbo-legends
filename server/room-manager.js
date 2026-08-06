@@ -248,6 +248,7 @@ export class RoomManager extends EventEmitter {
     scryptQueue = defaultScryptQueue,
     metrics = null,
     userStore = null,
+    settlementRetryDelaysMs = [2_000, 10_000],
     roomReceiverCountProvider = null,
   } = {}) {
     super();
@@ -283,6 +284,11 @@ export class RoomManager extends EventEmitter {
     this.scryptQueue = scryptQueue;
     this.metrics = metrics;
     this.userStore = userStore;
+    this.settlementRetryDelaysMs = Array.isArray(settlementRetryDelaysMs)
+      ? settlementRetryDelaysMs
+        .map(Number)
+        .filter((delay) => Number.isFinite(delay) && delay >= 0)
+      : [];
     this.roomReceiverCountProvider = roomReceiverCountProvider;
     this._passwordVerifiers = new WeakMap();
     this.rooms = new Map();
@@ -1368,6 +1374,8 @@ export class RoomManager extends EventEmitter {
       roomType: room.roomType,
       participants,
       pending,
+      settlementAttempts: 0,
+      settlementNextAttemptAt: 0,
     };
   }
 
@@ -1390,6 +1398,7 @@ export class RoomManager extends EventEmitter {
   }
 
   _trySettleRace(settlement, now = this.now()) {
+    if (now < settlement.settlementNextAttemptAt) return false;
     for (const [participantId, deadline] of [...settlement.pending]) {
       if (now <= deadline) continue;
       settlement.pending.delete(participantId);
@@ -1399,9 +1408,9 @@ export class RoomManager extends EventEmitter {
       if (participant) participant.escaped = true;
     }
     if (settlement.pending.size > 0) return false;
-    this.pendingSettlements.delete(settlement.raceId);
     try {
       const updates = this.userStore.settleRace(settlement);
+      this.pendingSettlements.delete(settlement.raceId);
       for (const participant of settlement.participants) {
         const update = updates.get(participant.userId);
         if (!update) continue;
@@ -1411,8 +1420,16 @@ export class RoomManager extends EventEmitter {
         ));
       }
     } catch (error) {
+      settlement.settlementAttempts++;
       this.metrics?.increment?.('user', 'settlementErrors');
       this.emit('managerError', error);
+      const retryDelay = this.settlementRetryDelaysMs[settlement.settlementAttempts - 1];
+      if (retryDelay !== undefined) {
+        settlement.settlementNextAttemptAt = now + retryDelay;
+        this.metrics?.increment?.('user', 'settlementRetries');
+        return false;
+      }
+      this.pendingSettlements.delete(settlement.raceId);
       for (const participant of settlement.participants) {
         this._emitToParticipant(participant.participantId, serverMessage(
           SERVER_MESSAGE_TYPES.USER_PROGRESSION,

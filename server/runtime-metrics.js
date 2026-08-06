@@ -99,6 +99,7 @@ export class RuntimeMetrics {
       user: {
         startErrors: 0,
         settlementErrors: 0,
+        settlementRetries: 0,
       },
     };
     this.traffic = {

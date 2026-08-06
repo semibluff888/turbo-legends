@@ -2,6 +2,24 @@ import { validateDisplayName } from '../src/net/protocol.js';
 import { USER_SESSION_COOKIE, sessionTokenFromRequest } from './user-store.js';
 
 const MAX_BODY_BYTES = 4 * 1024;
+export const DEFAULT_GUEST_CREATION_LIMIT = 0;
+export const DEFAULT_GUEST_CREATION_WINDOW_MS = 10 * 60 * 1000;
+
+function positiveInteger(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.trunc(number) : fallback;
+}
+
+function nonNegativeInteger(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.trunc(number) : fallback;
+}
+
+function clientAddress(req, trustProxy) {
+  const forwarded = trustProxy ? req.headers['x-forwarded-for'] : null;
+  if (typeof forwarded === 'string' && forwarded) return forwarded.split(',')[0].trim();
+  return req.socket?.remoteAddress ?? 'unknown';
+}
 
 function jsonResponse(res, statusCode, body, headers = {}) {
   const serialized = JSON.stringify(body);
@@ -66,10 +84,27 @@ function validatedDisplayName(value, { fallback = false } = {}) {
 }
 
 export class UserHttpApi {
-  constructor({ userStore, trustProxy = false } = {}) {
+  constructor({
+    userStore,
+    trustProxy = false,
+    guestCreationLimit = DEFAULT_GUEST_CREATION_LIMIT,
+    guestCreationWindowMs = DEFAULT_GUEST_CREATION_WINDOW_MS,
+    now = () => Date.now(),
+  } = {}) {
     if (!userStore) throw new TypeError('userStore is required.');
     this.userStore = userStore;
     this.trustProxy = trustProxy;
+    this.guestCreationLimit = nonNegativeInteger(
+      guestCreationLimit,
+      DEFAULT_GUEST_CREATION_LIMIT,
+    );
+    this.guestCreationWindowMs = positiveInteger(
+      guestCreationWindowMs,
+      DEFAULT_GUEST_CREATION_WINDOW_MS,
+    );
+    this.now = now;
+    this.guestCreationAttempts = new Map();
+    this.lastGuestCreationSweepAt = this.now();
     this.sessionMaxAgeSeconds = Math.max(0, Math.trunc(userStore.sessionTtlMs / 1000));
   }
 
@@ -77,16 +112,47 @@ export class UserHttpApi {
     return this.userStore.resolveSession(sessionTokenFromRequest(req));
   }
 
+  _consumeGuestCreation(req) {
+    if (this.guestCreationLimit === 0) return true;
+    const now = this.now();
+    if (now - this.lastGuestCreationSweepAt >= this.guestCreationWindowMs) {
+      for (const [ip, entry] of this.guestCreationAttempts) {
+        if (entry.resetAt <= now) this.guestCreationAttempts.delete(ip);
+      }
+      this.lastGuestCreationSweepAt = now;
+    }
+    const ip = clientAddress(req, this.trustProxy);
+    const existing = this.guestCreationAttempts.get(ip);
+    if (!existing || existing.resetAt <= now) {
+      this.guestCreationAttempts.set(ip, {
+        count: 1,
+        resetAt: now + this.guestCreationWindowMs,
+      });
+      return true;
+    }
+    if (existing.count >= this.guestCreationLimit) return false;
+    existing.count++;
+    return true;
+  }
+
   async handle(req, res, pathname) {
     if (pathname === '/api/user/session' && req.method === 'POST') {
       const body = await readJsonBody(req);
       const token = sessionTokenFromRequest(req);
       const existing = this.userStore.resolveSession(token);
-      const result = existing
-        ? { ...existing, created: false, token: null }
-        : this.userStore.createOrResumeSession({
-          displayName: validatedDisplayName(body.displayName, { fallback: true }),
-        });
+      let result;
+      if (existing) {
+        result = { ...existing, created: false, token: null };
+      } else {
+        const displayName = validatedDisplayName(body.displayName, { fallback: true });
+        if (!this._consumeGuestCreation(req)) {
+          const error = new Error('Too many guest accounts were created. Try again later.');
+          error.statusCode = 429;
+          error.code = 'rate_limited';
+          throw error;
+        }
+        result = this.userStore.createOrResumeSession({ displayName });
+      }
       const headers = result.token ? {
         'Set-Cookie': sessionCookie(result.token, {
           secure: requestIsSecure(req, this.trustProxy),

@@ -56,6 +56,8 @@ Configuration:
 | `ALLOWED_ORIGINS` | empty | Comma-separated extra origins accepted by `/ws`; same-origin is always accepted |
 | `USER_DB_PATH` | `data/users.sqlite` | SQLite guest-profile database path |
 | `USER_SESSION_CLEANUP_INTERVAL_MS` | `600000` | Expired guest-session row cleanup interval |
+| `GUEST_CREATION_LIMIT` | `0` | Maximum new guest accounts per client IP in one rate-limit window; `0` disables the limit |
+| `GUEST_CREATION_WINDOW_MS` | `600000` | New guest-account rate-limit window in milliseconds |
 | `TRUST_PROXY` | `false` | Trust sanitized forwarded IP/protocol headers, including HTTPS cookie detection |
 
 Public deployments must provide TLS and forward WebSocket Upgrade requests for
@@ -448,12 +450,15 @@ cookie. Refreshing or opening another tab does not transfer room credentials.
 Before `/ws`, multiplayer calls `POST /api/user/session`. The 32-byte random
 token is stored only in an HttpOnly, SameSite=Strict cookie; SQLite stores its
 SHA-256 digest. `GET /api/me` returns the current profile and `PATCH /api/me`
-updates its nickname. The API does not impose a per-IP guest-creation limit.
+updates its nickname. New guest creation can optionally be limited per client IP,
+while a valid session-cookie resume does not consume that budget. The limit is
+disabled by default; set `GUEST_CREATION_LIMIT` to a positive number to enable it.
 
 At results, `race_results` can set `progressionPending: true`. The private
 `user_progression` message later reports XP/Rating deltas, level changes, record
 updates, and the latest profile. Settlement waits for unresolved pre-result
-disconnects until they reconnect or their 30-second window expires.
+disconnects until they reconnect or their 30-second window expires. Transient
+settlement failures retry after 2 and 10 seconds before reporting a final error.
 
 ## WebSocket safety and health
 

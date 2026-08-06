@@ -23,7 +23,7 @@
 - 会话令牌为 32 字节随机值，数据库只保存 SHA-256 摘要；Cookie 使用 `HttpOnly; SameSite=Strict; Path=/`，HTTPS 环境增加 `Secure`。
 - 同一用户只能拥有一个活动房间参与者。
 - 用户关联表使用级联删除。V1 不提供删除 API/CLI；确有需要时可停服后按 `userId` 手工删除。
-- 不限制同一 IP 创建游客账号的数量。
+- 测试阶段默认不限制游客账号创建；需要时可通过 `GUEST_CREATION_LIMIT` 设置同一 IP 在窗口内的创建上限，有效 Cookie 恢复不计入限额。
 
 ## API 与多人协议
 

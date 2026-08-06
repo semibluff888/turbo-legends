@@ -94,23 +94,62 @@ test('profile endpoints reject missing sessions and invalid nicknames', async ()
   }
 });
 
-test('guest creation has no per-IP account limit', async () => {
-  const server = await createGameServer({ root: PROJECT_ROOT, logger: { info() {}, warn() {}, error() {} } });
+test('guest creation is rate limited per IP while valid sessions can still resume', async () => {
+  const server = await createGameServer({
+    root: PROJECT_ROOT,
+    guestCreationLimit: 2,
+    logger: { info() {}, warn() {}, error() {} },
+  });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);
   });
   try {
     const port = server.address().port;
-    const cookies = new Set();
-    for (let index = 0; index < 21; index++) {
-      const response = await httpRequest(port, '/api/user/session', {
-        method: 'POST', body: { displayName: `Guest ${index + 1}` },
+    const first = await httpRequest(port, '/api/user/session', {
+      method: 'POST', body: { displayName: 'Guest 1' },
+    });
+    const second = await httpRequest(port, '/api/user/session', {
+      method: 'POST', body: { displayName: 'Guest 2' },
+    });
+    assert.equal(first.statusCode, 200);
+    assert.equal(second.statusCode, 200);
+
+    const limited = await httpRequest(port, '/api/user/session', {
+      method: 'POST', body: { displayName: 'Guest 3' },
+    });
+    assert.equal(limited.statusCode, 429);
+    assert.equal(limited.body.error.code, 'rate_limited');
+
+    const resumed = await httpRequest(port, '/api/user/session', {
+      method: 'POST',
+      cookie: first.headers['set-cookie'][0].split(';')[0],
+      body: { displayName: 'Ignored' },
+    });
+    assert.equal(resumed.statusCode, 200);
+    assert.equal(resumed.body.user.displayName, 'Guest 1');
+  } finally {
+    await server.shutdown();
+  }
+});
+
+test('guest creation rate limit is disabled by default', async () => {
+  const server = await createGameServer({
+    root: PROJECT_ROOT,
+    logger: { info() {}, warn() {}, error() {} },
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  try {
+    const port = server.address().port;
+    for (let index = 0; index < 35; index++) {
+      const created = await httpRequest(port, '/api/user/session', {
+        method: 'POST', body: { displayName: `Guest ${index}` },
       });
-      assert.equal(response.statusCode, 200);
-      cookies.add(response.headers['set-cookie']?.[0].split(';')[0]);
+      assert.equal(created.statusCode, 200);
     }
-    assert.equal(cookies.size, 21);
   } finally {
     await server.shutdown();
   }
