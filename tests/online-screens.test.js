@@ -10,6 +10,7 @@ import {
   buildRoomView,
   formatOnlineTime,
   formatProfileBestTime,
+  formatRoomChatTime,
   isValidRoomPassword,
   normalizeDisplayName,
   normalizeRoomCode,
@@ -37,6 +38,24 @@ test('online input helpers normalize display fields and room codes', () => {
   assert.equal(isValidRoomPassword('    '), false);
   assert.equal(isValidRoomPassword(' Pit7'), false);
   assert.equal(isValidRoomPassword('Pit7\u202e'), false);
+});
+
+test('room chat timestamps and localized rate-limit copy are ready for the message format', () => {
+  assert.match(formatRoomChatTime(Date.UTC(2026, 0, 2, 3, 4), 'zh-CN'), /^\d{2}:\d{2}$/u);
+  assert.equal(formatRoomChatTime(Number.NaN), '--:--');
+  assert.equal(getUiCopy('zh-CN').online.room.chatRateLimited, '发送消息过快，请稍后再试');
+});
+
+test('room chat is rendered below the racer list with nickname, time, content and input controls', () => {
+  assert.match(
+    onlineScreensSource,
+    /online-room-left-column[\s\S]*online-members-card[\s\S]*online-chat-card/,
+  );
+  assert.match(onlineScreensSource, /data-room-chat-list[\s\S]*data-form="chat"/);
+  assert.match(onlineScreensSource, /online-chat-name[\s\S]*online-chat-time[\s\S]*online-chat-content/);
+  assert.match(onlineScreensSource, /appendRoomChatSystem\(/);
+  assert.match(onlineStylesSource, /\.online-room-left-column[\s\S]*flex-direction: column/);
+  assert.match(onlineStylesSource, /\.online-chat-list[\s\S]*overflow-y: auto/);
 });
 
 test('invite links preserve only the same-page room query', () => {

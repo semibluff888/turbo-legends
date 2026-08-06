@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ERROR_CODES, PROTOCOL_VERSION, ROOM_STATES, ROOM_TYPES } from '../src/net/protocol.js';
+import {
+  CHAT_SEND_INTERVAL_MS,
+  ERROR_CODES,
+  PROTOCOL_VERSION,
+  ROOM_STATES,
+  ROOM_TYPES,
+} from '../src/net/protocol.js';
 import { decodeSnapshotPacket } from '../src/net/binary-race-codec.js';
 import { GameError } from '../server/game-error.js';
 import { createDefaultRaceFactory } from '../server/race-factory.js';
@@ -59,6 +65,7 @@ function createHarness(options = {}) {
   const managerErrors = [];
   const manager = new RoomManager({
     now: () => now,
+    wallClock: () => 1_700_000_000_000 + now,
     roomCodeFactory: () => 'ABC234',
     participantIdFactory: () => `participant_${String(++participantSequence).padStart(3, '0')}`,
     resumeTokenFactory: () => `resume_token_${String(participantSequence).padStart(24, '0')}`,
@@ -203,6 +210,48 @@ test('waiting room allows duplicate names and racers while loadout changes reset
     [false, false, false],
   );
   assert.equal(harness.manager.getRoomState(host.roomCode).settings.autoFillAi, true);
+});
+
+test('room chat uses authoritative identity, enforces 3 seconds, and is not replayed', async () => {
+  const harness = createHarness();
+  const { host } = await addTwoPlayers(harness);
+  const mark = harness.messages.length;
+
+  const first = harness.manager.sendChat(host.participantId, '  Good luck!  ');
+  assert.deepEqual(first, {
+    v: PROTOCOL_VERSION,
+    type: 'room_chat',
+    roomCode: host.roomCode,
+    participantId: host.participantId,
+    displayName: 'Host',
+    sentAt: 1_700_000_000_000,
+    content: 'Good luck!',
+  });
+  assert.deepEqual(harness.messages.slice(mark), [{
+    roomCode: host.roomCode,
+    participantId: null,
+    message: first,
+  }]);
+
+  assert.throws(
+    () => harness.manager.sendChat(host.participantId, 'Too soon'),
+    (error) => error.code === ERROR_CODES.CHAT_RATE_LIMITED,
+  );
+  harness.advance(CHAT_SEND_INTERVAL_MS - 1);
+  assert.throws(
+    () => harness.manager.sendChat(host.participantId, 'Still too soon'),
+    (error) => error.code === ERROR_CODES.CHAT_RATE_LIMITED,
+  );
+  harness.advance(1);
+  assert.equal(
+    harness.manager.sendChat(host.participantId, 'Now').sentAt,
+    1_700_000_000_000 + CHAT_SEND_INTERVAL_MS,
+  );
+  assert.equal(
+    harness.manager.getCatchUpMessages(host.participantId)
+      .some((message) => message.type === 'room_chat'),
+    false,
+  );
 });
 
 test('one user cannot occupy two active room participants and resume requires the same user', async () => {

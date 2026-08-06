@@ -10,7 +10,11 @@ import {
   TELEMETRY_STALE_MS,
   webSocketUrl,
 } from '../src/net/online-client.js';
-import { PROTOCOL_VERSION } from '../src/net/protocol.js';
+import {
+  CHAT_SEND_INTERVAL_MS,
+  ERROR_CODES,
+  PROTOCOL_VERSION,
+} from '../src/net/protocol.js';
 import {
   decodeInputPacket,
   encodeSnapshotPacket,
@@ -123,6 +127,37 @@ test('enterLobby opens a versioned Lobby subscription', () => {
   socket.open();
   assert.deepEqual(socket.sent, [{ v: PROTOCOL_VERSION, type: 'enter_lobby' }]);
   assert.equal(client.scope, 'lobby');
+});
+
+test('room chat is locally limited to one successful send every 3 seconds', () => {
+  FakeWebSocket.instances.length = 0;
+  let now = 1_000;
+  const client = makeClient({ now: () => now });
+  const rateLimits = [];
+  client.on('chat_rate_limited', event => rateLimits.push(event));
+  client.enterLobby();
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  boundWelcome(socket);
+
+  assert.equal(client.sendChat('  Hello room  '), true);
+  assert.deepEqual(socket.sent.at(-1), {
+    v: PROTOCOL_VERSION,
+    type: 'send_chat',
+    content: 'Hello room',
+  });
+
+  now += CHAT_SEND_INTERVAL_MS - 1;
+  assert.equal(client.sendChat('Too soon'), false);
+  assert.deepEqual(rateLimits, [{
+    code: ERROR_CODES.CHAT_RATE_LIMITED,
+    retryAfterMs: 1,
+  }]);
+  assert.equal(socket.sent.some(message => message.content === 'Too soon'), false);
+
+  now += 1;
+  assert.equal(client.sendChat('Ready now'), true);
+  assert.equal(socket.sent.at(-1).content, 'Ready now');
 });
 
 test('telemetry keeps the browser-global receiver for native timer functions', () => {

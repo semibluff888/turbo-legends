@@ -4089,6 +4089,132 @@ body.touch #hud:not([hidden]) .hud-item-impact-label { font-size: 9px; }
   padding: 15px;
 }
 
+.online-room-left-column {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+#screen-online-room .online-members-card {
+  min-height: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+#screen-online-room .online-members-card .online-member-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+#screen-online-room .online-chat-card {
+  min-height: 190px;
+  display: flex;
+  flex: 0 0 220px;
+  flex-direction: column;
+  gap: 9px;
+  padding: 13px;
+}
+#screen-online-room .online-chat-card h3 { margin-bottom: 0; }
+.online-chat-list {
+  min-height: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 7px;
+  overflow-y: auto;
+  padding-right: 3px;
+  list-style: none;
+  overscroll-behavior: contain;
+}
+.online-chat-message {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 5px 8px;
+  padding: 7px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.045);
+}
+.online-chat-message.is-system {
+  border-color: rgba(255, 210, 63, 0.28);
+  background: rgba(255, 210, 63, 0.08);
+}
+.online-chat-meta { display: contents; }
+.online-chat-name {
+  overflow: hidden;
+  color: #7fe3ff;
+  font-size: 10px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.online-chat-message.is-system .online-chat-name { color: #ffd23f; }
+.online-chat-time {
+  color: rgba(255, 255, 255, 0.38);
+  font-size: 9px;
+  font-weight: 800;
+  text-align: right;
+}
+.online-chat-content {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+.online-chat-empty {
+  margin: auto;
+  color: rgba(255, 255, 255, 0.36);
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+}
+.online-chat-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+}
+.online-chat-input {
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  color: #fff;
+  background: rgba(5, 4, 18, 0.54);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  outline: none;
+}
+.online-chat-input:focus {
+  border-color: #7fe3ff;
+  box-shadow: 0 0 0 2px rgba(127, 227, 255, 0.16);
+}
+.online-chat-input::placeholder { color: rgba(255, 255, 255, 0.36); }
+.online-chat-send {
+  min-width: 58px;
+  padding: 7px 10px;
+  border: 2px solid rgba(127, 227, 255, 0.5);
+  border-radius: 10px;
+  color: #071e31;
+  background: #7fe3ff;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+}
+.online-chat-send:hover,
+.online-chat-send:focus-visible {
+  border-color: #fff;
+  box-shadow: 0 0 15px rgba(74, 168, 255, 0.5);
+  outline: none;
+}
+
 #screen-online-room .online-card { padding: 18px; }
 #screen-online-room .online-card h3 { font-size: 17px; }
 #screen-online-room .online-member { min-height: 49px; padding: 7px 42px 7px 9px; }
@@ -4201,6 +4327,10 @@ body.touch #hud:not([hidden]) .hud-item-impact-label { font-size: 9px; }
   }
   #screen-online-room .online-page-actions { grid-column: 2; grid-row: 1; }
   #screen-online-room .online-room-grid { grid-template-columns: 1fr; }
+  #screen-online-room .online-room-left-column { overflow: visible; }
+  #screen-online-room .online-members-card { flex: none; overflow: visible; }
+  #screen-online-room .online-members-card .online-member-list { overflow: visible; }
+  #screen-online-room .online-chat-card { min-height: 220px; flex: none; }
   #screen-online-room .online-setup-card { grid-column: auto; display: flex; }
   #screen-online-room .online-setup-card h3,
   #screen-online-room .online-setup-card .online-host-note { grid-column: auto; }
@@ -4213,6 +4343,8 @@ body.touch #hud:not([hidden]) .hud-item-impact-label { font-size: 9px; }
   #screen-online-room .online-room-grid { gap: 10px; padding: 10px; }
   #screen-online-room .online-card { padding: 12px; }
   #screen-online-room .online-member { min-height: 42px; padding-top: 5px; padding-bottom: 5px; }
+  #screen-online-room .online-room-left-column { gap: 10px; }
+  #screen-online-room .online-chat-card { min-height: 150px; flex-basis: 170px; padding: 10px; }
   #screen-online-room .online-loadout-preview-host { height: 170px; }
   #screen-online-room .online-setup-track-preview { min-height: 82px; }
   #screen-online-room .online-room-state { margin: 0 10px 8px; padding-top: 7px; padding-bottom: 7px; }

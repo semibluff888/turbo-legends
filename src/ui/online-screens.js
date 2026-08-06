@@ -13,9 +13,15 @@ import {
 } from '../game/appearance.js';
 import { CHARACTERS } from '../game/characters.js';
 import { onlineErrorMessage } from '../net/online-flow.js';
-import { ERROR_CODES, validateRoomPassword } from '../net/protocol.js';
+import {
+  ERROR_CODES,
+  MAX_CHAT_MESSAGE_LENGTH,
+  normalizeChatContent,
+  validateRoomPassword,
+} from '../net/protocol.js';
 import { TRACKS } from '../track/tracks.js';
 import {
+  DEFAULT_LANGUAGE,
   formatCopy,
   formatOrdinal,
   getUiCopy,
@@ -56,6 +62,7 @@ const PROFILE_COPY = Object.freeze({
 });
 const ERROR_COPY_KEYS = new Map(Object.entries(ERROR_CODES).map(([key, value]) => [value, key]));
 const LOADOUT_TABS = new Set(['racer', 'paint', 'avatar']);
+const MAX_ROOM_CHAT_MESSAGES = 100;
 
 function userCopy(language) {
   return PROFILE_COPY[sanitizeLanguage(language)] || PROFILE_COPY.en;
@@ -276,6 +283,18 @@ export function formatOnlineTime(seconds) {
   const minutes = Math.floor(value / 60);
   const remainder = value - minutes * 60;
   return `${minutes}:${remainder < 10 ? '0' : ''}${remainder.toFixed(2)}`;
+}
+
+export function formatRoomChatTime(sentAt, language = DEFAULT_LANGUAGE) {
+  const timestamp = Number(sentAt);
+  if (!Number.isFinite(timestamp)) return '--:--';
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return '--:--';
+  return new Intl.DateTimeFormat(sanitizeLanguage(language), {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
 }
 
 export function formatProfileBestTime(finishTimeMs, noRecord = '--') {
@@ -611,6 +630,8 @@ export class OnlineScreens {
     this._previewHost = null;
     this._toastTimer = null;
     this._sharedUi = null;
+    this._chatRoomCode = '';
+    this._chatMessages = [];
 
     this._buildLobby();
     this._buildRoom();
@@ -1269,10 +1290,24 @@ export class OnlineScreens {
         </header>
 
         <div class="online-room-grid">
-          <section class="online-card online-members-card">
-            <h3>${copy.racers}</h3>
-            <ol class="online-member-list" data-member-list></ol>
-          </section>
+          <div class="online-room-left-column">
+            <section class="online-card online-members-card">
+              <h3>${copy.racers}</h3>
+              <ol class="online-member-list" data-member-list></ol>
+            </section>
+            <section class="online-card online-chat-card">
+              <h3>${copy.chat}</h3>
+              <ol class="online-chat-list" data-room-chat-list role="log" aria-live="polite"
+                aria-label="${copy.chat}"></ol>
+              <form class="online-chat-form" data-form="chat">
+                <label class="sr-only" for="online-room-chat-input">${copy.chatPlaceholder}</label>
+                <input id="online-room-chat-input" class="online-chat-input" data-chat-input
+                  type="text" maxlength="${MAX_CHAT_MESSAGE_LENGTH}" autocomplete="off"
+                  placeholder="${copy.chatPlaceholder}">
+                <button type="submit" class="online-chat-send" aria-label="${copy.sendChat}">${copy.sendChat}</button>
+              </form>
+            </section>
+          </div>
           <section class="online-card online-loadout-card">
             <h3>${copy.yourRacer}</h3>
             <button type="button" class="online-loadout-preview-button" data-action="open-loadout">
@@ -1524,8 +1559,95 @@ export class OnlineScreens {
       this._pendingAction = { kind: 'start' };
       this._emit('onStartRace');
     });
+    const chatInput = root.querySelector('[data-chat-input]');
+    this._listen(root.querySelector('[data-form="chat"]'), 'submit', (event) => {
+      event.preventDefault();
+      const content = normalizeChatContent(chatInput?.value);
+      if (!content) return;
+      const sent = this._emit('onSendChat', { content });
+      if (sent !== false && chatInput) chatInput.value = '';
+    });
     this._listen(root.querySelector('[data-action="leave"]'), 'click', () => this._emit('onLeaveRoom'));
     this._listen(root.querySelector('[data-action="copy"]'), 'click', () => this._copyInvite());
+  }
+
+  _renderRoomChatEntry(list, message) {
+    const item = createNode(
+      this.doc,
+      'li',
+      `online-chat-message${message.system ? ' is-system' : ''}`,
+      list,
+    );
+    if (message.participantId) item.dataset.participantId = message.participantId;
+    const meta = createNode(this.doc, 'span', 'online-chat-meta', item);
+    createNode(
+      this.doc,
+      'strong',
+      'online-chat-name',
+      meta,
+      message.system ? this.copy.online.room.system : message.displayName,
+    );
+    const time = createNode(
+      this.doc,
+      'time',
+      'online-chat-time',
+      meta,
+      formatRoomChatTime(message.sentAt, this.language),
+    );
+    time.dateTime = new Date(message.sentAt).toISOString();
+    createNode(this.doc, 'span', 'online-chat-content', item, message.content);
+  }
+
+  _renderRoomChat() {
+    const list = this.roots.room?.querySelector('[data-room-chat-list]');
+    if (!list) return;
+    list.innerHTML = '';
+    if (this._chatMessages.length === 0) {
+      createNode(this.doc, 'li', 'online-chat-empty', list, this.copy.online.room.chatEmpty);
+    } else {
+      for (const message of this._chatMessages) this._renderRoomChatEntry(list, message);
+    }
+    list.scrollTop = list.scrollHeight;
+  }
+
+  appendRoomChat(message = {}) {
+    const roomCode = normalizeRoomCode(message.roomCode);
+    if (roomCode && this._chatRoomCode && roomCode !== this._chatRoomCode) return false;
+    if (roomCode) this._chatRoomCode = roomCode;
+    const content = normalizeChatContent(message.content);
+    const sentAt = Number(message.sentAt);
+    if (!content || !Number.isFinite(sentAt) || !Number.isFinite(new Date(sentAt).getTime())) {
+      return false;
+    }
+    this._chatMessages.push({
+      roomCode: roomCode || this._chatRoomCode,
+      participantId: String(message.participantId || ''),
+      displayName: String(message.displayName || this.copy.online.room.system),
+      sentAt,
+      content,
+      system: Boolean(message.system),
+    });
+    if (this._chatMessages.length > MAX_ROOM_CHAT_MESSAGES) {
+      this._chatMessages.splice(0, this._chatMessages.length - MAX_ROOM_CHAT_MESSAGES);
+    }
+    this._renderRoomChat();
+    return true;
+  }
+
+  appendRoomChatSystem(content = this.copy.online.room.chatRateLimited) {
+    return this.appendRoomChat({
+      roomCode: this._chatRoomCode,
+      displayName: this.copy.online.room.system,
+      sentAt: Date.now(),
+      content,
+      system: true,
+    });
+  }
+
+  clearRoomChat() {
+    this._chatRoomCode = '';
+    this._chatMessages.length = 0;
+    this._renderRoomChat();
   }
 
   _sanitizeLoadout(value) {
@@ -2070,6 +2192,7 @@ export class OnlineScreens {
   }
 
   showLobby(lobbyState = {}, context = {}) {
+    this.clearRoomChat();
     this._show('lobby');
     return this.updateLobby(lobbyState, context);
   }
@@ -2149,6 +2272,15 @@ export class OnlineScreens {
 
   updateRoom(roomState = this._roomState, context = {}) {
     this._roomState = roomState || {};
+    const nextChatRoomCode = normalizeRoomCode(firstDefined(
+      this._roomState.roomCode,
+      this._roomState.code,
+      '',
+    ));
+    if (nextChatRoomCode && this._chatRoomCode && nextChatRoomCode !== this._chatRoomCode) {
+      this.clearRoomChat();
+    }
+    if (nextChatRoomCode) this._chatRoomCode = nextChatRoomCode;
     if (context.localParticipantId !== undefined) {
       this._localParticipantId = String(context.localParticipantId || '');
     }
@@ -2273,6 +2405,7 @@ export class OnlineScreens {
     start.hidden = !view.isHost;
     start.disabled = this._busy || Boolean(this._pendingLoadout) || !view.canStart;
     root.querySelector('[data-action="leave"]').disabled = this._busy;
+    this._renderRoomChat();
 
     const status = roomStatusMessage(view, copy);
     root.querySelector('[data-room-status]').textContent = String(context.status ?? status);

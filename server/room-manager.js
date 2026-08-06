@@ -14,6 +14,7 @@ import {
 import { shuffleRosterForGrid } from '../src/game/race-simulation.js';
 import { TRACKS } from '../src/track/tracks.js';
 import {
+  CHAT_SEND_INTERVAL_MS,
   CONTROLLER_KINDS,
   ERROR_CODES,
   PROTOCOL_VERSION,
@@ -22,6 +23,7 @@ import {
   SERVER_MESSAGE_TYPES,
   encodeKartSnapshot,
   serverMessage,
+  validateChatContent,
   validateDisplayName,
   validateRoomCapacity,
   validateRoomName,
@@ -222,6 +224,7 @@ function publicRoster(roster) {
 export class RoomManager extends EventEmitter {
   constructor({
     now = () => performance.now(),
+    wallClock = () => Date.now(),
     raceFactory = null,
     tracks = TRACKS,
     characters = CHARACTERS,
@@ -253,6 +256,7 @@ export class RoomManager extends EventEmitter {
   } = {}) {
     super();
     this.now = now;
+    this.wallClock = wallClock;
     this.raceFactory = raceFactory;
     this.tracks = new Map(tracks.map((track) => [track.id, track]));
     this.characters = characters.slice();
@@ -652,6 +656,28 @@ export class RoomManager extends EventEmitter {
     return this.getRoomState(room.code);
   }
 
+  sendChat(participantId, content) {
+    const { room, member } = this._findParticipant(participantId);
+    this._requireChatRoom(room, member);
+    const now = this.now();
+    if (now - member.lastChatAt < CHAT_SEND_INTERVAL_MS) {
+      throw new GameError(
+        ERROR_CODES.CHAT_RATE_LIMITED,
+        'Chat messages must be at least 3 seconds apart.',
+      );
+    }
+    const message = serverMessage(SERVER_MESSAGE_TYPES.ROOM_CHAT, {
+      roomCode: room.code,
+      participantId: member.participantId,
+      displayName: member.displayName,
+      sentAt: this.wallClock(),
+      content: requireValid(validateChatContent(content)),
+    });
+    member.lastChatAt = now;
+    this._emitToRoom(room, message);
+    return message;
+  }
+
   startRace(participantId) {
     const { room } = this._findParticipant(participantId);
     this._requireWaiting(room);
@@ -1032,6 +1058,7 @@ export class RoomManager extends EventEmitter {
       pendingUseItems: 0,
       lastInput: { ...DEFAULT_ZERO_INPUT },
       lastInputAt: now,
+      lastChatAt: -Infinity,
       postRaceState: null,
     };
     room.members.set(participantId, member);
@@ -1603,6 +1630,13 @@ export class RoomManager extends EventEmitter {
     if (room.state === ROOM_STATES.RESULTS
       && member.postRaceState === POST_RACE_STATES.ROOM) return;
     throw new GameError(ERROR_CODES.INVALID_STATE, 'Return to the room before doing that.');
+  }
+
+  _requireChatRoom(room, member) {
+    if ([ROOM_STATES.WAITING, ROOM_STATES.LOADING].includes(room.state)) return;
+    if (room.state === ROOM_STATES.RESULTS
+      && member.postRaceState === POST_RACE_STATES.ROOM) return;
+    throw new GameError(ERROR_CODES.INVALID_STATE, 'Room chat is not available during the race.');
   }
 
   _requireHost(room, participantId) {

@@ -5,6 +5,7 @@
 // and typed event delivery. It deliberately does not touch the DOM.
 
 import {
+  CHAT_SEND_INTERVAL_MS,
   CLIENT_MESSAGE_TYPES,
   CLIENT_UPDATE_CLOSE_CODE,
   ERROR_CODES,
@@ -12,6 +13,7 @@ import {
   ROOM_STATES,
   ROOM_TYPES,
   SERVER_MESSAGE_TYPES,
+  validateChatContent,
 } from './protocol.js';
 import {
   RaceCodecError,
@@ -93,6 +95,7 @@ export class OnlineClient {
     this.raceId = null;
     this.wireRaceId = null;
     this._raceLoadedAcks = new Map();
+    this._lastChatSentAt = -Infinity;
 
     this._listeners = new Map();
     this._connectionPurpose = null;
@@ -236,6 +239,27 @@ export class OnlineClient {
 
   setReady(ready) {
     return this.send({ type: CLIENT_MESSAGE_TYPES.SET_READY, ready: !!ready });
+  }
+
+  sendChat(content) {
+    if (this.scope !== 'room' || !this.selfId) return false;
+    const validated = validateChatContent(content);
+    if (!validated.ok) return false;
+    const now = this._now();
+    const elapsed = now - this._lastChatSentAt;
+    if (elapsed < CHAT_SEND_INTERVAL_MS) {
+      this._emit('chat_rate_limited', {
+        code: ERROR_CODES.CHAT_RATE_LIMITED,
+        retryAfterMs: Math.max(0, CHAT_SEND_INTERVAL_MS - elapsed),
+      });
+      return false;
+    }
+    const sent = this.send({
+      type: CLIENT_MESSAGE_TYPES.SEND_CHAT,
+      content: validated.value,
+    });
+    if (sent) this._lastChatSentAt = now;
+    return sent;
   }
 
   kickPlayer(participantId) {
@@ -816,6 +840,7 @@ export class OnlineClient {
     this.raceId = null;
     this.wireRaceId = null;
     this._raceLoadedAcks.clear();
+    this._lastChatSentAt = -Infinity;
   }
 }
 

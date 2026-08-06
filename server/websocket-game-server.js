@@ -487,6 +487,9 @@ export function attachGameWebSocket(httpServer, {
       case CLIENT_MESSAGE_TYPES.SET_READY:
         roomManager.setReady(session.participantId, message.ready);
         break;
+      case CLIENT_MESSAGE_TYPES.SEND_CHAT:
+        roomManager.sendChat(session.participantId, message.content);
+        break;
       case CLIENT_MESSAGE_TYPES.KICK_PLAYER:
         roomManager.kickPlayer(session.participantId, message.participantId);
         break;

@@ -13,6 +13,8 @@ export const MAX_CLIENT_MESSAGES_PER_SECOND = 120;
 export const MAX_CLIENT_MESSAGE_BURST = 180;
 export const MAX_CLIENT_BYTES_PER_SECOND = 64 * 1024;
 export const MAX_CLIENT_BYTE_BURST = 128 * 1024;
+export const CHAT_SEND_INTERVAL_MS = 3_000;
+export const MAX_CHAT_MESSAGE_LENGTH = 200;
 
 export const CLIENT_MESSAGE_TYPES = Object.freeze({
   ENTER_LOBBY: 'enter_lobby',
@@ -24,6 +26,7 @@ export const CLIENT_MESSAGE_TYPES = Object.freeze({
   SET_LOADOUT: 'set_loadout',
   SET_ROOM: 'set_room',
   SET_READY: 'set_ready',
+  SEND_CHAT: 'send_chat',
   KICK_PLAYER: 'kick_player',
   START_RACE: 'start_race',
   RACE_LOADED: 'race_loaded',
@@ -37,6 +40,7 @@ export const SERVER_MESSAGE_TYPES = Object.freeze({
   WELCOME: 'welcome',
   LOBBY_STATE: 'lobby_state',
   ROOM_STATE: 'room_state',
+  ROOM_CHAT: 'room_chat',
   KICKED: 'kicked',
   PREPARE_RACE: 'prepare_race',
   RACE_LOADED_ACK: 'race_loaded_ack',
@@ -165,6 +169,7 @@ export const ERROR_CODES = Object.freeze({
   SESSION_EXPIRED: 'session_expired',
   RACE_MISMATCH: 'race_mismatch',
   RATE_LIMITED: 'rate_limited',
+  CHAT_RATE_LIMITED: 'chat_rate_limited',
   SERVER_BUSY: 'server_busy',
   CLIENT_UPDATE_REQUIRED: 'client_update_required',
   AUTHENTICATION_REQUIRED: 'authentication_required',
@@ -267,6 +272,22 @@ export function validateDisplayName(value) {
     return fail(ERROR_CODES.NAME_INVALID, 'Nickname must contain 1 to 20 visible characters.');
   }
   return { ok: true, value: displayName };
+}
+
+export function normalizeChatContent(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+export function validateChatContent(value) {
+  const content = normalizeChatContent(value);
+  const length = Array.from(content).length;
+  if (length < 1 || length > MAX_CHAT_MESSAGE_LENGTH || CONTROL_OR_BIDI.test(content)) {
+    return fail(
+      ERROR_CODES.INVALID_MESSAGE,
+      `Chat messages must contain 1 to ${MAX_CHAT_MESSAGE_LENGTH} visible characters.`,
+    );
+  }
+  return { ok: true, value: content };
 }
 
 export function parseClientMessage(data) {
@@ -414,6 +435,12 @@ export function validateClientMessage(message) {
         return fail(ERROR_CODES.INVALID_MESSAGE, 'Ready must be a boolean.');
       }
       return { ok: true, value: { ...base, ready: message.ready } };
+
+    case CLIENT_MESSAGE_TYPES.SEND_CHAT: {
+      const content = validateChatContent(message.content);
+      if (!content.ok) return content;
+      return { ok: true, value: { ...base, content: content.value } };
+    }
 
     case CLIENT_MESSAGE_TYPES.RACE_LOADED:
       if (typeof message.raceId !== 'string' || !OPAQUE_ID_PATTERN.test(message.raceId)) {

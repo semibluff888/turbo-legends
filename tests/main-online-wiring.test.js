@@ -16,6 +16,7 @@ test('main maps every online screen action to the transport client', () => {
     'onlineClient.setLoadout(loadout)',
     'onlineClient.setRoom(settings)',
     'onlineClient.setReady(ready)',
+    'onlineClient.sendChat(content)',
     'onlineClient.startRace()',
     'onlineClient.leaveRoom()',
     'onlineClient.returnRoom()',
@@ -28,7 +29,7 @@ test('main maps every online screen action to the transport client', () => {
 
 test('main subscribes to the room, race, result and reconnect event stream', () => {
   for (const event of [
-    'connection', 'telemetry', 'lobby_state', 'room_state', 'prepare_race', 'race_loaded_ack',
+    'connection', 'telemetry', 'lobby_state', 'room_state', 'room_chat', 'prepare_race', 'race_loaded_ack',
     'snapshot', 'race_results', 'error', 'reconnect_expired',
   ]) {
     assert.match(source, new RegExp(`onlineClient\\.on\\('${event}'`));
@@ -39,6 +40,18 @@ test('main subscribes to the room, race, result and reconnect event stream', () 
   assert.match(
     source,
     /const connectionError = isOnlineConnectionError\(message\);[\s\S]*if \(connectionError\) \{[\s\S]*networkStatus\.setConnectionState\('error'\);/,
+  );
+});
+
+test('Room chat delivery and both rate-limit paths stay inside the chat panel', () => {
+  assert.match(source, /onlineClient\.on\('room_chat',[\s\S]*onlineScreens\.appendRoomChat\(message\)/);
+  assert.match(
+    source,
+    /onlineClient\.on\('chat_rate_limited',[\s\S]*appendRoomChatSystem\(appCopy\.online\.room\.chatRateLimited\)/,
+  );
+  assert.match(
+    source,
+    /message\?\.code === ERROR_CODES\.CHAT_RATE_LIMITED[\s\S]*appendRoomChatSystem[\s\S]*return;/,
   );
 });
 

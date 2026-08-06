@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  CHAT_SEND_INTERVAL_MS,
   CLIENT_MESSAGE_TYPES,
   CLIENT_UPDATE_CLOSE_CODE,
   ERROR_CODES,
   MAX_CLIENT_BYTES_PER_SECOND,
   MAX_CLIENT_BYTE_BURST,
   MAX_CLIENT_MESSAGE_BYTES,
+  MAX_CHAT_MESSAGE_LENGTH,
   PROTOCOL_VERSION,
   ROOM_STATES,
   ROOM_TYPES,
@@ -15,6 +17,7 @@ import {
   decodeKartSnapshot,
   encodeKartSnapshot,
   normalizeRoomCode,
+  validateChatContent,
   validateClientMessage,
 } from '../src/net/protocol.js';
 
@@ -25,10 +28,12 @@ test('protocol v5 exports Lobby, Room, progression, loading ACK, and matchmaking
   assert.equal(CLIENT_MESSAGE_TYPES.CREATE_ROOM, 'create_room');
   assert.equal(CLIENT_MESSAGE_TYPES.QUICK_MATCH, 'quick_match');
   assert.equal(CLIENT_MESSAGE_TYPES.SET_LOADOUT, 'set_loadout');
+  assert.equal(CLIENT_MESSAGE_TYPES.SEND_CHAT, 'send_chat');
   assert.equal(CLIENT_MESSAGE_TYPES.RETURN_ROOM, 'return_room');
   assert.equal(CLIENT_MESSAGE_TYPES.LEAVE_ROOM, 'leave_room');
   assert.equal(CLIENT_MESSAGE_TYPES.KICK_PLAYER, 'kick_player');
   assert.equal(SERVER_MESSAGE_TYPES.LOBBY_STATE, 'lobby_state');
+  assert.equal(SERVER_MESSAGE_TYPES.ROOM_CHAT, 'room_chat');
   assert.equal(SERVER_MESSAGE_TYPES.KICKED, 'kicked');
   assert.equal(SERVER_MESSAGE_TYPES.PREPARE_RACE, 'prepare_race');
   assert.equal(SERVER_MESSAGE_TYPES.RACE_LOADED_ACK, 'race_loaded_ack');
@@ -40,6 +45,24 @@ test('protocol v5 exports Lobby, Room, progression, loading ACK, and matchmaking
   assert.equal(MAX_CLIENT_MESSAGE_BYTES, 2 * 1024);
   assert.equal(MAX_CLIENT_BYTES_PER_SECOND, 64 * 1024);
   assert.equal(MAX_CLIENT_BYTE_BURST, 128 * 1024);
+  assert.equal(CHAT_SEND_INTERVAL_MS, 3_000);
+  assert.equal(MAX_CHAT_MESSAGE_LENGTH, 200);
+});
+
+test('room chat validation trims visible content and enforces its bounded text shape', () => {
+  assert.deepEqual(validateClientMessage({
+    type: 'send_chat', v: PROTOCOL_VERSION, content: '  Final lap!  ', ignored: true,
+  }), {
+    ok: true,
+    value: { type: 'send_chat', v: PROTOCOL_VERSION, content: 'Final lap!' },
+  });
+  assert.deepEqual(validateChatContent('🏁 Go!'), { ok: true, value: '🏁 Go!' });
+  assert.equal(validateChatContent('   ').error.code, ERROR_CODES.INVALID_MESSAGE);
+  assert.equal(validateChatContent('bad\u202etext').error.code, ERROR_CODES.INVALID_MESSAGE);
+  assert.equal(
+    validateChatContent('x'.repeat(MAX_CHAT_MESSAGE_LENGTH + 1)).error.code,
+    ERROR_CODES.INVALID_MESSAGE,
+  );
 });
 
 test('online loadouts validate atomically and can accompany room entry', () => {

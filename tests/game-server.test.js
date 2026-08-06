@@ -286,6 +286,74 @@ test('a silent Room connection is broadcast as reconnecting before it resumes', 
   }
 });
 
+test('Room chat broadcasts authoritative identity and rejects server-side spam', {
+  skip: wsModule ? false : 'ws dependency is not installed in this workspace',
+}, async () => {
+  const { WebSocket } = wsModule;
+  const server = await createGameServer({
+    root: PROJECT_ROOT,
+    logger: { info() {}, warn() {}, error() {} },
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const port = server.address().port;
+  const origin = `http://127.0.0.1:${port}`;
+  const url = `ws://127.0.0.1:${port}/ws`;
+  let host;
+  let guest;
+  try {
+    host = await connectClient(WebSocket, url, origin, { guestDisplayName: 'Trusted Host' });
+    host.send({
+      type: 'create_room',
+      roomName: 'Chat Test',
+      roomType: 'public',
+      maxPlayers: 4,
+      trackId: 'harbor-loop',
+      characterId: 'pip',
+    });
+    const hostWelcome = await host.next(message => message.type === 'welcome' && message.session);
+    await host.next(message => message.type === 'room_state' && message.members.length === 1);
+
+    guest = await connectClient(WebSocket, url, origin, { guestDisplayName: 'Guest' });
+    guest.send({
+      type: 'join_room',
+      roomCode: hostWelcome.roomCode,
+      characterId: 'nova',
+    });
+    await guest.next(message => message.type === 'room_state' && message.members.length === 2);
+    await host.next(message => message.type === 'room_state' && message.members.length === 2);
+
+    const hostMark = host.mark();
+    const guestMark = guest.mark();
+    host.send({ type: 'send_chat', content: '  Hello racers!  ', displayName: 'Spoofed' });
+    const hostChat = await host.next(message => message.type === 'room_chat', hostMark);
+    const guestChat = await guest.next(message => message.type === 'room_chat', guestMark);
+    assert.equal(hostChat.displayName, 'Trusted Host');
+    assert.equal(hostChat.content, 'Hello racers!');
+    assert.equal(typeof hostChat.sentAt, 'number');
+    assert.deepEqual(guestChat, hostChat);
+
+    const spamMark = host.mark();
+    host.send({ type: 'send_chat', content: 'Too soon' });
+    const error = await host.next(message => (
+      message.type === 'error' && message.code === 'chat_rate_limited'
+    ), spamMark);
+    assert.equal(error.message, 'Chat messages must be at least 3 seconds apart.');
+    assert.equal(
+      host.messagesAfter(spamMark).some(message => (
+        message.type === 'room_chat' && message.content === 'Too soon'
+      )),
+      false,
+    );
+  } finally {
+    await guest?.close();
+    await host?.close();
+    await server.shutdown();
+  }
+});
+
 class QuickRaceSimulation {
   constructor({ roster, laps }) {
     this.roster = roster;

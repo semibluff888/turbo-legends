@@ -277,6 +277,9 @@ const onlineScreens = new OnlineScreens({
   onReadyChange({ ready }) {
     onlineClient.setReady(ready);
   },
+  onSendChat({ content }) {
+    return onlineClient.sendChat(content);
+  },
   onKickPlayer({ participantId }) {
     onlineClient.kickPlayer(participantId);
   },
@@ -660,6 +663,12 @@ function wireOnlineClient() {
     });
     updateOnlineLoadingOverlay();
   });
+  onlineClient.on('room_chat', (message) => {
+    onlineScreens.appendRoomChat(message);
+  });
+  onlineClient.on('chat_rate_limited', () => {
+    onlineScreens.appendRoomChatSystem(appCopy.online.room.chatRateLimited);
+  });
   onlineClient.on('kicked', (message) => {
     finishLocalRoomReconnect({ restoreFocus: false });
     pendingOnlineError = null;
@@ -719,6 +728,10 @@ function wireOnlineClient() {
   });
   onlineClient.on('error', (message) => {
     onlineScreens.setBusy(false);
+    if (message?.code === ERROR_CODES.CHAT_RATE_LIMITED) {
+      onlineScreens.appendRoomChatSystem(appCopy.online.room.chatRateLimited);
+      return;
+    }
     const connectionError = isOnlineConnectionError(message);
     if (connectionError) {
       networkStatus.setConnectionState('error');
