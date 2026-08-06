@@ -16,6 +16,7 @@ import {
   getUiCopy,
   sanitizeLanguage,
 } from './copy.js';
+import { ItemAimAssist } from './item-aim-assist.js';
 
 /** Sim speed (units/s) → displayed km/h. Pure flavor for the readout. */
 const SPEED_KMH = 5.4;
@@ -146,6 +147,10 @@ export class Hud {
     this._wrong = q('.hud-wrongway');
     this._standings = q('.hud-standings');
     this._standingsBody = q('.hud-standings-body');
+    this._itemAim = new ItemAimAssist(hudRoot, {
+      copy: this.copy,
+      onCue: options.onItemCue,
+    });
     this._standingRows = [];
     this._standingsVisible = false;
     this._applyStaticCopy();
@@ -176,6 +181,7 @@ export class Hud {
     if (next === this.language) return false;
     this.language = next;
     this.copy = getUiCopy(next);
+    this._itemAim.setCopy(this.copy);
     this._applyStaticCopy();
     for (const row of this._standingRows) {
       row.you.textContent = this.copy.common.you;
@@ -249,6 +255,7 @@ export class Hud {
     this._banner.hidden = true;
     this._wrong.hidden = true;
     this._setStandingsVisible(false);
+    this._itemAim.reset();
   }
 
   showRace() {
@@ -259,6 +266,7 @@ export class Hud {
 
   hide() {
     this.hideLoading();
+    this._itemAim.reset();
     this.root.hidden = true;
   }
 
@@ -278,9 +286,11 @@ export class Hud {
    * @param {import('../game/kart.js').Kart} kart the player kart
    * @param {object} race RaceDirector (read-only)
    * @param {number} dt frame delta seconds (drives the minimap pulse)
-   * @param {{showStandings?:boolean}} [presentation]
+   * @param {{showStandings?:boolean,showItemAim?:boolean,camera?:object,lookBack?:boolean}} [presentation]
    */
-  update(kart, race, dt, { showStandings = false } = {}) {
+  update(kart, race, dt, {
+    showStandings = false, showItemAim = true, camera = null, lookBack = false,
+  } = {}) {
     if (!kart || !race) return;
     this._time += dt || 0;
 
@@ -290,6 +300,9 @@ export class Hud {
       this._resetState();
     }
     this._lastElapsed = race.elapsed || 0;
+
+    if (showItemAim && !showStandings) this._itemAim.update(kart, race, dt, { camera, lookBack });
+    else this._itemAim.reset();
 
     this._setStandingsVisible(showStandings);
     if (this._standingsVisible) this._updateStandings(race);
@@ -664,6 +677,20 @@ export class Hud {
         ctx.fillStyle = h.kind === 'bomb' ? '#ff5544' : '#ffe14d';
         ctx.beginPath();
         ctx.arc(this._mx(h.x), this._my(h.z), 2.1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Moving projectiles — small directional pips so threats remain readable.
+    const projectiles = race.items && race.items.projectiles;
+    if (projectiles) {
+      for (let i = 0; i < projectiles.length; i++) {
+        const p = projectiles[i];
+        ctx.fillStyle = p.kind === 'red_shell' ? '#ff5163'
+          : p.kind === 'blue_shell' ? '#56a8ff'
+            : p.kind === 'bomb' ? '#ff8a42' : '#52ef7d';
+        ctx.beginPath();
+        ctx.arc(this._mx(p.x), this._my(p.z), p.kind === 'blue_shell' ? 2.7 : 2, 0, Math.PI * 2);
         ctx.fill();
       }
     }

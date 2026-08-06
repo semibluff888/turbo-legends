@@ -5,7 +5,7 @@
 // browser API. init() may run at boot; suspended contexts are resumed from the
 // first trusted user gesture. Public methods remain safe while ctx is null.
 
-import { AUDIO, DRIFT_TIERS, KART_STATE } from '../core/constants.js';
+import { AUDIO, DRIFT_TIERS, ITEM, KART_STATE } from '../core/constants.js';
 import { clamp } from '../core/mathx.js';
 import {
   DEFAULT_MENU_BGM,
@@ -582,6 +582,13 @@ export class AudioManager {
       case 'itembox':
         this._sfxItemBox(vol);
         break;
+      case 'item_used':
+        if (ev.item === ITEM.GREEN_SHELL || ev.item === ITEM.RED_SHELL
+          || ev.item === ITEM.BLUE_SHELL || ev.item === ITEM.BOMB
+          || ev.item === ITEM.BANANA) {
+          this._sfxShellFire(vol);
+        }
+        break;
       case 'shell_fire':
       case 'throw':
       case 'banana_drop':
@@ -802,6 +809,24 @@ export class AudioManager {
     const t = this.ctx.currentTime;
     this._noise(t, 0.12, 0.2 * vol, { type: 'bandpass', freq: 1400, freqEnd: 300, Q: 1.6 });
     this._tone(t, 420, 0.1, 'sawtooth', 0.1 * vol, { freqEnd: 130 });
+  }
+
+  /** HUD-driven targeting cue; cadence is owned by ItemAimAssist. */
+  itemCue(cue) {
+    if (!this.ctx || !cue) return;
+    const t = this.ctx.currentTime;
+    if (cue.type === 'target-acquired') {
+      this._tone(t, 740, 0.055, 'square', 0.075);
+      this._tone(t + 0.065, 1046.5, 0.09, 'triangle', 0.09);
+      return;
+    }
+    if (cue.type !== 'incoming') return;
+    const critical = cue.severity === 'critical';
+    const blue = cue.kind === ITEM.BLUE_SHELL;
+    const base = blue ? 330 : 440;
+    this._tone(t, critical ? base * 1.25 : base, critical ? 0.13 : 0.1, 'square', critical ? 0.15 : 0.11,
+      { freqEnd: critical ? base * 0.72 : base * 0.88 });
+    if (critical) this._noise(t, 0.1, 0.07, { type: 'bandpass', freq: 1300, Q: 2.5 });
   }
 
   _sfxSpinout(vol) {

@@ -132,6 +132,12 @@ const EN_COPY = {
     finished: 'FINISHED! {place}', waitingFinish: 'WAITING FOR OTHER RACERS TO FINISH...',
     waitingFinishCountdown: 'WAITING FOR OTHER RACERS TO FINISH... {seconds}s REMAINING',
     raceEnding: 'RACE ENDS IN {seconds}s', loadingRace: 'LOADING RACE...',
+    itemAim: {
+      canLock: 'TARGET AVAILABLE', locked: 'LOCKED', noTarget: 'NO TARGET',
+      straightShot: 'STRAIGHT SHOT', bombLanding: 'PREDICTED LANDING', plantBehind: 'DROP BEHIND',
+      leaderTarget: '1ST PLACE', selfTarget: 'TARGET: YOURSELF',
+      incomingRed: 'RED SHELL INCOMING', incomingBlue: 'SPINY SHELL INCOMING',
+    },
     statuses: { left: 'LEFT ROOM', disconnected: 'DISCONNECTED', reconnecting: 'RECONNECTING', finished: 'FINISHED', takeover: 'AI TAKE OVER', ai: 'AI RACER', ready: 'READY', racing: 'RACING' },
   },
   network: {
@@ -247,6 +253,12 @@ const ZH_COPY = {
     finished: '完成比赛！{place}', waitingFinish: '正在等待其他车手完成比赛…',
     waitingFinishCountdown: '正在等待其他车手完成比赛… 剩余 {seconds} 秒',
     raceEnding: '比赛将在 {seconds} 秒后结束', loadingRace: '正在加载比赛…',
+    itemAim: {
+      canLock: '可锁定', locked: '已锁定', noTarget: '无目标',
+      straightShot: '直线发射', bombLanding: '预测落点', plantBehind: '后方放置',
+      leaderTarget: '目标：第一名', selfTarget: '目标：你自己',
+      incomingRed: '红龟壳来袭', incomingBlue: '蓝龟壳来袭',
+    },
     statuses: { left: '已离开房间', disconnected: '已断线', reconnecting: '重连中', finished: '已完赛', takeover: 'AI 接管', ai: 'AI 车手', ready: '准备完成', racing: '比赛中' },
   },
   network: {

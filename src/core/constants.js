@@ -160,7 +160,7 @@ export const ITEM_PHYSICS = {
   shellSpeed: 32.0,
   shellLifetime: 9.0,
   shellBounces: 4,
-  redShellTurnRate: 3.4,     // radians/sec of homing authority
+  redShellTurnRate: 4.6,     // radians/sec of homing authority
   redShellLockRange: 120.0,  // max arc-length ahead to acquire a target
   bombFuse: 2.6,
   bombBlastRadius: 6.5,

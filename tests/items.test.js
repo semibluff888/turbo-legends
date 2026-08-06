@@ -213,6 +213,8 @@ test('green shell flies straight and spins out the kart it hits', () => {
   const p = sys.projectiles[0];
   assert.equal(p.kind, ITEM.GREEN_SHELL);
   assert.equal(p.ownerIndex, shooter.index);
+  assert.ok(Math.abs(Math.hypot(p.vx, p.vz) - ITEM_PHYSICS.shellSpeed) < 1e-6,
+    'moving shells expose their real velocity for online presentation');
   assert.equal(shooter.item, ITEM.NONE, 'shell left the slot');
 
   run(sys, karts, 1.0, DT);
@@ -278,6 +280,68 @@ test('red shell homes on the next kart ahead by progress and spins them', () => 
   assert.equal(sys.projectiles.length, 0);
 });
 
+test('red shell catches a moving target weaving across the full road', () => {
+  const { track, sys, karts } = makeWorld(12, 2);
+  const [shooter, target] = karts;
+  placeAt(shooter, track, 0);
+  let targetS = 24;
+  placeAt(target, track, targetS);
+  shooter.progress = 0;
+  target.progress = targetS;
+  shooter.rank = 2;
+  target.rank = 1;
+  shooter.giveItem(ITEM.RED_SHELL);
+  shooter.controls.useItem = true;
+
+  let previousX = target.x;
+  let previousZ = target.z;
+  for (let step = 0; step < Math.round(6 / DT) && target.state === KART_STATE.NORMAL; step++) {
+    sys.update(DT, karts, (step + 1) * DT);
+    targetS += 17 * DT;
+    const lateral = Math.sin(step * DT * 2.6) * (track.baseHalfWidth - 2);
+    placeAt(target, track, targetS, lateral);
+    target.vx = (target.x - previousX) / DT;
+    target.vz = (target.z - previousZ) / DT;
+    previousX = target.x;
+    previousZ = target.z;
+  }
+  assert.equal(target.state, KART_STATE.SPINNING,
+    'ordinary full-lane weaving cannot shake a locked red shell');
+});
+
+test('red shell remains counterable by a dropped banana and star invulnerability', () => {
+  {
+    const { track, sys, karts } = makeWorld(13, 2);
+    const [shooter, defender] = karts;
+    placeAt(shooter, track, 0);
+    placeAt(defender, track, 24);
+    shooter.progress = 0;
+    defender.progress = 24;
+    shooter.giveItem(ITEM.RED_SHELL);
+    defender.giveItem(ITEM.BANANA);
+    shooter.controls.useItem = true;
+    defender.controls.useItem = true;
+    run(sys, karts, 2);
+    assert.equal(defender.state, KART_STATE.NORMAL);
+    assert.equal(sys.projectiles.length, 0, 'banana absorbs the incoming shell');
+    assert.equal(sys.hazards.length, 0, 'the blocking banana is consumed');
+  }
+  {
+    const { track, sys, karts } = makeWorld(14, 2);
+    const [shooter, defender] = karts;
+    placeAt(shooter, track, 0);
+    placeAt(defender, track, 18);
+    shooter.progress = 0;
+    defender.progress = 18;
+    defender.starTimer = 3;
+    shooter.giveItem(ITEM.RED_SHELL);
+    shooter.controls.useItem = true;
+    run(sys, karts, 2);
+    assert.equal(defender.state, KART_STATE.NORMAL);
+    assert.equal(sys.projectiles.length, 0, 'star kart smashes the shell harmlessly');
+  }
+});
+
 test('red shell fired with no one ahead just cruises the racing line', () => {
   const { sys, karts } = makeWorld(11, 2);
   const [shooter, behind] = karts;
@@ -291,6 +355,46 @@ test('red shell fired with no one ahead just cruises the racing line', () => {
   assert.equal(sys.projectiles.length, 1, 'no target, but the shell still flies');
   assert.equal(sys.projectiles[0].targetIndex, -1);
   assert.equal(behind.state, KART_STATE.NORMAL, 'karts behind are never homed on');
+});
+
+test('rear-fired red shell stays straight and never acquires a target', () => {
+  const { track, sys, karts } = makeWorld(11, 2);
+  const [shooter, ahead] = karts;
+  placeAt(shooter, track, 0);
+  placeAt(ahead, track, 30);
+  shooter.progress = 0;
+  ahead.progress = 30;
+  shooter.controls.lookBack = true;
+  shooter.giveItem(ITEM.RED_SHELL);
+  shooter.controls.useItem = true;
+  run(sys, karts, DT);
+  const shell = sys.projectiles[0];
+  assert.equal(shell.straight, true);
+  assert.equal(shell.targetIndex, -1);
+  const dot = shell.vx * shooter.forwardX + shell.vz * shooter.forwardZ;
+  assert.ok(dot < 0, 'rear shell velocity points behind the shooter');
+});
+
+test('blue shell publishes and updates the current leader targetIndex', () => {
+  const { track, sys, karts } = makeWorld(19, 3);
+  const [shooter, firstLeader, nextLeader] = karts;
+  placeAt(shooter, track, 0);
+  placeAt(firstLeader, track, 80);
+  placeAt(nextLeader, track, 120);
+  shooter.rank = 3;
+  firstLeader.rank = 1;
+  nextLeader.rank = 2;
+  shooter.giveItem(ITEM.BLUE_SHELL);
+  shooter.controls.useItem = true;
+  run(sys, karts, DT);
+  assert.equal(sys.projectiles[0].targetIndex, firstLeader.index);
+  assert.ok(Math.abs(Math.hypot(sys.projectiles[0].vx, sys.projectiles[0].vz)
+    - ITEM_PHYSICS.blueShellSpeed) < 1e-6);
+
+  firstLeader.rank = 2;
+  nextLeader.rank = 1;
+  run(sys, karts, DT, DT);
+  assert.equal(sys.projectiles[0].targetIndex, nextLeader.index);
 });
 
 // --- Bananas -------------------------------------------------------------------------

@@ -24,7 +24,9 @@ const BOMB_ARM_TIME = 0.4;       // planted bombs are inert this long
 const SHELL_WALL_MARGIN = 1.0;   // shells ride this far past the road edge before the wall
 const SHELL_HEIGHT = 0.45;       // shells hover slightly above the road surface
 const RED_LOOKAHEAD = 7.0;       // racing-line aim distance for red shells
-const RED_HOME_RANGE = 26.0;     // arc distance where a red shell switches from line-follow to homing
+const RED_HOME_RANGE = 40.0;     // arc distance where a red shell blends into direct homing
+const RED_FULL_HOME_RANGE = 4.0; // full direct pursuit inside this arc distance
+const RED_LEAD_MAX = 0.25;       // seconds of target-velocity lead at close range
 const BLUE_TURN_RATE = 3.2;      // rad/s of cruise steering for the blue shell
 const BLUE_DIVE_RANGE = 11.0;    // xz distance at which the blue shell tips into its dive
 const BLUE_DIVE_TURN_MUL = 2.5;  // extra steering authority while diving (guarantees the spiral closes)
@@ -68,7 +70,7 @@ export function kartOverlapsItemBox(kart, box, track) {
 }
 
 /** Resolve a kart by stable kart.index (karts is normally index-ordered). */
-function findKart(karts, index) {
+export function findKartByIndex(karts, index) {
   const direct = karts[index];
   if (direct && direct.index === index) return direct;
   for (const k of karts) if (k.index === index) return k;
@@ -76,13 +78,81 @@ function findKart(karts, index) {
 }
 
 /** The current race leader (rank 1), falling back to best progress. */
-function findLeader(karts) {
+export function findRaceLeader(karts) {
   let best = null;
   for (const k of karts) {
     if (k.rank === 1) return k;
     if (!best || k.progress > best.progress) best = k;
   }
   return best;
+}
+
+/** Nearest eligible kart ahead of `owner` by monotonic race progress. */
+export function findRedShellTarget(owner, karts) {
+  if (!owner || !Array.isArray(karts)) return null;
+  let best = null;
+  let bestDelta = Infinity;
+  for (const kart of karts) {
+    if (!kart || kart === owner || kart.index === owner.index || kart.finished) continue;
+    const d = kart.progress - owner.progress;
+    if (d > 0.5 && d <= ITEM_PHYSICS.redShellLockRange && d < bestDelta) {
+      bestDelta = d;
+      best = kart;
+    }
+  }
+  return best;
+}
+
+/**
+ * Pure client/server-shared bomb preview using the authoritative launch values.
+ * Returned points are intentionally sparse enough for a HUD polyline.
+ */
+export function predictBombTrajectory(kart, track, {
+  back = false,
+  step = 1 / 60,
+  maxTime = 2,
+  sampleEvery = 4,
+} = {}) {
+  if (!kart || !track || typeof track.sampleWorld !== 'function') return null;
+  const dir = back ? -1 : 1;
+  const offset = back ? ITEM_PHYSICS.trailOffset : ITEM_PHYSICS.launchOffset;
+  let x = kart.x + kart.forwardX * offset * dir;
+  let z = kart.z + kart.forwardZ * offset * dir;
+  const ws = track.sampleWorld(x, z, kart.s, {}, kart.y);
+  if (back) {
+    const impact = { x, y: ws.height + HAZARD_REST_HEIGHT, z, s: ws.s };
+    return { mode: 'plant', points: [impact], impact };
+  }
+
+  let y = kart.y + 1.2;
+  const fwd = Math.max(kart.speed, 0) + BOMB_THROW_SPEED;
+  const vx = kart.forwardX * fwd;
+  const vz = kart.forwardZ * fwd;
+  let vy = BOMB_THROW_LIFT;
+  let hintS = ws.s;
+  const points = [{ x, y, z }];
+  const iterations = Math.max(1, Math.ceil(maxTime / step));
+  let impact = null;
+  for (let i = 1; i <= iterations; i++) {
+    vy -= GRAVITY * step;
+    x += vx * step;
+    y += vy * step;
+    z += vz * step;
+    const sample = track.sampleWorld(x, z, hintS, {}, y);
+    hintS = sample.s;
+    if (i % sampleEvery === 0) points.push({ x, y, z });
+    if (vy <= 0 && y <= sample.height + HAZARD_REST_HEIGHT) {
+      impact = { x, y: sample.height + HAZARD_REST_HEIGHT, z, s: sample.s };
+      break;
+    }
+  }
+  if (!impact) {
+    const sample = track.sampleWorld(x, z, hintS, {}, y);
+    impact = { x, y: sample.height + HAZARD_REST_HEIGHT, z, s: sample.s };
+  }
+  const last = points[points.length - 1];
+  if (!last || last.x !== impact.x || last.y !== impact.y || last.z !== impact.z) points.push(impact);
+  return { mode: 'lob', points, impact };
 }
 
 function newProjectile() {
@@ -301,7 +371,7 @@ export class ItemSystem {
       default:
         break;
     }
-    kart.emit('item_used', { item });
+    kart.emit('item_used', { item, back });
     kart.consumeItemUse();
   }
 
@@ -316,7 +386,7 @@ export class ItemSystem {
       if (back) {
         p.straight = true; // rear-fired reds fly straight, like a green
       } else {
-        const target = this._findRedTarget(kart, karts);
+        const target = findRedShellTarget(kart, karts);
         p.targetIndex = target ? target.index : -1;
       }
     }
@@ -372,21 +442,6 @@ export class ItemSystem {
     user.emit('lightning');
   }
 
-  /** Nearest kart ahead of `owner` by progress, within red-shell lock range. */
-  _findRedTarget(owner, karts) {
-    let best = null;
-    let bestDelta = Infinity;
-    for (const kart of karts) {
-      if (kart === owner || kart.finished) continue;
-      const d = kart.progress - owner.progress;
-      if (d > 0.5 && d <= ITEM_PHYSICS.redShellLockRange && d < bestDelta) {
-        bestDelta = d;
-        best = kart;
-      }
-    }
-    return best;
-  }
-
   // ---------------------------------------------------------------------------
   // Projectiles
   // ---------------------------------------------------------------------------
@@ -419,8 +474,11 @@ export class ItemSystem {
   }
 
   _stepGreen(p, dt) {
-    p.x += Math.sin(p.yaw) * ITEM_PHYSICS.shellSpeed * dt;
-    p.z += Math.cos(p.yaw) * ITEM_PHYSICS.shellSpeed * dt;
+    p.vx = Math.sin(p.yaw) * ITEM_PHYSICS.shellSpeed;
+    p.vy = 0;
+    p.vz = Math.cos(p.yaw) * ITEM_PHYSICS.shellSpeed;
+    p.x += p.vx * dt;
+    p.z += p.vz * dt;
     const ws = this.track.sampleWorld(p.x, p.z, p.s, this._ws, p.y);
     p.s = ws.s;
     p.y = ws.height + SHELL_HEIGHT;
@@ -442,6 +500,8 @@ export class ItemSystem {
         const tw = this.track.toWorld(ws.s, Math.sign(ws.lateral) * limit, this._tw);
         p.x = tw.x;
         p.z = tw.z;
+        p.vx = Math.sin(p.yaw) * ITEM_PHYSICS.shellSpeed;
+        p.vz = Math.cos(p.yaw) * ITEM_PHYSICS.shellSpeed;
       }
     }
     return true;
@@ -449,27 +509,38 @@ export class ItemSystem {
 
   _stepRed(p, dt, karts) {
     if (!p.straight) {
-      const target = p.targetIndex >= 0 ? findKart(karts, p.targetIndex) : null;
-      let desiredYaw = p.yaw;
-      let homing = false;
+      const target = p.targetIndex >= 0 ? findKartByIndex(karts, p.targetIndex) : null;
+      const aimS = p.s + RED_LOOKAHEAD;
+      const tw = this.track.toWorld(aimS, this.track.racingLineLateral(aimS), this._tw);
+      const lineYaw = Math.atan2(tw.x - p.x, tw.z - p.z);
+      let desiredYaw = lineYaw;
       if (target && !target.finished) {
         const ahead = loopDelta(p.s, target.s, this.track.length);
         if (ahead > -4 && ahead < RED_HOME_RANGE) {
-          desiredYaw = Math.atan2(target.x - p.x, target.z - p.z);
-          homing = true;
+          const dx = target.x - p.x;
+          const dz = target.z - p.z;
+          const lead = Math.min(RED_LEAD_MAX, Math.hypot(dx, dz) / ITEM_PHYSICS.shellSpeed);
+          const targetYaw = Math.atan2(
+            target.x + (Number(target.vx) || 0) * lead - p.x,
+            target.z + (Number(target.vz) || 0) * lead - p.z,
+          );
+          const homeWeight = clamp(
+            (RED_HOME_RANGE - Math.max(ahead, RED_FULL_HOME_RANGE))
+              / (RED_HOME_RANGE - RED_FULL_HOME_RANGE),
+            0,
+            1,
+          );
+          desiredYaw = lineYaw + angleDelta(lineYaw, targetYaw) * homeWeight;
         }
-      }
-      if (!homing) {
-        // Follow the racing line until close enough to home in.
-        const aimS = p.s + RED_LOOKAHEAD;
-        const tw = this.track.toWorld(aimS, this.track.racingLineLateral(aimS), this._tw);
-        desiredYaw = Math.atan2(tw.x - p.x, tw.z - p.z);
       }
       const maxTurn = ITEM_PHYSICS.redShellTurnRate * dt;
       p.yaw += clamp(angleDelta(p.yaw, desiredYaw), -maxTurn, maxTurn);
     }
-    p.x += Math.sin(p.yaw) * ITEM_PHYSICS.shellSpeed * dt;
-    p.z += Math.cos(p.yaw) * ITEM_PHYSICS.shellSpeed * dt;
+    p.vx = Math.sin(p.yaw) * ITEM_PHYSICS.shellSpeed;
+    p.vy = 0;
+    p.vz = Math.cos(p.yaw) * ITEM_PHYSICS.shellSpeed;
+    p.x += p.vx * dt;
+    p.z += p.vz * dt;
     const ws = this.track.sampleWorld(p.x, p.z, p.s, this._ws, p.y);
     p.s = ws.s;
     p.y = ws.height + SHELL_HEIGHT;
@@ -479,12 +550,17 @@ export class ItemSystem {
   }
 
   _stepBlue(p, dt, karts) {
+    const beforeY = p.y;
     const ws = this.track.sampleWorld(p.x, p.z, p.s, this._ws, p.y);
     p.s = ws.s;
-    const target = findLeader(karts);
+    const target = findRaceLeader(karts);
+    p.targetIndex = target ? target.index : -1;
     if (!target) {
-      p.x += Math.sin(p.yaw) * ITEM_PHYSICS.blueShellSpeed * dt;
-      p.z += Math.cos(p.yaw) * ITEM_PHYSICS.blueShellSpeed * dt;
+      p.vx = Math.sin(p.yaw) * ITEM_PHYSICS.blueShellSpeed;
+      p.vy = 0;
+      p.vz = Math.cos(p.yaw) * ITEM_PHYSICS.blueShellSpeed;
+      p.x += p.vx * dt;
+      p.z += p.vz * dt;
       return true;
     }
     const dx = target.x - p.x;
@@ -494,8 +570,10 @@ export class ItemSystem {
     const turnMul = p.diving ? BLUE_DIVE_TURN_MUL : 1;
     const maxTurn = BLUE_TURN_RATE * turnMul * dt;
     p.yaw += clamp(angleDelta(p.yaw, desiredYaw), -maxTurn, maxTurn);
-    p.x += Math.sin(p.yaw) * ITEM_PHYSICS.blueShellSpeed * dt;
-    p.z += Math.cos(p.yaw) * ITEM_PHYSICS.blueShellSpeed * dt;
+    p.vx = Math.sin(p.yaw) * ITEM_PHYSICS.blueShellSpeed;
+    p.vz = Math.cos(p.yaw) * ITEM_PHYSICS.blueShellSpeed;
+    p.x += p.vx * dt;
+    p.z += p.vz * dt;
     if (!p.diving && distXZ < BLUE_DIVE_RANGE) p.diving = true;
     if (p.diving) {
       p.y = moveTowards(p.y, target.y + 0.5, ITEM_PHYSICS.blueShellSpeed * 1.2 * dt);
@@ -508,6 +586,7 @@ export class ItemSystem {
     } else {
       p.y = damp(p.y, ws.height + ITEM_PHYSICS.blueShellCruiseHeight, BLUE_CLIMB_LAMBDA, dt);
     }
+    p.vy = dt > 0 ? (p.y - beforeY) / dt : 0;
     return true;
   }
 

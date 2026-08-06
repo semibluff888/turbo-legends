@@ -30,6 +30,7 @@ import { buildTrackMesh } from './render/trackMesh.js';
 import { KartVisual } from './render/kartMesh.js';
 import { KartShowroom } from './render/kart-showroom.js';
 import { Effects } from './render/effects.js';
+import { ItemVisualManager } from './render/item-visuals.js';
 import { ChaseCamera, FinishCameraDirector } from './render/camera.js';
 import { Hud } from './ui/hud.js';
 import { NetworkStatus } from './ui/network-status.js';
@@ -64,6 +65,7 @@ audio.applySettings(gameSettings);
 
 const hud = new Hud(document.getElementById('hud'), document.getElementById('minimap'), {
   language: gameSettings.language,
+  onItemCue: (cue) => audio.itemCue(cue),
 });
 const networkStatus = new NetworkStatus(document.getElementById('network-status-overlay'), {
   language: gameSettings.language,
@@ -910,6 +912,7 @@ function mountRace(track, session, def, { onlineLoading = false, loadToken = nul
   world.scene.add(buildTrackMesh(track));
 
   const visuals = session.karts.map((k) => new KartVisual(k, world.scene));
+  const itemVisuals = new ItemVisualManager(world.scene);
   const effects = new Effects(world.scene);
   const chase = new ChaseCamera(camera);
   if (chase.setTrack) chase.setTrack(track);
@@ -917,7 +920,7 @@ function mountRace(track, session, def, { onlineLoading = false, loadToken = nul
   const finishCamera = new FinishCameraDirector(camera, track);
 
   race = {
-    track, session, world, visuals, effects, chase, finishCamera,
+    track, session, world, visuals, itemVisuals, effects, chase, finishCamera,
     online: session.kind === 'online',
     accumulator: 0,
     finalLapAnnounced: false,
@@ -965,6 +968,7 @@ function endRace() {
   camera.fov = CAMERA.fov;
   camera.updateProjectionMatrix();
   race.session.dispose?.();
+  race.itemVisuals.dispose();
   audio.stopEngine();
   hud.hide();
   networkStatus.hide();
@@ -1107,6 +1111,7 @@ function updateRaceFrame(dt) {
   }
 
   for (const v of visuals) v.sync(camera.position);
+  race.itemVisuals.sync(session.items, dt, session.elapsed);
 
   // Continuous particle sources.
   for (const kart of session.karts) {
@@ -1153,6 +1158,9 @@ function updateRaceFrame(dt) {
   world.animate(dt, session.elapsed);
   hud.update(player, session, dt, {
     showStandings: input.standingsHeld,
+    showItemAim: !paused && !finishCamera.active,
+    camera,
+    lookBack: playerControls.lookBack,
   });
   updateFinishCinematicUi();
 
