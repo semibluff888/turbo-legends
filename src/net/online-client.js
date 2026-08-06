@@ -25,7 +25,7 @@ const RECONNECT_DELAYS_MS = [250, 500, 1000, 2000, 4000];
 const RECONNECT_WINDOW_MS = 30_000;
 export const CONNECT_TIMEOUT_MS = 10_000;
 export const HIDDEN_LOBBY_RECONNECT_MS = 20_000;
-export const TELEMETRY_PING_INTERVAL_MS = 5_000;
+export const TELEMETRY_PING_INTERVAL_MS = 3_000;
 export const TELEMETRY_STALE_MS = 15_000;
 export const MAX_RACE_INPUT_BUFFERED_BYTES = 4 * 1024;
 function storageForCleanup(candidate) {

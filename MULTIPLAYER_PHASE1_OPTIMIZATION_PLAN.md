@@ -75,7 +75,7 @@ STATIC_COMPRESSION_CACHE_BYTES=16777216
 - 非多人页面改为每 15 秒请求 `/api/stats`：
   - 请求成功时显示在线人数和本次 HTTP RTT。
   - 请求失败时显示离线，但不自动打开 WebSocket。
-- 进入多人 Lobby 时停止 HTTP 轮询，建立 WebSocket 并启动现有 5 秒 telemetry。
+- 进入多人 Lobby 时停止 HTTP 轮询，建立 WebSocket 并启动 3 秒 telemetry。
 - 从多人 Lobby 返回标题时关闭 WebSocket、停止 telemetry 并恢复 HTTP 轮询。
 - 房间或比赛中的 30 秒恢复流程保持不变；邀请链接仍等待权威 `lobby_state` 后再尝试加入。
 - 网关维护：
