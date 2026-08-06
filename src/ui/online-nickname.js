@@ -7,37 +7,29 @@ import { validateDisplayName } from '../net/protocol.js';
 export const ONLINE_NAME_STORAGE_KEY = 'turbo-legends.online-name.v2';
 export const LEGACY_ONLINE_NAME_STORAGE_KEY = 'turbo-legends.online-name.v1';
 
+function combineNicknameParts(prefixes, suffixes) {
+  return prefixes.flatMap(prefix => suffixes.map(suffix => `${prefix}${suffix}`));
+}
+
+const RACING_NICKNAMES = combineNicknameParts(
+  ['疾风', '闪电', '烈焰', '极夜', '涡轮', '弯道', '氮气', '追风'],
+  ['车神', '领航员', '追逐者', '小旋风', '漂移王', '飞车手'],
+);
+
+const EVERYDAY_NICKNAMES = combineNicknameParts(
+  ['爱吃的', '不想回家的', '正在摸鱼的', '总在迟到的', '周末赖床的', '奶茶续杯的', '今天超困的', '好运爆棚的'],
+  ['喵酱', '嘟嘟', '团子', '布丁', '小熊', '橘子', '泡芙', '豆包'],
+);
+
+const HERO_NICKNAMES = combineNicknameParts(
+  ['超神', '王牌', '无敌', '幸运', '神秘', '快乐'],
+  ['卡尔', '阿洛', '小满', '可乐', '米粒', '多多'],
+);
+
 export const ONLINE_NICKNAME_CANDIDATES = Object.freeze([
-  'Apex Comet',
-  'Blaze Circuit',
-  'Boost Bandit',
-  'Chrome Falcon',
-  'Circuit Fox',
-  'Drift Comet',
-  'Drift Lynx',
-  'Flash Piston',
-  'Gearshift Ghost',
-  'Grid Rocket',
-  'Hyper Viper',
-  'Jetstream',
-  'Midnight Motor',
-  'Neon Apex',
-  'Nitro Badger',
-  'Nitro Nova',
-  'Octane Owl',
-  'Overtake Otter',
-  'Pitlane Phantom',
-  'Pole Position',
-  'Redline Raven',
-  'Rocket Roadster',
-  'Slipstream',
-  'Spark Plug',
-  'Speedster',
-  'Turbo Gecko',
-  'Turbo Lynx',
-  'Velocity Vixen',
-  'Victory Lap',
-  'Wild Chicane',
+  ...RACING_NICKNAMES,
+  ...EVERYDAY_NICKNAMES,
+  ...HERO_NICKNAMES,
 ]);
 
 function validName(value) {
@@ -69,7 +61,7 @@ export function randomOnlineDisplayName(
   const names = Array.isArray(candidates)
     ? candidates.map(validName).filter(Boolean)
     : [];
-  if (names.length === 0) return 'Turbo Racer';
+  if (names.length === 0) return '疾风车手';
   const roll = Number(random?.());
   const unit = Number.isFinite(roll) ? Math.max(0, Math.min(0.999999999999, roll)) : 0;
   return names[Math.floor(unit * names.length)];

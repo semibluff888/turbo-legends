@@ -27,6 +27,15 @@ test('a first-time player receives and persists a deterministic random nickname'
   assert.equal(loadOnlineDisplayName({ storage, random: () => 0.99 }), name);
 });
 
+test('bundled random nicknames are valid Chinese combinations in every UI language', () => {
+  assert.ok(ONLINE_NICKNAME_CANDIDATES.length > 0);
+  for (const name of ONLINE_NICKNAME_CANDIDATES) {
+    assert.match(name, /^\p{Script=Han}+$/u);
+    assert.ok(Array.from(name).length <= 20);
+    assert.equal(isValidOnlineDisplayName(name), true);
+  }
+});
+
 test('a valid custom v1 nickname migrates while the old Racer placeholder does not', () => {
   const customStorage = new MemoryStorage();
   customStorage.setItem(LEGACY_ONLINE_NAME_STORAGE_KEY, '  Nova   Fan  ');
@@ -70,4 +79,5 @@ test('random nickname selection clamps hostile random values', () => {
   assert.equal(randomOnlineDisplayName(() => -5), ONLINE_NICKNAME_CANDIDATES[0]);
   assert.equal(randomOnlineDisplayName(() => 5), ONLINE_NICKNAME_CANDIDATES.at(-1));
   assert.equal(randomOnlineDisplayName(() => Number.NaN), ONLINE_NICKNAME_CANDIDATES[0]);
+  assert.equal(randomOnlineDisplayName(() => 0, []), '疾风车手');
 });

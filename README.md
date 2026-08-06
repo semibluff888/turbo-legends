@@ -62,9 +62,10 @@ troubleshooting guide.
   password, stored by the server only as a salted scrypt digest.
 - The host chooses the track and AI difficulty. Every connected player must be
   ready before the host can start.
-- Nicknames are display-only and may repeat. A racing-themed nickname is chosen
-  on first use and can be edited in the lobby; participant IDs remain the sole
-  identity for permissions, reconnects, input, and results. Players may select
+- Nicknames are display-only and may repeat. A Chinese combination nickname is
+  chosen on first use regardless of the UI language and can be edited in the
+  lobby; participant IDs remain the sole identity for permissions, reconnects,
+  input, and results. Players may select
   the same one of six available Racers and independently choose one of 12 paints
   and 8 animal avatars. Two additional prototype Racers are shown as locked previews.
 - The Room shows the local choice as a rotating 3D kart; the customization dialog

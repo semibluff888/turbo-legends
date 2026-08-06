@@ -449,7 +449,8 @@ automatically joins an available public room or requests a private-room password
 failed invitations fall back to the Lobby. Successful room entry synchronizes the
 query string, and leaving the room clears it.
 
-The first multiplayer visit selects a name from a bundled racing nickname list.
+The first multiplayer visit selects a Chinese combination nickname from bundled
+word pools regardless of the selected UI language.
 Valid edited names are kept in `localStorage`; names may repeat and are never
 used as identifiers. Active room credentials are never written to browser
 storage, and obsolete v1/v2 session records are removed on client startup.
