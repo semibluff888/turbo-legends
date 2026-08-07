@@ -58,7 +58,8 @@ if (args.length > 0) {
   for await (const f of walk(SRC)) {
     // main.js is the boot entry point — it touches the DOM at import time by
     // design and only runs in a real browser.
-    if (relative(SRC, f).replaceAll('\\', '/') === 'main.js') continue;
+    const sourcePath = relative(SRC, f).replaceAll('\\', '/');
+    if (sourcePath === 'main.js' || sourcePath === 'admin/admin.js') continue;
     targets.push(f);
   }
 }

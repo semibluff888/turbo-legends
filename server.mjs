@@ -10,6 +10,8 @@ import { brotliCompress, gzip } from 'node:zlib';
 import { RoomManager } from './server/room-manager.js';
 import { createDefaultRaceFactory } from './server/race-factory.js';
 import { RuntimeMetrics } from './server/runtime-metrics.js';
+import { AdminHttpApi } from './server/admin-http-api.js';
+import { SiteAnalytics } from './server/site-analytics.js';
 import {
   DEFAULT_GUEST_CREATION_LIMIT,
   DEFAULT_GUEST_CREATION_WINDOW_MS,
@@ -187,6 +189,8 @@ export function createStaticServer(root = ROOT, {
   metricsProvider = null,
   metricsToken = '',
   userApi = null,
+  adminApi = null,
+  siteAnalytics = null,
   compressionCacheBytes = Number(process.env.STATIC_COMPRESSION_CACHE_BYTES) || 16_777_216,
 } = {}) {
   const staticRoot = realpathSync(resolve(root));
@@ -195,6 +199,11 @@ export function createStaticServer(root = ROOT, {
   return createServer(async (req, res) => {
     const [pathname = '/', rawQuery = ''] = (req.url || '/').split('?', 2);
     const assetVersion = new URLSearchParams(rawQuery).get('v');
+    if (adminApi && await adminApi.dispatch(req, res, pathname)) return;
+    if (!adminApi && pathname.startsWith('/api/admin/')) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('404 Not Found');
+      return;
+    }
     if (userApi && await userApi.dispatch(req, res, pathname)) return;
     if (statsProvider && req.method === 'GET' && pathname === '/api/stats') {
       const body = JSON.stringify(statsProvider());
@@ -253,9 +262,18 @@ export function createStaticServer(root = ROOT, {
       return;
     }
 
+    const adminRoute = pathname === '/admin' || pathname === '/admin/';
+    const adminAsset = pathname.startsWith('/src/admin/');
+    const adminDocument = adminRoute || pathname === '/src/admin/index.html';
+    if ((adminRoute || adminAsset) && !adminApi) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('404 Not Found');
+      return;
+    }
+
     let filePath;
     try {
-      filePath = safeJoin(staticRoot, staticEntryPath(req.url));
+      const staticUrl = adminRoute ? '/src/admin/index.html' : req.url;
+      filePath = safeJoin(staticRoot, staticEntryPath(staticUrl));
     } catch {
       res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' }).end('400 Bad Request');
       return;
@@ -303,6 +321,16 @@ export function createStaticServer(root = ROOT, {
         // Keep the dev server isolated; also enables high-resolution timers.
         'Cross-Origin-Opener-Policy': 'same-origin',
       };
+      if (adminDocument) {
+        baseHeaders['Cache-Control'] = 'no-store';
+        baseHeaders['Content-Security-Policy'] = "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+        baseHeaders['X-Frame-Options'] = 'DENY';
+        baseHeaders['Referrer-Policy'] = 'no-referrer';
+      }
+      if (relativePath === 'index.html' && req.method === 'GET' && siteAnalytics) {
+        const setCookie = siteAnalytics.recordPageView(req);
+        if (setCookie) baseHeaders['Set-Cookie'] = setCookie;
+      }
       const compressible = COMPRESSIBLE_EXTENSIONS.has(extension) && stat.size > 1024;
       if (compressible) baseHeaders.Vary = 'Accept-Encoding';
 
@@ -388,6 +416,7 @@ export async function createGameServer({
   leaderboardCacheTtlMs = Number(process.env.LEADERBOARD_CACHE_TTL_MS)
     || DEFAULT_LEADERBOARD_CACHE_TTL_MS,
   trustProxy = process.env.TRUST_PROXY === 'true',
+  adminKey = process.env.ADMIN_KEY || '',
   metricsToken = process.env.METRICS_TOKEN || '',
   metricsLogIntervalMs = Number(process.env.METRICS_LOG_INTERVAL_MS) || 60_000,
   maintenanceIntervalMs = Number(process.env.MAINTENANCE_INTERVAL_MS) || 500,
@@ -395,6 +424,9 @@ export async function createGameServer({
   const packageMetadata = JSON.parse(await fs.readFile(join(root, 'package.json'), 'utf8'));
   const version = String(packageMetadata.version || '').trim();
   if (!version) throw new Error('package.json must define a non-empty version.');
+  if (adminKey && String(adminKey).length < 16) {
+    throw new Error('ADMIN_KEY must contain at least 16 characters when enabled.');
+  }
 
   const metrics = new RuntimeMetrics({ logger, logIntervalMs: metricsLogIntervalMs });
   const ownsUserStore = !userStore;
@@ -403,6 +435,11 @@ export async function createGameServer({
     sessionTtlMs: userSessionTtlMs,
     trackIds: TRACKS.map((track) => track.id),
   });
+  const siteAnalytics = adminKey ? new SiteAnalytics({
+    db: users.db,
+    trustProxy,
+    logger,
+  }) : null;
   const userApi = new UserHttpApi({
     userStore: users,
     trustProxy,
@@ -414,10 +451,23 @@ export async function createGameServer({
     ...roomManagerOptions,
     metrics: roomManagerOptions.metrics ?? metrics,
     userStore: roomManagerOptions.userStore ?? users,
+    siteAnalytics: roomManagerOptions.siteAnalytics ?? siteAnalytics,
   });
   if (roomManager && !roomManager.metrics) roomManager.metrics = metrics;
   if (roomManager && !roomManager.userStore) roomManager.userStore = users;
+  if (roomManager && !roomManager.siteAnalytics) roomManager.siteAnalytics = siteAnalytics;
   let gateway = null;
+  const adminApi = adminKey ? new AdminHttpApi({
+    adminKey,
+    userStore: users,
+    analytics: siteAnalytics,
+    trustProxy,
+    logger,
+    isUserActive: (userId) => manager.isUserActive?.(userId)
+      || [...(gateway?.sessions ?? [])].some((session) => session.userId === userId),
+    currentOnline: () => gateway?.connectionCount ?? 0,
+    invalidateLeaderboards: () => userApi.invalidateLeaderboards(),
+  }) : null;
   const server = createStaticServer(root, {
     metadataProvider: () => ({ version }),
     statsProvider: () => ({
@@ -430,6 +480,8 @@ export async function createGameServer({
     metricsProvider: () => metrics.snapshot(),
     metricsToken,
     userApi,
+    adminApi,
+    siteAnalytics,
     healthProvider: () => ({
       uptimeSeconds: process.uptime(),
       rooms: manager.roomCount,
@@ -445,6 +497,7 @@ export async function createGameServer({
     metrics,
     userStore: users,
     trustProxy,
+    onConnectionCountChange: (count) => siteAnalytics?.recordOnlineCount(count),
     ...webSocketOptions,
   });
 
@@ -496,6 +549,8 @@ export async function createGameServer({
     await gateway.close();
     manager.close();
     metrics.close();
+    adminApi?.close();
+    siteAnalytics?.close();
     if (ownsUserStore) users.close();
   }
 
@@ -504,6 +559,8 @@ export async function createGameServer({
   server.webSocketGateway = gateway;
   server.runtimeMetrics = metrics;
   server.userStore = users;
+  server.siteAnalytics = siteAnalytics;
+  server.adminApi = adminApi;
   server.shutdown = async () => {
     await disposeGameServices();
     if (!server.listening) return;

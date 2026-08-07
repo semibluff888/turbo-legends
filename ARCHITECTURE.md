@@ -365,6 +365,19 @@ waiting → loading → countdown → racing → results → waiting
 - User-owned rows cascade on manual user deletion. Shared race metadata remains;
   V1 intentionally exposes no deletion endpoint or administration command.
 
+## Lightweight administration
+
+- A non-empty `ADMIN_KEY` enables the same-origin `/admin` page and protected
+  `/api/admin/*` endpoints. Administrator sessions are process-local and expire
+  after 12 hours; disabling the key makes the routes return 404.
+- New `admin_*` SQLite tables start aggregate statistics at zero when the feature
+  is first enabled. Page views are buffered in memory and flushed every 30 seconds;
+  daily visitor hashes and anonymized IPv4 `/24` or IPv6 `/64` networks are retained
+  for 90 days while cumulative counters remain.
+- Formal race duration is recorded only from the countdown-to-racing transition
+  until results. Existing races are not backfilled. User deletion is rejected while
+  the account has a connection, room reservation, reconnect window, or pending settlement.
+
 ## Protocol v5
 
 The WebSocket endpoint is `/ws`. Lobby, room, authentication, event, result,

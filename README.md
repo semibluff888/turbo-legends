@@ -167,6 +167,7 @@ the server race continues while the client sends neutral controls.
 | `GUEST_CREATION_LIMIT` | `0` | Maximum new guest accounts created per client IP in one window; `0` disables the limit and valid session resumes are not counted |
 | `GUEST_CREATION_WINDOW_MS` | `600000` | New guest-account rate-limit window in milliseconds |
 | `LEADERBOARD_CACHE_TTL_MS` | `60000` | Shared in-memory and browser leaderboard cache lifetime in milliseconds |
+| `ADMIN_KEY` | empty | Enables the `/admin` dashboard and new analytics collection when set to at least 16 characters; empty keeps both disabled |
 | `METRICS_TOKEN` | empty | Enables bearer-protected `GET /api/metrics`; empty keeps the route disabled |
 | `METRICS_LOG_INTERVAL_MS` | `60000` | Structured aggregate metrics log interval |
 | `TRUST_PROXY` | `false` | Trust proxy-sanitized forwarding headers for client IP and HTTPS cookies |
@@ -180,6 +181,11 @@ The multiplayer endpoint is `/ws` and automatically uses `wss://` when the
 page is served over HTTPS. For public deployment, terminate TLS in the hosting
 platform or reverse proxy and ensure WebSocket Upgrade requests for `/ws` are
 forwarded to this process.
+
+When `ADMIN_KEY` is enabled, open `/admin` on the same origin. The dashboard
+stores only new aggregate traffic/race statistics from that point forward,
+keeps full IP addresses out of SQLite, and uses the existing user database for
+search, detail views, and deletion of inactive users.
 
 Protocol v5 keeps lobby, room, authentication, events, and results as JSON, but
 uses fixed little-endian binary packets for 20 Hz full race snapshots and the

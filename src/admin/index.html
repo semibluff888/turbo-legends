@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Turbo Legends 后台</title>
+  <link rel="stylesheet" href="/src/admin/admin.css">
+</head>
+<body>
+  <main>
+    <section id="login-view" class="login-shell">
+      <form id="login-form" class="panel login-card">
+        <div class="brand-mark">TL</div>
+        <p class="eyebrow">Turbo Legends</p>
+        <h1>后台管理</h1>
+        <p class="muted">输入服务器配置的管理密钥。</p>
+        <label>
+          <span>管理密钥</span>
+          <input id="admin-key" name="key" type="password" minlength="16" autocomplete="current-password" required>
+        </label>
+        <button type="submit">登录</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </section>
+
+    <section id="admin-view" hidden>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Turbo Legends</p>
+          <h1>运营概览</h1>
+        </div>
+        <div class="topbar-actions">
+          <label class="range-control">统计范围
+            <select id="range-select">
+              <option value="24h">24 小时</option>
+              <option value="7d">7 天</option>
+              <option value="30d">30 天</option>
+              <option value="90d">90 天</option>
+            </select>
+          </label>
+          <button id="refresh-button" class="secondary" type="button">刷新</button>
+          <button id="logout-button" class="secondary" type="button">退出</button>
+        </div>
+      </header>
+
+      <p id="global-error" class="error global-error" role="alert"></p>
+
+      <section id="metric-grid" class="metric-grid" aria-label="核心指标"></section>
+
+      <section class="dashboard-grid">
+        <article class="panel chart-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">趋势</p>
+              <h2>访问与在线峰值</h2>
+            </div>
+            <div class="legend"><span class="pv-dot"></span>PV <span class="online-dot"></span>在线峰值</div>
+          </div>
+          <canvas id="traffic-chart" height="260"></canvas>
+        </article>
+
+        <article class="panel network-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">来源</p>
+              <h2>匿名网段 Top 20</h2>
+            </div>
+          </div>
+          <div class="table-wrap compact">
+            <table>
+              <thead><tr><th>网段</th><th>PV</th><th>占比</th></tr></thead>
+              <tbody id="network-rows"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel users-panel">
+        <div class="panel-heading users-heading">
+          <div>
+            <p class="eyebrow">用户</p>
+            <h2>用户管理</h2>
+          </div>
+          <input id="user-search" type="search" placeholder="搜索昵称或用户 ID" autocomplete="off">
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>用户</th><th>等级</th><th>Rating</th><th>比赛</th><th>最近上线</th><th>状态</th></tr>
+            </thead>
+            <tbody id="user-rows"></tbody>
+          </table>
+        </div>
+        <footer class="pager">
+          <span id="user-summary"></span>
+          <div>
+            <button id="prev-page" class="secondary" type="button">上一页</button>
+            <button id="next-page" class="secondary" type="button">下一页</button>
+          </div>
+        </footer>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="user-dialog">
+    <div class="dialog-heading">
+      <div>
+        <p class="eyebrow">用户详情</p>
+        <h2 id="detail-name">—</h2>
+      </div>
+      <button id="close-dialog" class="icon-button" type="button" aria-label="关闭">×</button>
+    </div>
+    <div id="user-detail"></div>
+    <footer class="dialog-actions">
+      <button id="delete-user" class="danger" type="button">删除用户</button>
+      <button id="close-dialog-footer" class="secondary" type="button">关闭</button>
+    </footer>
+  </dialog>
+
+  <script type="module" src="/src/admin/admin.js"></script>
+</body>
+</html>

@@ -251,6 +251,7 @@ export class RoomManager extends EventEmitter {
     scryptQueue = defaultScryptQueue,
     metrics = null,
     userStore = null,
+    siteAnalytics = null,
     settlementRetryDelaysMs = [2_000, 10_000],
     roomReceiverCountProvider = null,
   } = {}) {
@@ -288,6 +289,7 @@ export class RoomManager extends EventEmitter {
     this.scryptQueue = scryptQueue;
     this.metrics = metrics;
     this.userStore = userStore;
+    this.siteAnalytics = siteAnalytics;
     this.settlementRetryDelaysMs = Array.isArray(settlementRetryDelaysMs)
       ? settlementRetryDelaysMs
         .map(Number)
@@ -315,6 +317,16 @@ export class RoomManager extends EventEmitter {
 
   getMetrics() {
     return { rooms: this.roomCount, races: this.activeRaceCount };
+  }
+
+  isUserActive(userId) {
+    const normalized = String(userId || '');
+    if (!normalized) return false;
+    if (this.userParticipants.has(normalized)) return true;
+    for (const settlement of this.pendingSettlements.values()) {
+      if (settlement.participants.some((participant) => participant.userId === normalized)) return true;
+    }
+    return false;
   }
 
   listRooms() {
@@ -1166,6 +1178,7 @@ export class RoomManager extends EventEmitter {
       room.state = simulation.state === ROOM_STATES.RACING
         ? ROOM_STATES.RACING
         : ROOM_STATES.COUNTDOWN;
+      race.analyticsStartedAt = null;
       this.activeRaceRooms.add(room);
       for (const member of room.members.values()) {
         const kind = member.connected && member.raceLoaded && !member.abandoned
@@ -1175,6 +1188,7 @@ export class RoomManager extends EventEmitter {
         if (kind === CONTROLLER_KINDS.HUMAN) member.lastInputAt = now;
         this._setController(room, member, kind, true);
       }
+      if (room.state === ROOM_STATES.RACING) this._recordAnalyticsRaceStart(room, now);
       this._recordRaceStart(room);
       this._broadcastRoomState(room);
     })().catch((error) => {
@@ -1248,6 +1262,7 @@ export class RoomManager extends EventEmitter {
     const simulationState = race.simulation.state;
     if (simulationState === ROOM_STATES.RACING && room.state === ROOM_STATES.COUNTDOWN) {
       room.state = ROOM_STATES.RACING;
+      this._recordAnalyticsRaceStart(room, now);
       this._broadcastRoomState(room);
     }
     if (simulationState === ROOM_STATES.RESULTS || race.simulation.isRaceOver) {
@@ -1326,6 +1341,7 @@ export class RoomManager extends EventEmitter {
     this.activeRaceRooms.delete(room);
     room.state = ROOM_STATES.RESULTS;
     room.race.resultsAt = now;
+    this._recordAnalyticsRaceFinish(room, now);
     room.race.results = defaultRaceResults(room);
     const settlement = this._createRaceSettlement(room);
     if (settlement) this.pendingSettlements.set(settlement.raceId, settlement);
@@ -1341,6 +1357,33 @@ export class RoomManager extends EventEmitter {
     }));
     this._broadcastRoomState(room);
     if (settlement) this._trySettleRace(settlement, now);
+  }
+
+  _recordAnalyticsRaceStart(room, now) {
+    if (!this.siteAnalytics || room.race.analyticsStartedAt !== null) return false;
+    room.race.analyticsStartedAt = now;
+    const humanCount = room.race.roster.filter((entry) => entry.aiPlayerNumber == null).length;
+    try {
+      this.siteAnalytics.recordRaceStart({ raceId: room.race.raceId, humanCount });
+      return true;
+    } catch (error) {
+      this.emit('managerError', error);
+      return false;
+    }
+  }
+
+  _recordAnalyticsRaceFinish(room, now) {
+    if (!this.siteAnalytics || room.race.analyticsStartedAt === null) return false;
+    try {
+      this.siteAnalytics.recordRaceFinish({
+        raceId: room.race.raceId,
+        durationMs: Math.max(0, Math.round(now - room.race.analyticsStartedAt)),
+      });
+      return true;
+    } catch (error) {
+      this.emit('managerError', error);
+      return false;
+    }
   }
 
   _recordRaceStart(room) {

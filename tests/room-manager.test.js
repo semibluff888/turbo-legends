@@ -133,6 +133,31 @@ function progressionStore(settlements) {
   };
 }
 
+test('site analytics times only the formal racing phase and records one race', async () => {
+  const starts = [];
+  const finishes = [];
+  const harness = createHarness({
+    siteAnalytics: {
+      recordRaceStart(value) { starts.push(value); },
+      recordRaceFinish(value) { finishes.push(value); },
+    },
+  });
+  await startTwoPlayerRace(harness);
+  assert.deepEqual(starts, []);
+
+  harness.simulations[0].state = ROOM_STATES.RACING;
+  harness.advance(1_000);
+  harness.manager.tick();
+  assert.deepEqual(starts, [{ raceId: 'race_identifier_123', humanCount: 2 }]);
+
+  harness.simulations[0].state = ROOM_STATES.RESULTS;
+  harness.advance(4_200);
+  harness.manager.tick();
+  assert.deepEqual(finishes, [{ raceId: 'race_identifier_123', durationMs: 4_200 }]);
+  harness.manager.tick();
+  assert.equal(finishes.length, 1);
+});
+
 async function finishHarnessRace(harness) {
   harness.simulations[0].state = ROOM_STATES.RESULTS;
   harness.advance(17);

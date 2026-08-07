@@ -202,6 +202,10 @@ export class UserHttpApi {
     }).end(snapshot.serialized);
   }
 
+  invalidateLeaderboards() {
+    this.leaderboardCache = null;
+  }
+
   async handle(req, res, pathname) {
     if (pathname === '/api/leaderboards' && req.method === 'GET') {
       this._sendLeaderboardSnapshot(req, res, await this._leaderboardSnapshot());

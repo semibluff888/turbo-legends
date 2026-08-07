@@ -22,7 +22,10 @@ import {
   decodeInputPacket,
 } from '../src/net/binary-race-codec.js';
 import { asErrorMessage, GameError } from './game-error.js';
+import { clientAddress } from './http-request-utils.js';
 import { sessionTokenFromRequest } from './user-store.js';
+
+export { clientAddress } from './http-request-utils.js';
 
 const AUTH_ACTIONS = new Set([
   CLIENT_MESSAGE_TYPES.CREATE_ROOM,
@@ -62,12 +65,6 @@ export function outgoingMessageAction({
 
 function connectionId() {
   return randomBytes(9).toString('base64url');
-}
-
-export function clientAddress(request, trustProxy = false) {
-  const forwarded = trustProxy ? request.headers['x-forwarded-for'] : null;
-  if (typeof forwarded === 'string' && forwarded) return forwarded.split(',')[0].trim();
-  return request.socket.remoteAddress ?? 'unknown';
 }
 
 function normalizeAllowedOrigins(allowedOrigins) {
@@ -141,6 +138,7 @@ export function attachGameWebSocket(httpServer, {
   stringify = JSON.stringify,
   metrics = null,
   userStore = null,
+  onConnectionCountChange = null,
   lobbyBroadcastDebounceMs = nonNegativeNumber(process.env.LOBBY_BROADCAST_DEBOUNCE_MS, 100),
   serverStatsDebounceMs = 250,
 } = {}) {
@@ -621,10 +619,12 @@ export function attachGameWebSocket(httpServer, {
       byteTokens: byteBurst,
     };
     sessions.add(session);
+    onConnectionCountChange?.(sessions.size);
     socket.on('pong', () => { session.alive = true; });
     socket.on('error', (error) => logger.warn?.(`[multiplayer] websocket error: ${error.message}`));
     socket.on('close', () => {
       sessions.delete(session);
+      onConnectionCountChange?.(sessions.size);
       unbindParticipant(session, true);
       scheduleServerStats();
     });
@@ -722,6 +722,7 @@ export function attachGameWebSocket(httpServer, {
   roomManager.on('roomDestroyed', onRoomDestroyed);
   roomManager.on('participantKicked', onParticipantKicked);
   roomManager.setRoomReceiverCountProvider?.((roomCode) => roomSessions.get(roomCode)?.size ?? 0);
+  onConnectionCountChange?.(sessions.size);
 
   const heartbeat = setInterval(() => {
     for (const session of sessions) {

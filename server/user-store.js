@@ -398,6 +398,133 @@ export class UserStore {
     return { rating, champions, level, speed };
   }
 
+  countUsers() {
+    return finiteInteger(this.db.prepare('SELECT COUNT(*) AS count FROM users').get().count);
+  }
+
+  listAdminUsers({ query = '', page = 1, pageSize = 25 } = {}) {
+    const normalizedQuery = String(query || '').trim().slice(0, 100);
+    const normalizedPage = Math.max(1, finiteInteger(page, 1));
+    const normalizedPageSize = Math.max(1, Math.min(100, finiteInteger(pageSize, 25)));
+    const where = normalizedQuery
+      ? 'WHERE instr(lower(u.display_name), lower(?)) > 0 OR instr(lower(u.user_id), lower(?)) > 0'
+      : '';
+    const parameters = normalizedQuery ? [normalizedQuery, normalizedQuery] : [];
+    const total = finiteInteger(this.db.prepare(`
+      SELECT COUNT(*) AS count FROM users u ${where}
+    `).get(...parameters).count);
+    const totalPages = Math.max(1, Math.ceil(total / normalizedPageSize));
+    const boundedPage = Math.min(normalizedPage, totalPages);
+    const offset = (boundedPage - 1) * normalizedPageSize;
+    const rows = this.db.prepare(`
+      SELECT
+        u.user_id, u.display_name, u.xp, u.rating, u.races, u.finishes,
+        u.escapes, u.firsts, u.seconds, u.thirds, u.created_at, u.updated_at,
+        sessions.last_seen_at
+      FROM users u
+      LEFT JOIN (
+        SELECT user_id, MAX(last_seen_at) AS last_seen_at
+        FROM user_sessions
+        GROUP BY user_id
+      ) sessions ON sessions.user_id = u.user_id
+      ${where}
+      ORDER BY u.created_at DESC, u.user_id ASC
+      LIMIT ? OFFSET ?
+    `).all(...parameters, normalizedPageSize, offset);
+    return {
+      page: boundedPage,
+      pageSize: normalizedPageSize,
+      total,
+      totalPages,
+      items: rows.map((row) => ({
+        userId: row.user_id,
+        displayName: row.display_name,
+        level: levelProgress(row.xp).level,
+        xp: finiteInteger(row.xp),
+        rating: finiteInteger(row.rating, DEFAULT_RATING),
+        races: finiteInteger(row.races),
+        finishes: finiteInteger(row.finishes),
+        escapes: finiteInteger(row.escapes),
+        firsts: finiteInteger(row.firsts),
+        seconds: finiteInteger(row.seconds),
+        thirds: finiteInteger(row.thirds),
+        createdAt: finiteInteger(row.created_at),
+        updatedAt: finiteInteger(row.updated_at),
+        lastSeenAt: row.last_seen_at === null || row.last_seen_at === undefined
+          ? null
+          : finiteInteger(row.last_seen_at),
+      })),
+    };
+  }
+
+  getAdminUser(userId) {
+    const row = this.db.prepare(`
+      SELECT
+        u.user_id, u.display_name, u.xp, u.rating, u.races, u.finishes,
+        u.escapes, u.firsts, u.seconds, u.thirds, u.created_at, u.updated_at,
+        sessions.session_count, sessions.last_seen_at
+      FROM users u
+      LEFT JOIN (
+        SELECT user_id, COUNT(*) AS session_count, MAX(last_seen_at) AS last_seen_at
+        FROM user_sessions
+        GROUP BY user_id
+      ) sessions ON sessions.user_id = u.user_id
+      WHERE u.user_id = ?
+    `).get(userId);
+    if (!row) return null;
+    const profile = this.getProfile(userId);
+    const recentRaces = this.db.prepare(`
+      SELECT
+        starts.race_id, starts.created_at AS started_at,
+        races.track_id, races.room_type, races.human_count, races.settled_at,
+        results.official_rank, results.human_rank, results.completed, results.escaped,
+        results.finish_time_ms, results.xp_delta, results.rating_delta
+      FROM race_user_starts starts
+      JOIN races ON races.race_id = starts.race_id
+      LEFT JOIN race_user_results results
+        ON results.race_id = starts.race_id AND results.user_id = starts.user_id
+      WHERE starts.user_id = ?
+      ORDER BY starts.created_at DESC, starts.race_id ASC
+      LIMIT 20
+    `).all(userId).map((race) => ({
+      raceId: race.race_id,
+      trackId: race.track_id,
+      roomType: race.room_type,
+      humanCount: finiteInteger(race.human_count),
+      startedAt: finiteInteger(race.started_at),
+      settledAt: finiteInteger(race.settled_at),
+      officialRank: race.official_rank === null ? null : finiteInteger(race.official_rank),
+      humanRank: race.human_rank === null ? null : finiteInteger(race.human_rank),
+      completed: race.completed === null ? null : Boolean(race.completed),
+      escaped: race.escaped === null ? null : Boolean(race.escaped),
+      finishTimeMs: race.finish_time_ms === null ? null : finiteInteger(race.finish_time_ms),
+      xpDelta: race.xp_delta === null ? null : finiteInteger(race.xp_delta),
+      ratingDelta: race.rating_delta === null ? null : finiteInteger(race.rating_delta),
+    }));
+    return {
+      userId: row.user_id,
+      displayName: row.display_name,
+      level: profile.user.level,
+      xp: profile.user.xp,
+      rating: profile.user.rating,
+      stats: profile.stats,
+      createdAt: finiteInteger(row.created_at),
+      updatedAt: finiteInteger(row.updated_at),
+      sessions: {
+        count: finiteInteger(row.session_count),
+        lastSeenAt: row.last_seen_at === null || row.last_seen_at === undefined
+          ? null
+          : finiteInteger(row.last_seen_at),
+      },
+      trackBestTimes: profile.trackBestTimes,
+      recentRaces,
+    };
+  }
+
+  deleteUser(userId) {
+    return this.db.prepare('DELETE FROM users WHERE user_id = ?').run(userId).changes > 0;
+  }
+
   _existingSettlement(raceId) {
     const rows = this.db.prepare(`
       SELECT user_id, xp_before, xp_delta, rating_before, rating_delta, best_time_updated
