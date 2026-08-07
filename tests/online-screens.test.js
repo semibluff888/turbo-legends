@@ -456,6 +456,8 @@ test('multiplayer profile and progression UI expose every V1 statistic in both l
   assert.match(onlineScreensSource, /Stats update failed/);
   assert.match(onlineStylesSource, /\.online-profile-stats \{[\s\S]*?grid-template-columns:/);
   assert.match(onlineStylesSource, /@media \(max-width: 680px\)[\s\S]*?\.online-profile-stats \{ grid-template-columns: repeat\(2,/);
+  assert.match(onlineStylesSource, /\.online-profile-dialog[\s\S]*height: min\(760px, calc\(100vh - 28px\)\)/u);
+  assert.match(onlineStylesSource, /\.online-profile-records[\s\S]*flex: 1 1 auto/u);
   assert.match(
     onlineScreensSource,
     /data-action="profile" data-busy-action[\s\S]*?this\._renderUserProfile\(\);[\s\S]*?this\._openDialog\('profile'[\s\S]*?this\._emit\('onOpenProfile'\)/,
