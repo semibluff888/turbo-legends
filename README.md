@@ -3,9 +3,20 @@
 A Mario Kart-style 3D kart racer with single-player and server-authoritative
 online rooms. The browser has no build step: Three.js is vendored, visuals and
 SFX are procedural, and the Node process serves both the game and WebSocket
-multiplayer.
+multiplayer. The interface is available in Simplified Chinese and English.
 
 ![genre](https://img.shields.io/badge/genre-kart%20racer-ff5fa2) ![node](https://img.shields.io/badge/node-%3E%3D22.13-4aa8ff) ![multiplayer](https://img.shields.io/badge/multiplayer-WebSocket-36d6a0)
+
+## Screenshots
+
+| Main menu | Multiplayer lobby |
+|:---:|:---:|
+| ![Turbo Legends main menu](docs/screenshots/main-menu.png) | ![Turbo Legends multiplayer lobby](docs/screenshots/multiplayer-lobby.png) |
+| **Multiplayer room** | **Race start** |
+| ![Turbo Legends multiplayer room](docs/screenshots/multiplayer-room.png) | ![Turbo Legends race start](docs/screenshots/race-start.png) |
+
+*Screenshots show the Simplified Chinese interface; English can be selected in
+the game settings.*
 
 ## Run locally
 
