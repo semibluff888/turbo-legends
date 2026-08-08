@@ -91,12 +91,18 @@ test('room system chat messages coalesce and expire without affecting player mes
 });
 
 test('Bot room views expose badges, read-only controls and localized Bot chat', () => {
-  const lobby = buildLobbyView({ rooms: [{
+  const lobbyState = { rooms: [{
     roomCode: 'ABC234', roomName: 'Bot自建房', roomType: 'public', botManaged: true,
     playerCount: 1, maxPlayers: 8, hostDisplayName: '赛博房主', trackId: TRACKS[0].id,
     status: 'waiting', joinable: true,
-  }] });
-  assert.equal(lobby.rooms[0].botManaged, true);
+  }] };
+  const englishLobby = buildLobbyView(lobbyState, { language: 'en' });
+  const chineseLobby = buildLobbyView(lobbyState, { language: 'zh-CN' });
+  assert.equal(englishLobby.rooms[0].botManaged, true);
+  assert.equal(englishLobby.rooms[0].roomName, 'Bot Room');
+  assert.equal(englishLobby.rooms[0].hostDisplayName, 'Cyber Host');
+  assert.equal(chineseLobby.rooms[0].roomName, 'Bot自建房');
+  assert.equal(chineseLobby.rooms[0].hostDisplayName, '赛博房主');
 
   const state = {
     roomCode: 'ABC234', roomName: 'Bot自建房', roomType: 'public', botManaged: true,
@@ -107,10 +113,17 @@ test('Bot room views expose badges, read-only controls and localized Bot chat', 
       { participantId: 'human', displayName: '玩家', isBot: false, ready: true, connected: true },
     ],
   };
-  const room = buildRoomView(state, 'human', { language: 'zh-CN' });
-  assert.equal(room.botManaged, true);
-  assert.equal(room.members[0].isBot, true);
-  assert.equal(roomStatusMessage(room, getUiCopy('zh-CN').online.room), '所有人都已准备，发送 /s 开始比赛。');
+  const englishRoom = buildRoomView(state, 'human', { language: 'en' });
+  const chineseRoom = buildRoomView(state, 'human', { language: 'zh-CN' });
+  assert.equal(englishRoom.botManaged, true);
+  assert.equal(englishRoom.roomName, 'Bot Room');
+  assert.equal(englishRoom.members[0].displayName, 'Cyber Host');
+  assert.equal(getUiCopy('en').online.room.botReady, 'READY');
+  assert.equal(chineseRoom.roomName, 'Bot自建房');
+  assert.equal(chineseRoom.members[0].displayName, '赛博房主');
+  assert.equal(getUiCopy('zh-CN').online.room.botReady, '已准备');
+  assert.equal(chineseRoom.members[0].isBot, true);
+  assert.equal(roomStatusMessage(chineseRoom, getUiCopy('zh-CN').online.room), '所有人都已准备，发送 /s 开始比赛。');
 
   const screen = Object.assign(Object.create(OnlineScreens.prototype), {
     copy: getUiCopy('zh-CN'),
@@ -125,10 +138,23 @@ test('Bot room views expose badges, read-only controls and localized Bot chat', 
   });
   assert.equal(screen.appendRoomChat({
     roomCode: 'ABC234', participantId: 'bot-host', displayName: '赛博房主', sentAt: Date.now(),
-    content: 'fallback', isBot: true, botMessageKey: 'waitReady', botMessageArgs: {},
+    content: 'fallback', isBot: true, botMessageKey: 'welcome',
+    botMessageArgs: { displayName: '不想长大' },
   }), true);
-  assert.equal(screen._chatMessages[0].content, '请等待所有人准备');
+  assert.equal(screen._chatMessages[0].content, 'fallback');
   assert.equal(screen._chatMessages[0].isBot, true);
+  assert.equal(
+    screen._localizedBotChatContent(screen._chatMessages[0]),
+    '欢迎 不想长大 加入房间！发送 /h 查看指令。',
+  );
+  assert.equal(screen._roomChatDisplayName(screen._chatMessages[0]), '赛博房主');
+  screen.copy = getUiCopy('en');
+  screen.language = 'en';
+  assert.equal(
+    screen._localizedBotChatContent(screen._chatMessages[0]),
+    'Welcome, 不想长大! Send /h to see Bot commands.',
+  );
+  assert.equal(screen._roomChatDisplayName(screen._chatMessages[0]), 'Cyber Host');
 
   assert.match(onlineScreensSource, /view\.botManaged[\s\S]*copy\.botControls/u);
   assert.match(onlineScreensSource, /online-room-bot-badge/u);

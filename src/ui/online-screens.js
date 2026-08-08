@@ -351,20 +351,23 @@ export function buildLobbyView(lobbyState = {}, options = {}) {
 
   const rooms = (Array.isArray(rawRooms) ? rawRooms : []).map((room, index) => {
     const roomCode = normalizeRoomCode(firstDefined(room.roomCode, room.code, ''));
+    const botManaged = Boolean(room.botManaged);
     const maxPlayers = roomCapacityOf(room);
     const memberFallback = Array.isArray(room.members) ? room.members.length : 0;
     const playerCount = Math.min(maxPlayers, roomPlayerCountOf(room, memberFallback));
     const roomType = roomTypeOf(room);
     const status = roomStatusOf(room, playerCount, maxPlayers);
-    const roomName = normalizeRoomName(firstDefined(room.roomName, room.name, ''))
+    const sourceRoomName = normalizeRoomName(firstDefined(room.roomName, room.name, ''))
       || roomCode
       || copy.online.lobby.unnamedRoom;
-    const hostDisplayName = normalizeDisplayName(firstDefined(
+    const sourceHostDisplayName = normalizeDisplayName(firstDefined(
       room.hostDisplayName,
       room.hostName,
       room.host?.displayName,
       '',
     )) || copy.online.lobby.unknownHost;
+    const roomName = botManaged ? copy.online.lobby.botRoomName : sourceRoomName;
+    const hostDisplayName = botManaged ? copy.online.lobby.botHostName : sourceHostDisplayName;
     const requiresPassword = room.requiresPassword === true || roomType === 'private';
     const joinable = status === 'waiting' && room.joinable !== false;
     const isInvited = Boolean(inviteRoomCode && roomCode === inviteRoomCode);
@@ -378,7 +381,7 @@ export function buildLobbyView(lobbyState = {}, options = {}) {
     const track = trackById.get(trackId) || tracks[0] || null;
     const sourceTrackName = String(firstDefined(room.trackName, room.track?.name, track?.name, trackId));
     const trackName = localizeTrack(track, language)?.name || sourceTrackName;
-    const haystack = `${roomName}\n${hostDisplayName}\n${roomCode}\n${trackName}\n${sourceTrackName}`
+    const haystack = `${roomName}\n${sourceRoomName}\n${hostDisplayName}\n${sourceHostDisplayName}\n${roomCode}\n${trackName}\n${sourceTrackName}`
       .toLocaleLowerCase();
     const matchesSearch = !normalizedSearch || haystack.includes(normalizedSearch) || isInvited;
     return {
@@ -394,7 +397,7 @@ export function buildLobbyView(lobbyState = {}, options = {}) {
       track,
       status,
       joinable,
-      botManaged: Boolean(room.botManaged),
+      botManaged,
       isInvited,
       matchesSearch,
       sourceIndex: index,
@@ -424,6 +427,7 @@ export function buildLobbyView(lobbyState = {}, options = {}) {
 /** Normalize room_state into pre-race room presentation facts. */
 export function buildRoomView(roomState = {}, localParticipantId = '', options = {}) {
   const copy = options.copy || getUiCopy(options.language);
+  const botManaged = Boolean(roomState.botManaged);
   const settings = roomState.settings || {};
   const phase = normalizedRoomPhase(firstDefined(roomState.phase, roomState.state, 'waiting'));
   const hostId = String(firstDefined(
@@ -439,12 +443,14 @@ export function buildRoomView(roomState = {}, localParticipantId = '', options =
     const postRaceState = normalizedRoomPhase(firstDefined(member.postRaceState, ''));
     return {
       participantId,
-      displayName: String(firstDefined(
-        member.displayName,
-        member.nickname,
-        member.name,
-        formatCopy(copy.common.racerFallback, { rank: index + 1 }),
-      )),
+      displayName: member.isBot
+        ? copy.online.room.botHostName
+        : String(firstDefined(
+          member.displayName,
+          member.nickname,
+          member.name,
+          formatCopy(copy.common.racerFallback, { rank: index + 1 }),
+        )),
       characterId: String(firstDefined(member.characterId, member.character?.id, '')),
       paintId: String(firstDefined(member.paintId, DEFAULT_ONLINE_LOADOUT.paintId)),
       avatarId: String(firstDefined(member.avatarId, DEFAULT_ONLINE_LOADOUT.avatarId)),
@@ -484,10 +490,12 @@ export function buildRoomView(roomState = {}, localParticipantId = '', options =
 
   return {
     roomCode: normalizeRoomCode(firstDefined(roomState.roomCode, roomState.code, '')),
-    roomName: normalizeRoomName(firstDefined(roomState.roomName, roomState.name, ''))
-      || copy.online.room.unnamedRoom,
+    roomName: botManaged
+      ? copy.online.room.botRoomName
+      : normalizeRoomName(firstDefined(roomState.roomName, roomState.name, ''))
+        || copy.online.room.unnamedRoom,
     roomType: roomTypeOf(roomState),
-    botManaged: Boolean(roomState.botManaged),
+    botManaged,
     maxPlayers,
     capacity: maxPlayers,
     playerCount,
@@ -1723,6 +1731,12 @@ export class OnlineScreens {
     }
   }
 
+  _roomChatDisplayName(message) {
+    if (message.system) return this.copy.online.room.system;
+    if (message.isBot) return this.copy.online.room.botHostName;
+    return message.displayName;
+  }
+
   _renderRoomChatEntry(list, message) {
     const item = createNode(
       this.doc,
@@ -1737,7 +1751,7 @@ export class OnlineScreens {
       'strong',
       'online-chat-name',
       meta,
-      message.system ? this.copy.online.room.system : message.displayName,
+      this._roomChatDisplayName(message),
     );
     if (message.isBot) {
       createNode(this.doc, 'span', 'online-chat-bot-badge', name, this.copy.online.room.botBadge);
@@ -1750,7 +1764,7 @@ export class OnlineScreens {
       formatRoomChatTime(message.sentAt, this.language),
     );
     time.dateTime = new Date(message.sentAt).toISOString();
-    createNode(this.doc, 'span', 'online-chat-content', item, message.content);
+    createNode(this.doc, 'span', 'online-chat-content', item, this._localizedBotChatContent(message));
   }
 
   _renderRoomChat() {
@@ -1804,10 +1818,7 @@ export class OnlineScreens {
       participantId: String(message.participantId || ''),
       displayName: String(message.displayName || this.copy.online.room.system),
       sentAt,
-      content: this._localizedBotChatContent({
-        ...message,
-        content,
-      }),
+      content,
       system: Boolean(message.system),
       isBot: Boolean(message.isBot),
       botMessageKey: String(message.botMessageKey || ''),

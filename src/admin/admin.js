@@ -119,12 +119,14 @@ async function loadServerSettings(showErrors = true) {
   }
 }
 
-function renderMetrics(dashboard) {
+function renderMetrics(dashboard, serverStats) {
   const cards = [
     ['累计 PV', number(dashboard.traffic.totalPageViews)],
     ['今日 PV', number(dashboard.traffic.todayPageViews)],
     ['今日 UV', number(dashboard.traffic.todayUniqueVisitors)],
     ['当前在线', number(dashboard.traffic.currentOnline)],
+    ['在线房间', number(serverStats.rooms)],
+    ['进行中比赛', number(serverStats.activeRaces)],
     ['历史在线峰值', number(dashboard.traffic.peakOnline)],
     ['范围在线峰值', number(dashboard.traffic.rangePeakOnline)],
     ['累计比赛', number(dashboard.races.total)],
@@ -199,10 +201,13 @@ function renderNetworks(networks) {
 
 async function loadDashboard(showErrors = true) {
   try {
-    const dashboard = await api(`/api/admin/dashboard?range=${encodeURIComponent(elements.range.value)}`);
+    const [dashboard, serverStats] = await Promise.all([
+      api(`/api/admin/dashboard?range=${encodeURIComponent(elements.range.value)}`),
+      api('/api/stats'),
+    ]);
     showAdmin();
     setError();
-    renderMetrics(dashboard);
+    renderMetrics(dashboard, serverStats);
     state.series = dashboard.traffic.series;
     drawChart();
     renderNetworks(dashboard.traffic.networks);
