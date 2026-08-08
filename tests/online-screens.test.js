@@ -156,6 +156,43 @@ test('Bot room views expose badges, read-only controls and localized Bot chat', 
   );
   assert.equal(screen._roomChatDisplayName(screen._chatMessages[0]), 'Cyber Host');
 
+  assert.equal(screen.appendRoomChat({
+    roomCode: 'ABC234', participantId: 'bot-host', displayName: '赛博房主', sentAt: Date.now(),
+    content: 'fallback timeout notice', isBot: true, botMessageKey: 'readyTimeoutKicked',
+    botMessageArgs: { displayName: '慢车手', timeoutSeconds: 30 },
+  }), true);
+  const timeoutNotice = screen._chatMessages[1];
+  assert.equal(
+    screen._localizedBotChatContent(timeoutNotice),
+    '慢车手 was removed after being unready for more than 30 seconds.',
+  );
+  assert.equal(screen._roomChatDisplayName(timeoutNotice), 'Cyber Host');
+
+  assert.equal(screen.appendRoomChat({
+    roomCode: 'ABC234', displayName: 'System', sentAt: Date.now(),
+    content: 'fallback host notice', system: true, systemMessageKey: 'playerKickedByHost',
+    systemMessageArgs: { displayName: 'Guest' },
+  }), true);
+  const hostKickNotice = screen._chatMessages[2];
+  assert.equal(
+    screen._localizedBotChatContent(hostKickNotice),
+    'Guest was removed from the room by the host.',
+  );
+  assert.equal(screen._roomChatDisplayName(hostKickNotice), 'SYSTEM');
+
+  screen.copy = getUiCopy('zh-CN');
+  screen.language = 'zh-CN';
+  assert.equal(
+    screen._localizedBotChatContent(timeoutNotice),
+    '玩家 慢车手 因超过 30 秒未准备，已被移出房间。',
+  );
+  assert.equal(screen._roomChatDisplayName(timeoutNotice), '赛博房主');
+  assert.equal(
+    screen._localizedBotChatContent(hostKickNotice),
+    '玩家 Guest 已被房主移出房间。',
+  );
+  assert.equal(screen._roomChatDisplayName(hostKickNotice), '系统');
+
   assert.match(onlineScreensSource, /view\.botManaged[\s\S]*copy\.botControls/u);
   assert.match(onlineScreensSource, /online-room-bot-badge/u);
   assert.match(onlineScreensSource, /online-chat-bot-badge/u);

@@ -396,6 +396,12 @@ test('only the host can kick another waiting-room player', async () => {
     displayName: 'Guest',
     reason: 'host',
   }]);
+  const kickNotice = harness.messages
+    .map((event) => event.message)
+    .find((message) => message.type === 'room_chat'
+      && message.systemMessageKey === 'playerKickedByHost');
+  assert.equal(kickNotice.system, true);
+  assert.deepEqual(kickNotice.systemMessageArgs, { displayName: 'Guest' });
   assert.deepEqual(
     harness.manager.getRoomState(host.roomCode).members.map((member) => member.participantId),
     [host.participantId],
@@ -1883,6 +1889,12 @@ test('Bot ready timeout starts only for a connected blocker and expires strictly
     reason: 'ready_timeout',
     timeoutSeconds: 30,
   });
+  const notice = botReplies(harness, 'readyTimeoutKicked').at(-1);
+  assert.deepEqual(notice.botMessageArgs, {
+    displayName: 'Blocker',
+    timeoutSeconds: 30,
+  });
+  assert.match(notice.content, /Blocker/u);
 });
 
 test('Bot ready timeout pauses across disconnects and missing ready waiters, then resumes', async () => {
@@ -2023,6 +2035,7 @@ test('Bot ready timeout batches simultaneous removals into one Room-state broadc
     harness.kicked.map((event) => event.participantId),
     [firstBlocker.participantId, secondBlocker.participantId],
   );
+  assert.equal(botReplies(harness, 'readyTimeoutKicked').length, 2);
   assert.deepEqual(
     [...room.members.values()].filter((member) => !member.isBot).map((member) => member.participantId),
     [readyPlayer.participantId],

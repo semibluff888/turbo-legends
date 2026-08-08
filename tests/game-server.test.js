@@ -307,6 +307,10 @@ test('a Bot-room ready timeout sends a reasoned kick and returns the blocker to 
     server.roomManager.maintenance(now);
     const kicked = await blocker.next((message) => message.type === 'kicked', blockerMark);
     const returnedLobby = await blocker.next((message) => message.type === 'lobby_state', blockerMark);
+    const kickNotice = await readyPlayer.next((message) => (
+      message.type === 'room_chat'
+      && message.botMessageKey === 'readyTimeoutKicked'
+    ), readyMark);
     const remainingRoom = await readyPlayer.next((message) => (
       message.type === 'room_state'
       && !message.members.some((member) => member.participantId === blockerWelcome.participantId)
@@ -315,6 +319,15 @@ test('a Bot-room ready timeout sends a reasoned kick and returns the blocker to 
     assert.equal(kicked.timeoutSeconds, 1);
     assert.match(kicked.message, /unready for more than 1 seconds/u);
     assert.equal(returnedLobby.rooms.some((room) => room.roomCode === roomCode), true);
+    assert.equal(kickNotice.isBot, true);
+    assert.deepEqual(kickNotice.botMessageArgs, {
+      displayName: 'Blocker',
+      timeoutSeconds: 1,
+    });
+    assert.equal(blocker.messagesAfter(blockerMark).some((message) => (
+      message.type === 'room_chat'
+      && message.botMessageKey === 'readyTimeoutKicked'
+    )), false);
     assert.equal(remainingRoom.members.some(
       (member) => member.participantId === blockerWelcome.participantId,
     ), false);
@@ -721,6 +734,10 @@ test('a host can kick a guest back to the Lobby with an explicit notification', 
 
     const kicked = await guest.next(message => message.type === 'kicked', guestMark);
     const lobby = await guest.next(message => message.type === 'lobby_state', guestMark);
+    const kickNotice = await host.next(message => (
+      message.type === 'room_chat'
+      && message.systemMessageKey === 'playerKickedByHost'
+    ), hostMark);
     const hostRoom = await host.next(message => (
       message.type === 'room_state' && message.members.length === 1
     ), hostMark);
@@ -728,6 +745,12 @@ test('a host can kick a guest back to the Lobby with an explicit notification', 
     assert.equal(kicked.reason, 'host');
     assert.equal(kicked.message, 'You were removed from the room by the host.');
     assert.equal(guest.messagesAfter(guestMark)[0].type, 'kicked');
+    assert.equal(kickNotice.system, true);
+    assert.deepEqual(kickNotice.systemMessageArgs, { displayName: 'Guest' });
+    assert.equal(guest.messagesAfter(guestMark).some(message => (
+      message.type === 'room_chat'
+      && message.systemMessageKey === 'playerKickedByHost'
+    )), false);
     assert.equal(lobby.rooms[0].playerCount, 1);
     assert.deepEqual(hostRoom.members.map(member => member.participantId), [hostWelcome.participantId]);
   } finally {

@@ -1690,6 +1690,10 @@ export class OnlineScreens {
   }
 
   _localizedBotChatContent(message) {
+    if (message.system && message.systemMessageKey) {
+      const template = this.copy.online.room.systemMessages?.[message.systemMessageKey];
+      if (template) return formatCopy(template, message.systemMessageArgs || {});
+    }
     if (!message.isBot || !message.botMessageKey) return message.content;
     const args = message.botMessageArgs || {};
     const copy = this.copy.online.room.botMessages || {};
@@ -1727,6 +1731,8 @@ export class OnlineScreens {
           }),
         });
       case 'waitReady': return copy.waitReady;
+      case 'readyTimeoutKicked':
+        return formatCopy(this.copy.online.room.botReadyTimeoutKicked, args);
       default: return message.content;
     }
   }
@@ -1824,6 +1830,10 @@ export class OnlineScreens {
       botMessageKey: String(message.botMessageKey || ''),
       botMessageArgs: message.botMessageArgs && typeof message.botMessageArgs === 'object'
         ? message.botMessageArgs
+        : {},
+      systemMessageKey: String(message.systemMessageKey || ''),
+      systemMessageArgs: message.systemMessageArgs && typeof message.systemMessageArgs === 'object'
+        ? message.systemMessageArgs
         : {},
     };
     this._chatMessages.push(entry);

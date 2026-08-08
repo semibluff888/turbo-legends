@@ -503,6 +503,7 @@ export class RoomManager extends EventEmitter {
   _expireBotReadyWait(room, now) {
     const expired = this._syncBotReadyWait(room, now);
     if (expired.length === 0) return false;
+    const events = [];
     for (const member of expired) {
       const timeoutSeconds = Math.round(member.botReadyWaitTimeoutMs / 1000);
       const event = {
@@ -515,6 +516,17 @@ export class RoomManager extends EventEmitter {
       };
       this._removeParticipant(room, member);
       this.emit('participantKicked', event);
+      events.push(event);
+    }
+    for (const event of events) {
+      this._sendBotChat(room, {
+        key: 'readyTimeoutKicked',
+        args: {
+          displayName: event.displayName,
+          timeoutSeconds: event.timeoutSeconds,
+        },
+        content: `玩家 ${event.displayName} 因超过 ${event.timeoutSeconds} 秒未准备，已被移出房间。`,
+      });
     }
     this._syncBotReadyWait(room, now);
     this._broadcastRoomState(room);
@@ -644,6 +656,21 @@ export class RoomManager extends EventEmitter {
 
   _sendBotChat(room, payload) {
     const message = this._botChatMessage(room, payload);
+    this._emitToRoom(room, message);
+    return message;
+  }
+
+  _sendRoomSystemChat(room, { key, args = {}, content }) {
+    const message = serverMessage(SERVER_MESSAGE_TYPES.ROOM_CHAT, {
+      roomCode: room.code,
+      participantId: '',
+      displayName: 'System',
+      sentAt: this.wallClock(),
+      content,
+      system: true,
+      systemMessageKey: key,
+      systemMessageArgs: args,
+    });
     this._emitToRoom(room, message);
     return message;
   }
@@ -1093,6 +1120,11 @@ export class RoomManager extends EventEmitter {
     this._removeParticipant(room, target);
     this._syncBotReadyWait(room, this.now());
     this.emit('participantKicked', event);
+    this._sendRoomSystemChat(room, {
+      key: 'playerKickedByHost',
+      args: { displayName: target.displayName },
+      content: `玩家 ${target.displayName} 已被房主移出房间。`,
+    });
     this._broadcastRoomState(room);
     return event;
   }
