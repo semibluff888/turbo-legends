@@ -394,6 +394,7 @@ test('only the host can kick another waiting-room player', async () => {
     roomName: 'Host Raceway',
     participantId: guest.participantId,
     displayName: 'Guest',
+    reason: 'host',
   }]);
   assert.deepEqual(
     harness.manager.getRoomState(host.roomCode).members.map((member) => member.participantId),
@@ -1848,6 +1849,172 @@ test('Bot room commands accept the three aliases, numeric maps, full-width input
   const cooldownTarget = nextMap === 6 ? 1 : nextMap + 1;
   harness.manager.sendChat(guest.participantId, `/m ${cooldownTarget}`);
   assert.equal(botReplies(harness, 'mapCooldown').length > 0, true);
+});
+
+test('Bot ready timeout starts only for a connected blocker and expires strictly after its threshold', async () => {
+  const harness = createHarness({ botRoomsEnabled: true, botReadyTimeoutMs: 30_000 });
+  const room = harness.manager.reconcileBotRooms();
+  const readyPlayer = await harness.manager.joinRoom(room.code, { displayName: 'Ready' });
+  const blocker = await harness.manager.joinRoom(room.code, { displayName: 'Blocker' });
+
+  harness.advance(60_000);
+  harness.manager.maintenance();
+  assert.equal(room.members.has(blocker.participantId), true);
+  assert.equal(harness.kicked.length, 0);
+
+  harness.manager.setReady(readyPlayer.participantId, true);
+  const publicBlocker = harness.manager.getRoomState(room.code).members.find(
+    (member) => member.participantId === blocker.participantId,
+  );
+  assert.equal(Object.hasOwn(publicBlocker, 'botReadyWaitElapsedMs'), false);
+
+  harness.advance(30_000);
+  harness.manager.maintenance();
+  assert.equal(room.members.has(blocker.participantId), true);
+
+  harness.advance(1);
+  harness.manager.maintenance();
+  assert.equal(room.members.has(blocker.participantId), false);
+  assert.deepEqual(harness.kicked.at(-1), {
+    roomCode: room.code,
+    roomName: room.roomName,
+    participantId: blocker.participantId,
+    displayName: 'Blocker',
+    reason: 'ready_timeout',
+    timeoutSeconds: 30,
+  });
+});
+
+test('Bot ready timeout pauses across disconnects and missing ready waiters, then resumes', async () => {
+  const harness = createHarness({
+    botRoomsEnabled: true,
+    botReadyTimeoutMs: 30_000,
+    resumeTimeoutMs: 30_000,
+  });
+  const room = harness.manager.reconcileBotRooms();
+  const readyPlayer = await harness.manager.joinRoom(room.code, { displayName: 'Ready' });
+  const blocker = await harness.manager.joinRoom(room.code, { displayName: 'Blocker' });
+  harness.manager.setReady(readyPlayer.participantId, true);
+
+  harness.advance(10_000);
+  harness.manager.disconnect(blocker.participantId);
+  harness.advance(5_000);
+  harness.manager.resume(room.code, blocker.participantId, blocker.resumeToken);
+  harness.advance(5_000);
+  harness.manager.setReady(readyPlayer.participantId, false);
+
+  harness.advance(50_000);
+  harness.manager.maintenance();
+  assert.equal(room.members.has(blocker.participantId), true);
+  harness.manager.setReady(readyPlayer.participantId, true);
+
+  harness.advance(15_000);
+  harness.manager.maintenance();
+  assert.equal(room.members.has(blocker.participantId), true);
+  harness.advance(1);
+  harness.manager.maintenance();
+  assert.equal(room.members.has(blocker.participantId), false);
+});
+
+test('Bot map resets create fresh waits only for players who were ready', async () => {
+  const harness = createHarness({ botRoomsEnabled: true, botReadyTimeoutMs: 30_000 });
+  const room = harness.manager.reconcileBotRooms();
+  const first = await harness.manager.joinRoom(room.code, { displayName: 'First' });
+  const blocker = await harness.manager.joinRoom(room.code, { displayName: 'Blocker' });
+  const third = await harness.manager.joinRoom(room.code, { displayName: 'Third' });
+  harness.manager.setReady(first.participantId, true);
+  harness.manager.setReady(third.participantId, true);
+
+  harness.advance(10_000);
+  harness.manager.setReady(blocker.participantId, false);
+  const blockerMember = room.members.get(blocker.participantId);
+  const nextPaint = harness.manager.paints.find((paint) => paint.id !== blockerMember.paintId);
+  harness.manager.setLoadout(blocker.participantId, { paintId: nextPaint.id });
+  const tracks = [...harness.manager.tracks.values()];
+  const currentIndex = tracks.findIndex((track) => track.id === room.settings.trackId);
+  harness.manager.sendChat(first.participantId, `/m ${(currentIndex + 1) % tracks.length + 1}`);
+
+  assert.equal(blockerMember.botReadyWaitElapsedMs, 10_000);
+  assert.equal(blockerMember.botReadyWaitTimeoutMs, 30_000);
+  assert.equal(room.members.get(first.participantId).botReadyWaitTimeoutMs, null);
+  harness.advance(100_000);
+  harness.manager.maintenance();
+  assert.equal(room.members.has(blocker.participantId), true);
+
+  harness.manager.setReady(third.participantId, true);
+  harness.advance(20_000);
+  harness.manager.maintenance();
+  assert.equal(room.members.has(blocker.participantId), true);
+  harness.advance(1);
+  harness.manager.maintenance();
+  assert.equal(room.members.has(blocker.participantId), false);
+  assert.equal(room.members.has(first.participantId), true);
+});
+
+test('Bot ready timeout setting changes affect only waits that have not started', async () => {
+  const harness = createHarness({ botRoomsEnabled: true, botReadyTimeoutMs: 30_000 });
+  const room = harness.manager.reconcileBotRooms();
+  const readyPlayer = await harness.manager.joinRoom(room.code, { displayName: 'Ready' });
+  const blocker = await harness.manager.joinRoom(room.code, { displayName: 'Blocker' });
+  harness.manager.setReady(readyPlayer.participantId, true);
+
+  harness.advance(5_000);
+  harness.manager.setBotReadyTimeoutMs(10_000);
+  harness.advance(6_000);
+  harness.manager.maintenance();
+  assert.equal(room.members.has(blocker.participantId), true);
+  assert.equal(room.members.get(blocker.participantId).botReadyWaitTimeoutMs, 30_000);
+
+  harness.manager.setReady(blocker.participantId, true);
+  harness.manager.setReady(blocker.participantId, false);
+  assert.equal(room.members.get(blocker.participantId).botReadyWaitTimeoutMs, 10_000);
+  harness.advance(10_000);
+  harness.manager.maintenance();
+  assert.equal(room.members.has(blocker.participantId), true);
+  harness.advance(1);
+  harness.manager.maintenance();
+  assert.equal(room.members.has(blocker.participantId), false);
+});
+
+test('Bot ready timeout batches simultaneous removals into one Room-state broadcast', async () => {
+  const harness = createHarness({ botRoomsEnabled: true, botReadyTimeoutMs: 30_000 });
+  const room = harness.manager.reconcileBotRooms();
+  const readyPlayer = await harness.manager.joinRoom(room.code, { displayName: 'Ready' });
+  const firstBlocker = await harness.manager.joinRoom(room.code, { displayName: 'First blocker' });
+  const secondBlocker = await harness.manager.joinRoom(room.code, { displayName: 'Second blocker' });
+  harness.manager.setReady(readyPlayer.participantId, true);
+  harness.advance(30_001);
+  const before = harness.messages.filter(
+    (event) => event.message.type === 'room_state' && event.roomCode === room.code,
+  ).length;
+
+  harness.manager.maintenance();
+
+  const after = harness.messages.filter(
+    (event) => event.message.type === 'room_state' && event.roomCode === room.code,
+  ).length;
+  assert.equal(after - before, 1);
+  assert.deepEqual(
+    harness.kicked.map((event) => event.participantId),
+    [firstBlocker.participantId, secondBlocker.participantId],
+  );
+  assert.deepEqual(
+    [...room.members.values()].filter((member) => !member.isBot).map((member) => member.participantId),
+    [readyPlayer.participantId],
+  );
+});
+
+test('ready timeout does not apply to ordinary human-hosted rooms', async () => {
+  const harness = createHarness({ botReadyTimeoutMs: 10_000 });
+  const host = await harness.manager.createRoom({
+    displayName: 'Host', roomName: 'Ordinary Room', roomType: ROOM_TYPES.PUBLIC,
+  });
+  const guest = await harness.manager.joinRoom(host.roomCode, { displayName: 'Guest' });
+  harness.manager.setReady(host.participantId, true);
+  harness.advance(60_000);
+  harness.manager.maintenance();
+  assert.equal(harness.manager.rooms.get(host.roomCode).members.has(guest.participantId), true);
+  assert.equal(harness.kicked.length, 0);
 });
 
 test('Bot start aliases require ready humans and launch one human plus ordinary AI without Bot ACKs', async () => {

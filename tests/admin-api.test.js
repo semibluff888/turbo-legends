@@ -79,6 +79,8 @@ test('admin login protects dashboards and user deletion while analytics begin at
     assert.match(page.headers['content-security-policy'], /frame-ancestors 'none'/u);
     assert.match(page.body, /BOT_ROOM_ENABLED/u);
     assert.match(page.body, /id="bot-room-enabled"/u);
+    assert.match(page.body, /BOT_ROOM_READY_TIMEOUT_SECONDS/u);
+    assert.match(page.body, /id="bot-room-ready-timeout"/u);
 
     const root = await httpRequest(port, '/', { origin: false });
     assert.equal(root.statusCode, 200);
@@ -242,6 +244,9 @@ test('admin Bot-room setting is authenticated, strict, immediate and persistent'
       botRoomEnabled: false,
       source: 'environment',
       updatedAt: null,
+      botRoomReadyTimeoutSeconds: 30,
+      botRoomReadyTimeoutSource: 'default',
+      botRoomReadyTimeoutUpdatedAt: null,
     });
 
     const crossOrigin = await httpRequest(port, '/api/admin/settings', {
@@ -257,6 +262,21 @@ test('admin Bot-room setting is authenticated, strict, immediate and persistent'
       method: 'PATCH', cookie, body: { botRoomEnabled: true, extra: false },
     });
     assert.equal(extra.statusCode, 400);
+    for (const value of [9, 601, 30.5, '30']) {
+      const invalidTimeout = await httpRequest(port, '/api/admin/settings', {
+        method: 'PATCH', cookie, body: { botRoomReadyTimeoutSeconds: value },
+      });
+      assert.equal(invalidTimeout.statusCode, 400);
+      assert.equal(invalidTimeout.body.error.code, 'settings_invalid');
+    }
+
+    const timeout = await httpRequest(port, '/api/admin/settings', {
+      method: 'PATCH', cookie, body: { botRoomReadyTimeoutSeconds: 45 },
+    });
+    assert.equal(timeout.statusCode, 200);
+    assert.equal(timeout.body.botRoomReadyTimeoutSeconds, 45);
+    assert.equal(timeout.body.botRoomReadyTimeoutSource, 'database');
+    assert.equal(server.roomManager.botReadyTimeoutMs, 45_000);
 
     const enabled = await httpRequest(port, '/api/admin/settings', {
       method: 'PATCH', cookie, body: { botRoomEnabled: true },
@@ -280,6 +300,7 @@ test('admin Bot-room setting is authenticated, strict, immediate and persistent'
     root: PROJECT_ROOT,
     adminKey: ADMIN_KEY,
     botRoomEnabled: true,
+    botRoomReadyTimeoutSeconds: 60,
     userDbPath: databasePath,
     logger,
   });
@@ -294,8 +315,22 @@ test('admin Bot-room setting is authenticated, strict, immediate and persistent'
     const persisted = await httpRequest(port, '/api/admin/settings', { cookie });
     assert.equal(persisted.body.botRoomEnabled, false);
     assert.equal(persisted.body.source, 'database');
+    assert.equal(persisted.body.botRoomReadyTimeoutSeconds, 45);
+    assert.equal(persisted.body.botRoomReadyTimeoutSource, 'database');
+    assert.equal(server.roomManager.botReadyTimeoutMs, 45_000);
   } finally {
     await server.shutdown();
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('invalid explicit Bot ready-timeout configuration prevents startup', async () => {
+  await assert.rejects(
+    createGameServer({
+      root: PROJECT_ROOT,
+      botRoomReadyTimeoutSeconds: 9,
+      logger: { info() {}, warn() {}, error() {} },
+    }),
+    /BOT_ROOM_READY_TIMEOUT_SECONDS must be an integer between 10 and 600 seconds/u,
+  );
 });

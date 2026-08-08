@@ -699,7 +699,12 @@ function wireOnlineClient() {
     if (race) endRace();
     buildAttract();
     showOnlineLobby(onlineLobbyState || { rooms: [] });
-    onlineScreens.showAlert(appCopy.online.room.kickedMessage, {
+    const kickedMessage = message?.reason === 'ready_timeout'
+      ? formatCopy(appCopy.online.room.kickedReadyTimeoutMessage, {
+        seconds: message.timeoutSeconds,
+      })
+      : appCopy.online.room.kickedMessage;
+    onlineScreens.showAlert(kickedMessage, {
       title: appCopy.online.alerts.kickedTitle,
       restoreFocus: null,
     });

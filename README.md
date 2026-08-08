@@ -179,6 +179,8 @@ the server race continues while the client sends neutral controls.
 | `GUEST_CREATION_WINDOW_MS` | `600000` | New guest-account rate-limit window in milliseconds |
 | `LEADERBOARD_CACHE_TTL_MS` | `60000` | Shared in-memory and browser leaderboard cache lifetime in milliseconds |
 | `ADMIN_KEY` | empty | Enables the `/admin` dashboard and new analytics collection when set to at least 16 characters; empty keeps both disabled |
+| `BOT_ROOM_ENABLED` | `true` | Enables automatic creation of the fallback public Bot room |
+| `BOT_ROOM_READY_TIMEOUT_SECONDS` | `30` | Bot-room unready-player timeout; must be an integer from 10 to 600 seconds |
 | `METRICS_TOKEN` | empty | Enables bearer-protected `GET /api/metrics`; empty keeps the route disabled |
 | `METRICS_LOG_INTERVAL_MS` | `60000` | Structured aggregate metrics log interval |
 | `TRUST_PROXY` | `false` | Trust proxy-sanitized forwarding headers for client IP and HTTPS cookies |

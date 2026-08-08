@@ -1,4 +1,11 @@
+import {
+  DEFAULT_BOT_ROOM_READY_TIMEOUT_SECONDS,
+  parseBotRoomReadyTimeoutSeconds,
+  requireBotRoomReadyTimeoutSeconds,
+} from './bot-room-config.js';
+
 const BOT_ROOM_ENABLED_KEY = 'BOT_ROOM_ENABLED';
+const BOT_ROOM_READY_TIMEOUT_SECONDS_KEY = 'BOT_ROOM_READY_TIMEOUT_SECONDS';
 
 function storedBoolean(value) {
   if (value === 'true') return true;
@@ -57,5 +64,37 @@ export class ServerSettingsStore {
     const updatedAt = this.now();
     this._write.run(BOT_ROOM_ENABLED_KEY, String(enabled), updatedAt);
     return { botRoomEnabled: enabled, source: 'database', updatedAt };
+  }
+
+  getBotRoomReadyTimeoutSeconds(
+    defaultValue = DEFAULT_BOT_ROOM_READY_TIMEOUT_SECONDS,
+    defaultSource = 'default',
+  ) {
+    const fallback = requireBotRoomReadyTimeoutSeconds(defaultValue);
+    const row = this._read.get(BOT_ROOM_READY_TIMEOUT_SECONDS_KEY);
+    const persisted = parseBotRoomReadyTimeoutSeconds(row?.setting_value);
+    if (persisted === null) {
+      return {
+        botRoomReadyTimeoutSeconds: fallback,
+        botRoomReadyTimeoutSource: defaultSource === 'environment' ? 'environment' : 'default',
+        botRoomReadyTimeoutUpdatedAt: null,
+      };
+    }
+    return {
+      botRoomReadyTimeoutSeconds: persisted,
+      botRoomReadyTimeoutSource: 'database',
+      botRoomReadyTimeoutUpdatedAt: Number(row.updated_at) || null,
+    };
+  }
+
+  setBotRoomReadyTimeoutSeconds(value) {
+    const seconds = requireBotRoomReadyTimeoutSeconds(value);
+    const updatedAt = this.now();
+    this._write.run(BOT_ROOM_READY_TIMEOUT_SECONDS_KEY, String(seconds), updatedAt);
+    return {
+      botRoomReadyTimeoutSeconds: seconds,
+      botRoomReadyTimeoutSource: 'database',
+      botRoomReadyTimeoutUpdatedAt: updatedAt,
+    };
   }
 }

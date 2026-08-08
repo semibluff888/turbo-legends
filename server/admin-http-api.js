@@ -6,6 +6,10 @@ import {
   requestIsSameOrigin,
   requestIsSecure,
 } from './http-request-utils.js';
+import {
+  MAX_BOT_ROOM_READY_TIMEOUT_SECONDS,
+  MIN_BOT_ROOM_READY_TIMEOUT_SECONDS,
+} from './bot-room-config.js';
 
 export const ADMIN_SESSION_COOKIE = 'turbo_legends_admin';
 export const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -83,7 +87,14 @@ export class AdminHttpApi {
     isUserActive = () => false,
     currentOnline = () => 0,
     invalidateLeaderboards = () => {},
-    getServerSettings = () => ({ botRoomEnabled: true, source: 'default', updatedAt: null }),
+    getServerSettings = () => ({
+      botRoomEnabled: true,
+      source: 'default',
+      updatedAt: null,
+      botRoomReadyTimeoutSeconds: 30,
+      botRoomReadyTimeoutSource: 'default',
+      botRoomReadyTimeoutUpdatedAt: null,
+    }),
     updateServerSettings = null,
   } = {}) {
     if (typeof adminKey !== 'string' || adminKey.length < 16) {
@@ -221,12 +232,19 @@ export class AdminHttpApi {
       this._requireSameOriginJson(request);
       const body = await readJsonBody(request);
       const keys = Object.keys(body);
-      if (keys.length !== 1 || keys[0] !== 'botRoomEnabled'
-        || typeof body.botRoomEnabled !== 'boolean') {
+      const updatesBotRoomEnabled = keys.length === 1
+        && keys[0] === 'botRoomEnabled'
+        && typeof body.botRoomEnabled === 'boolean';
+      const updatesReadyTimeout = keys.length === 1
+        && keys[0] === 'botRoomReadyTimeoutSeconds'
+        && Number.isInteger(body.botRoomReadyTimeoutSeconds)
+        && body.botRoomReadyTimeoutSeconds >= MIN_BOT_ROOM_READY_TIMEOUT_SECONDS
+        && body.botRoomReadyTimeoutSeconds <= MAX_BOT_ROOM_READY_TIMEOUT_SECONDS;
+      if (!updatesBotRoomEnabled && !updatesReadyTimeout) {
         jsonResponse(response, 400, {
           error: {
             code: 'settings_invalid',
-            message: 'Only a strict botRoomEnabled boolean is accepted.',
+            message: `Submit exactly one known setting: a strict botRoomEnabled boolean or an integer botRoomReadyTimeoutSeconds from ${MIN_BOT_ROOM_READY_TIMEOUT_SECONDS} to ${MAX_BOT_ROOM_READY_TIMEOUT_SECONDS}.`,
           },
         });
         return true;
@@ -237,9 +255,7 @@ export class AdminHttpApi {
         });
         return true;
       }
-      jsonResponse(response, 200, this.updateServerSettings({
-        botRoomEnabled: body.botRoomEnabled,
-      }));
+      jsonResponse(response, 200, this.updateServerSettings(body));
       return true;
     }
 

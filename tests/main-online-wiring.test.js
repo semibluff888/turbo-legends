@@ -97,7 +97,7 @@ test('kicked players return to the Lobby and receive an information alert', () =
   );
   assert.match(
     source,
-    /onlineClient\.on\('kicked',[\s\S]*showAlert\(appCopy\.online\.room\.kickedMessage/,
+    /onlineClient\.on\('kicked',[\s\S]*message\?\.reason === 'ready_timeout'[\s\S]*kickedReadyTimeoutMessage[\s\S]*showAlert\(kickedMessage/,
   );
   assert.doesNotMatch(
     source,

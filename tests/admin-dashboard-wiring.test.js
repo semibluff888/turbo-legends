@@ -10,3 +10,9 @@ test('admin dashboard displays room and active-race values from public server st
   assert.match(source, /\['进行中比赛', number\(serverStats\.activeRaces\)\]/u);
   assert.match(source, /renderMetrics\(dashboard, serverStats\)/u);
 });
+
+test('admin dashboard persists the Bot ready-timeout setting independently', () => {
+  assert.match(source, /botRoomReadyTimeoutSeconds/u);
+  assert.match(source, /botRoomReadyTimeoutSave\.addEventListener\('click'/u);
+  assert.match(source, /body: \{ botRoomReadyTimeoutSeconds: requested \}/u);
+});

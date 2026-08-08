@@ -563,13 +563,24 @@ export function attachGameWebSocket(httpServer, {
     }
   }
 
-  function onParticipantKicked({ roomCode, roomName, participantId }) {
+  function onParticipantKicked({
+    roomCode,
+    roomName,
+    participantId,
+    reason = 'host',
+    timeoutSeconds = null,
+  }) {
     const session = participantSessions.get(participantId);
     if (!session) return;
+    const readyTimeout = reason === 'ready_timeout' && Number.isFinite(timeoutSeconds);
     send(session, serverMessage(SERVER_MESSAGE_TYPES.KICKED, {
       roomCode,
       roomName,
-      message: 'You were removed from the room by the host.',
+      reason: readyTimeout ? 'ready_timeout' : 'host',
+      ...(readyTimeout ? { timeoutSeconds } : {}),
+      message: readyTimeout
+        ? `You were removed from the Bot room after being unready for more than ${timeoutSeconds} seconds.`
+        : 'You were removed from the room by the host.',
     }));
     unbindParticipant(session, false);
     subscribeLobby(session);

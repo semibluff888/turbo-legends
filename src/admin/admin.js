@@ -7,6 +7,8 @@ const elements = {
   globalError: document.querySelector('#global-error'),
   botRoomEnabled: document.querySelector('#bot-room-enabled'),
   botRoomStatus: document.querySelector('#bot-room-status'),
+  botRoomReadyTimeout: document.querySelector('#bot-room-ready-timeout'),
+  botRoomReadyTimeoutSave: document.querySelector('#bot-room-ready-timeout-save'),
   range: document.querySelector('#range-select'),
   refresh: document.querySelector('#refresh-button'),
   logout: document.querySelector('#logout-button'),
@@ -107,6 +109,9 @@ function renderServerSettings(settings) {
   elements.botRoomEnabled.checked = Boolean(settings.botRoomEnabled);
   elements.botRoomEnabled.disabled = false;
   elements.botRoomStatus.textContent = settings.botRoomEnabled ? '已开启' : '已关闭';
+  elements.botRoomReadyTimeout.value = String(settings.botRoomReadyTimeoutSeconds ?? 30);
+  elements.botRoomReadyTimeout.disabled = false;
+  elements.botRoomReadyTimeoutSave.disabled = false;
 }
 
 async function loadServerSettings(showErrors = true) {
@@ -114,6 +119,8 @@ async function loadServerSettings(showErrors = true) {
     renderServerSettings(await api('/api/admin/settings'));
   } catch (error) {
     elements.botRoomEnabled.disabled = true;
+    elements.botRoomReadyTimeout.disabled = true;
+    elements.botRoomReadyTimeoutSave.disabled = true;
     if (error.status !== 401 && showErrors) setError(error.message);
     throw error;
   }
@@ -321,6 +328,25 @@ elements.botRoomEnabled.addEventListener('change', async () => {
     renderServerSettings(await api('/api/admin/settings', {
       method: 'PATCH',
       body: { botRoomEnabled: requested },
+    }));
+    setError();
+  } catch (error) {
+    if (previous) renderServerSettings(previous);
+    try {
+      renderServerSettings(await api('/api/admin/settings'));
+    } catch {}
+    if (error.status !== 401) setError(error.message);
+  }
+});
+elements.botRoomReadyTimeoutSave.addEventListener('click', async () => {
+  const previous = state.serverSettings;
+  const requested = Number(elements.botRoomReadyTimeout.value);
+  elements.botRoomReadyTimeout.disabled = true;
+  elements.botRoomReadyTimeoutSave.disabled = true;
+  try {
+    renderServerSettings(await api('/api/admin/settings', {
+      method: 'PATCH',
+      body: { botRoomReadyTimeoutSeconds: requested },
     }));
     setError();
   } catch (error) {

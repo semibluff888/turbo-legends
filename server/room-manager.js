@@ -37,6 +37,7 @@ import {
 } from '../src/net/binary-race-codec.js';
 import { GameError } from './game-error.js';
 import { defaultScryptQueue, ScryptQueueFullError } from './scrypt-queue.js';
+import { DEFAULT_BOT_ROOM_READY_TIMEOUT_MS } from './bot-room-config.js';
 
 const ROOM_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const BOT_ROOM_NAME = 'Bot自建房';
@@ -298,6 +299,7 @@ export class RoomManager extends EventEmitter {
     botRoomsEnabled = false,
     botRoomCheckIntervalMs = DEFAULT_BOT_ROOM_CHECK_INTERVAL_MS,
     botMapChangeCooldownMs = DEFAULT_BOT_MAP_CHANGE_COOLDOWN_MS,
+    botReadyTimeoutMs = DEFAULT_BOT_ROOM_READY_TIMEOUT_MS,
   } = {}) {
     super();
     this.now = now;
@@ -345,6 +347,8 @@ export class RoomManager extends EventEmitter {
       || DEFAULT_BOT_ROOM_CHECK_INTERVAL_MS);
     this.botMapChangeCooldownMs = Math.max(0, Number(botMapChangeCooldownMs)
       || DEFAULT_BOT_MAP_CHANGE_COOLDOWN_MS);
+    this.botReadyTimeoutMs = Math.max(1, Number(botReadyTimeoutMs)
+      || DEFAULT_BOT_ROOM_READY_TIMEOUT_MS);
     this.nextBotRoomCheckAt = this.now();
     this._passwordVerifiers = new WeakMap();
     this.rooms = new Map();
@@ -434,6 +438,83 @@ export class RoomManager extends EventEmitter {
       }
     }
     return this.botRoomsEnabled;
+  }
+
+  setBotReadyTimeoutMs(timeoutMs) {
+    const normalized = Number(timeoutMs);
+    if (!Number.isFinite(normalized) || normalized <= 0) {
+      throw new TypeError('botReadyTimeoutMs must be a positive number.');
+    }
+    this.botReadyTimeoutMs = normalized;
+    return this.botReadyTimeoutMs;
+  }
+
+  _resetBotReadyWait(member) {
+    member.botReadyWaitElapsedMs = 0;
+    member.botReadyWaitActiveSince = null;
+    member.botReadyWaitTimeoutMs = null;
+  }
+
+  _pauseBotReadyWait(member, now) {
+    if (member.botReadyWaitActiveSince === null) return;
+    member.botReadyWaitElapsedMs = Math.max(0, Number(member.botReadyWaitElapsedMs) || 0)
+      + Math.max(0, now - member.botReadyWaitActiveSince);
+    member.botReadyWaitActiveSince = null;
+  }
+
+  _botReadyWaitElapsedMs(member, now) {
+    const elapsed = Math.max(0, Number(member.botReadyWaitElapsedMs) || 0);
+    if (member.botReadyWaitActiveSince === null) return elapsed;
+    return elapsed + Math.max(0, now - member.botReadyWaitActiveSince);
+  }
+
+  _syncBotReadyWait(room, now = this.now()) {
+    if (!room.botManaged || room.state !== ROOM_STATES.WAITING) return [];
+    const humans = humanMembers(room);
+    const connectedReady = humans.filter((member) => member.connected && member.ready);
+    const expired = [];
+    for (const member of humans) {
+      if (member.ready) {
+        this._resetBotReadyWait(member);
+        continue;
+      }
+      const shouldCount = member.connected && connectedReady.some(
+        (candidate) => candidate.participantId !== member.participantId,
+      );
+      if (!shouldCount) {
+        this._pauseBotReadyWait(member, now);
+        continue;
+      }
+      if (member.botReadyWaitTimeoutMs === null) {
+        member.botReadyWaitTimeoutMs = this.botReadyTimeoutMs;
+      }
+      if (member.botReadyWaitActiveSince === null) member.botReadyWaitActiveSince = now;
+      if (this._botReadyWaitElapsedMs(member, now) > member.botReadyWaitTimeoutMs) {
+        expired.push(member);
+      }
+    }
+    return expired;
+  }
+
+  _expireBotReadyWait(room, now) {
+    const expired = this._syncBotReadyWait(room, now);
+    if (expired.length === 0) return false;
+    for (const member of expired) {
+      const timeoutSeconds = Math.round(member.botReadyWaitTimeoutMs / 1000);
+      const event = {
+        roomCode: room.code,
+        roomName: room.roomName,
+        participantId: member.participantId,
+        displayName: member.displayName,
+        reason: 'ready_timeout',
+        timeoutSeconds,
+      };
+      this._removeParticipant(room, member);
+      this.emit('participantKicked', event);
+    }
+    this._syncBotReadyWait(room, now);
+    this._broadcastRoomState(room);
+    return true;
   }
 
   _isPublicJoinableRoom(room) {
@@ -756,6 +837,7 @@ export class RoomManager extends EventEmitter {
     }, this.now());
     if (room.botManaged) room.botDestroyWhenHumanless = false;
     if (!room.hostParticipantId) this._migrateHost(room);
+    this._syncBotReadyWait(room, this.now());
     this._broadcastRoomState(room);
     const roomState = this.getRoomState(room.code);
     if (!room.botManaged) return { ...session, roomCode: room.code, roomState };
@@ -834,6 +916,7 @@ export class RoomManager extends EventEmitter {
     // Let the WebSocket gateway bind the resumed connection before a delayed
     // settlement emits the private progression message for this participant.
     queueMicrotask(() => this._resolvePendingParticipant(participantId, false, now));
+    this._syncBotReadyWait(room, now);
     this._broadcastRoomState(room);
     return {
       roomCode: room.code,
@@ -860,6 +943,7 @@ export class RoomManager extends EventEmitter {
     }
     if (room.hostParticipantId === participantId) this._migrateHost(room);
     if (![...room.members.values()].some((candidate) => candidate.connected)) room.emptySince = now;
+    this._syncBotReadyWait(room, now);
     this._broadcastRoomState(room);
     return true;
   }
@@ -901,6 +985,7 @@ export class RoomManager extends EventEmitter {
     if (this._destroyBotRoomIfHumanless(room, this.now())) return;
     if (![...room.members.values()].some((candidate) => candidate.connected)) room.emptySince = this.now();
     if (this._maybeReturnRoom(room)) return;
+    this._syncBotReadyWait(room, this.now());
     this._broadcastRoomState(room);
   }
 
@@ -933,6 +1018,7 @@ export class RoomManager extends EventEmitter {
       member.paintId = nextPaintId;
       member.avatarId = nextAvatarId;
       member.ready = false;
+      this._syncBotReadyWait(room, this.now());
       this._broadcastRoomState(room);
     }
     return this.getRoomState(room.code);
@@ -976,6 +1062,7 @@ export class RoomManager extends EventEmitter {
     }
     if (changed) {
       for (const member of room.members.values()) member.ready = Boolean(member.isBot);
+      this._syncBotReadyWait(room, this.now());
       this._broadcastRoomState(room);
     }
     return this.getRoomState(room.code);
@@ -997,8 +1084,10 @@ export class RoomManager extends EventEmitter {
       roomName: room.roomName,
       participantId: target.participantId,
       displayName: target.displayName,
+      reason: 'host',
     };
     this._removeParticipant(room, target);
+    this._syncBotReadyWait(room, this.now());
     this.emit('participantKicked', event);
     this._broadcastRoomState(room);
     return event;
@@ -1008,6 +1097,7 @@ export class RoomManager extends EventEmitter {
     const { room, member } = this._findParticipant(participantId);
     this._requireMemberRoom(room, member);
     member.ready = Boolean(ready);
+    this._syncBotReadyWait(room, this.now());
     this._broadcastRoomState(room);
     return this.getRoomState(room.code);
   }
@@ -1233,6 +1323,7 @@ export class RoomManager extends EventEmitter {
     if (member.postRaceState !== POST_RACE_STATES.ROOM) {
       member.postRaceState = POST_RACE_STATES.ROOM;
       member.ready = false;
+      this._resetBotReadyWait(member);
     }
     if (!this._maybeReturnRoom(room)) this._broadcastRoomState(room);
     return this.getRoomState(room.code);
@@ -1353,6 +1444,7 @@ export class RoomManager extends EventEmitter {
         if (room.state === ROOM_STATES.WAITING) {
           this._expireWaitingMembers(room, now);
           if (this._destroyBotRoomIfHumanless(room, now)) continue;
+          this._expireBotReadyWait(room, now);
           continue;
         }
         this._expireRaceSessions(room, now);
@@ -1448,6 +1540,9 @@ export class RoomManager extends EventEmitter {
       lastInputAt: now,
       lastChatAt: -Infinity,
       postRaceState: null,
+      botReadyWaitElapsedMs: 0,
+      botReadyWaitActiveSince: null,
+      botReadyWaitTimeoutMs: null,
     };
     room.members.set(participantId, member);
     this.participantRooms.set(participantId, room.code);
@@ -1735,6 +1830,7 @@ export class RoomManager extends EventEmitter {
     if (settlement) this.pendingSettlements.set(settlement.raceId, settlement);
     for (const member of room.members.values()) {
       member.ready = Boolean(member.isBot);
+      if (!member.isBot) this._resetBotReadyWait(member);
       member.postRaceState = member.isBot
         ? POST_RACE_STATES.ROOM
         : member.abandoned ? null : POST_RACE_STATES.RESULTS;
@@ -1912,6 +2008,7 @@ export class RoomManager extends EventEmitter {
       && !hasConnectedHuman(room) && hasLiveHuman(room);
     this._migrateHost(room);
     if (this._destroyBotRoomIfHumanless(room, this.now())) return;
+    this._syncBotReadyWait(room, this.now());
     this._broadcastRoomState(room);
   }
 
@@ -1926,6 +2023,7 @@ export class RoomManager extends EventEmitter {
         continue;
       }
       if (resetReady || member.isBot) member.ready = Boolean(member.isBot);
+      if (!member.isBot) this._resetBotReadyWait(member);
       member.raceLoaded = Boolean(member.isBot);
       member.kartIndex = null;
       member.controllerKind = member.isBot ? CONTROLLER_KINDS.AI : CONTROLLER_KINDS.HUMAN;

@@ -68,7 +68,10 @@ h2 code { color: var(--cyan); font-size: .72em; }
 .global-error { margin: 8px 0 14px; }
 .settings-panel { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px; margin: 14px 0; }
 .settings-description { margin: 8px 0 0; }
+.settings-controls { display: grid; gap: 16px; min-width: min(430px, 48vw); }
 .setting-toggle { display: flex; align-items: center; gap: 12px; color: #d9effb; font-weight: 800; cursor: pointer; }
+.setting-toggle > span:first-child { flex: 1; }
+.setting-toggle code, .setting-number code { color: var(--cyan); }
 .setting-toggle input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .switch-track { width: 52px; height: 29px; padding: 3px; border-radius: 999px; background: #29404f; border: 1px solid var(--line); transition: background .18s ease; }
 .switch-track span { display: block; width: 21px; height: 21px; border-radius: 50%; background: #dcecf5; transition: transform .18s ease; }
@@ -76,6 +79,9 @@ h2 code { color: var(--cyan); font-size: .72em; }
 .setting-toggle input:checked + .switch-track span { transform: translateX(23px); }
 .setting-toggle input:focus-visible + .switch-track { box-shadow: 0 0 0 3px rgba(49, 215, 255, .2); }
 .setting-toggle:has(input:disabled) { cursor: wait; opacity: .65; }
+.setting-number { display: grid; gap: 7px; color: #d9effb; font-weight: 800; }
+.setting-number-row { display: grid; grid-template-columns: minmax(120px, 1fr) auto; gap: 8px; }
+.setting-number small { color: var(--muted); font-size: 11px; font-weight: 500; }
 .topbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 8px; }
 .topbar-actions { display: flex; align-items: flex-end; gap: 10px; }
 .range-control { display: grid; gap: 5px; min-width: 130px; color: var(--muted); font-size: 12px; }
@@ -128,6 +134,7 @@ dialog::backdrop { background: rgba(2,7,11,.78); backdrop-filter: blur(5px); }
   main { width: min(100% - 20px, 1500px); padding-top: 18px; }
   .topbar, .topbar-actions, .panel-heading.users-heading { align-items: stretch; flex-direction: column; }
   .settings-panel { align-items: flex-start; }
+  .settings-controls { width: 100%; min-width: 0; }
   .topbar-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .range-control { grid-column: 1 / -1; }
   .metric-grid { grid-template-columns: repeat(2, 1fr); }

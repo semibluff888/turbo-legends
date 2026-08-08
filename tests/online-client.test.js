@@ -443,6 +443,8 @@ test('kickPlayer sends the target id and kicked clears the resumable Room sessio
     v: PROTOCOL_VERSION,
     type: 'kicked',
     roomCode: 'ROOM22',
+    reason: 'ready_timeout',
+    timeoutSeconds: 30,
     message: 'You were removed from the room by the host.',
   });
   assert.equal(client.scope, 'lobby');
@@ -450,6 +452,8 @@ test('kickPlayer sends the target id and kicked clears the resumable Room sessio
   assert.equal(client.selfId, null);
   assert.equal(client.resumeToken, null);
   assert.equal(kicked.length, 1);
+  assert.equal(kicked[0].reason, 'ready_timeout');
+  assert.equal(kicked[0].timeoutSeconds, 30);
 });
 
 test('race input waits for load ACK and is suppressed while the WebSocket buffer is congested', () => {

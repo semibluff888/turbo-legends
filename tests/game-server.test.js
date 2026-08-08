@@ -242,6 +242,89 @@ test('default multiplayer startup exposes a joinable Bot room with compatible Bo
   }
 });
 
+test('a Bot-room ready timeout sends a reasoned kick and returns the blocker to the Lobby', {
+  skip: wsModule ? false : 'ws dependency is not installed in this workspace',
+}, async () => {
+  const { WebSocket } = wsModule;
+  const logger = { info() {}, warn() {}, error() {} };
+  const server = await createGameServer({
+    root: PROJECT_ROOT,
+    logger,
+    botRoomEnabled: true,
+    maintenanceIntervalMs: 60_000,
+  });
+  let now = 0;
+  server.roomManager.now = () => now;
+  server.roomManager.setBotReadyTimeoutMs(1_000);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const port = server.address().port;
+  const origin = `http://127.0.0.1:${port}`;
+  const url = `ws://127.0.0.1:${port}/ws`;
+  let readyPlayer;
+  let blocker;
+  try {
+    readyPlayer = await connectClient(WebSocket, url, origin, { guestDisplayName: 'Ready' });
+    readyPlayer.send({ type: 'enter_lobby' });
+    const lobby = await readyPlayer.next((message) => message.type === 'lobby_state');
+    const roomCode = lobby.rooms.find((room) => room.botManaged).roomCode;
+    readyPlayer.send({ type: 'join_room', roomCode });
+    const readyWelcome = await readyPlayer.next(
+      (message) => message.type === 'welcome' && message.session?.roomCode === roomCode,
+    );
+    await readyPlayer.next(
+      (message) => message.type === 'room_state'
+        && message.members.some((member) => member.participantId === readyWelcome.participantId),
+    );
+
+    blocker = await connectClient(WebSocket, url, origin, { guestDisplayName: 'Blocker' });
+    blocker.send({ type: 'join_room', roomCode });
+    const blockerWelcome = await blocker.next(
+      (message) => message.type === 'welcome' && message.session?.roomCode === roomCode,
+    );
+    await blocker.next(
+      (message) => message.type === 'room_state'
+        && message.members.some((member) => member.participantId === blockerWelcome.participantId),
+    );
+    await readyPlayer.next(
+      (message) => message.type === 'room_state'
+        && message.members.some((member) => member.participantId === blockerWelcome.participantId),
+    );
+
+    readyPlayer.send({ type: 'set_ready', ready: true });
+    await readyPlayer.next((message) => message.type === 'room_state'
+      && message.members.find((member) => member.participantId === readyWelcome.participantId)?.ready);
+    const readyMark = readyPlayer.mark();
+    const blockerMark = blocker.mark();
+
+    now = 1_000;
+    server.roomManager.maintenance(now);
+    assert.equal(server.roomManager.rooms.get(roomCode).members.has(blockerWelcome.participantId), true);
+
+    now = 1_001;
+    server.roomManager.maintenance(now);
+    const kicked = await blocker.next((message) => message.type === 'kicked', blockerMark);
+    const returnedLobby = await blocker.next((message) => message.type === 'lobby_state', blockerMark);
+    const remainingRoom = await readyPlayer.next((message) => (
+      message.type === 'room_state'
+      && !message.members.some((member) => member.participantId === blockerWelcome.participantId)
+    ), readyMark);
+    assert.equal(kicked.reason, 'ready_timeout');
+    assert.equal(kicked.timeoutSeconds, 1);
+    assert.match(kicked.message, /unready for more than 1 seconds/u);
+    assert.equal(returnedLobby.rooms.some((room) => room.roomCode === roomCode), true);
+    assert.equal(remainingRoom.members.some(
+      (member) => member.participantId === blockerWelcome.participantId,
+    ), false);
+  } finally {
+    await blocker?.close();
+    await readyPlayer?.close();
+    await server.shutdown();
+  }
+});
+
 test('a silent Room connection is broadcast as reconnecting before it resumes', {
   skip: wsModule ? false : 'ws dependency is not installed in this workspace',
 }, async () => {
@@ -642,6 +725,7 @@ test('a host can kick a guest back to the Lobby with an explicit notification', 
       message.type === 'room_state' && message.members.length === 1
     ), hostMark);
     assert.equal(kicked.roomCode, hostWelcome.roomCode);
+    assert.equal(kicked.reason, 'host');
     assert.equal(kicked.message, 'You were removed from the room by the host.');
     assert.equal(guest.messagesAfter(guestMark)[0].type, 'kicked');
     assert.equal(lobby.rooms[0].playerCount, 1);

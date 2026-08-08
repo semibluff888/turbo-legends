@@ -12,6 +12,10 @@ import { createDefaultRaceFactory } from './server/race-factory.js';
 import { RuntimeMetrics } from './server/runtime-metrics.js';
 import { AdminHttpApi } from './server/admin-http-api.js';
 import { ServerSettingsStore } from './server/server-settings-store.js';
+import {
+  DEFAULT_BOT_ROOM_READY_TIMEOUT_SECONDS,
+  requireBotRoomReadyTimeoutSeconds,
+} from './server/bot-room-config.js';
 import { SiteAnalytics } from './server/site-analytics.js';
 import {
   DEFAULT_GUEST_CREATION_LIMIT,
@@ -424,6 +428,7 @@ export async function createGameServer({
   trustProxy = process.env.TRUST_PROXY === 'true',
   adminKey = process.env.ADMIN_KEY || '',
   botRoomEnabled = undefined,
+  botRoomReadyTimeoutSeconds = undefined,
   metricsToken = process.env.METRICS_TOKEN || '',
   metricsLogIntervalMs = Number(process.env.METRICS_LOG_INTERVAL_MS) || 60_000,
   maintenanceIntervalMs = Number(process.env.MAINTENANCE_INTERVAL_MS) || 500,
@@ -434,6 +439,15 @@ export async function createGameServer({
   if (adminKey && String(adminKey).length < 16) {
     throw new Error('ADMIN_KEY must contain at least 16 characters when enabled.');
   }
+  const environmentHasBotReadyTimeout = botRoomReadyTimeoutSeconds !== undefined
+    || process.env.BOT_ROOM_READY_TIMEOUT_SECONDS !== undefined;
+  const environmentBotRoomReadyTimeoutSeconds = requireBotRoomReadyTimeoutSeconds(
+    botRoomReadyTimeoutSeconds === undefined
+      ? process.env.BOT_ROOM_READY_TIMEOUT_SECONDS
+        ?? DEFAULT_BOT_ROOM_READY_TIMEOUT_SECONDS
+      : botRoomReadyTimeoutSeconds,
+    'BOT_ROOM_READY_TIMEOUT_SECONDS',
+  );
 
   const metrics = new RuntimeMetrics({ logger, logIntervalMs: metricsLogIntervalMs });
   const ownsUserStore = !userStore;
@@ -460,13 +474,20 @@ export async function createGameServer({
   const environmentBotRoomEnabled = botRoomEnabled === undefined
     ? environmentBoolean(process.env.BOT_ROOM_ENABLED, true)
     : Boolean(botRoomEnabled);
-  let effectiveSettings = settingsStore.getBotRoomEnabled(
-    environmentBotRoomEnabled,
-    environmentHasBotSetting ? 'environment' : 'default',
-  );
+  let effectiveSettings = {
+    ...settingsStore.getBotRoomEnabled(
+      environmentBotRoomEnabled,
+      environmentHasBotSetting ? 'environment' : 'default',
+    ),
+    ...settingsStore.getBotRoomReadyTimeoutSeconds(
+      environmentBotRoomReadyTimeoutSeconds,
+      environmentHasBotReadyTimeout ? 'environment' : 'default',
+    ),
+  };
   const manager = roomManager ?? createRoomManager({
     ...roomManagerOptions,
     botRoomsEnabled: effectiveSettings.botRoomEnabled,
+    botReadyTimeoutMs: effectiveSettings.botRoomReadyTimeoutSeconds * 1000,
     metrics: roomManagerOptions.metrics ?? metrics,
     userStore: roomManagerOptions.userStore ?? users,
     siteAnalytics: roomManagerOptions.siteAnalytics ?? siteAnalytics,
@@ -476,6 +497,7 @@ export async function createGameServer({
   if (roomManager && !roomManager.siteAnalytics) roomManager.siteAnalytics = siteAnalytics;
   if (roomManager) {
     roomManager.setBotRoomsEnabled?.(effectiveSettings.botRoomEnabled, { reconcile: false });
+    roomManager.setBotReadyTimeoutMs?.(effectiveSettings.botRoomReadyTimeoutSeconds * 1000);
   }
   let gateway = null;
   const adminApi = adminKey ? new AdminHttpApi({
@@ -489,9 +511,22 @@ export async function createGameServer({
     currentOnline: () => gateway?.connectionCount ?? 0,
     invalidateLeaderboards: () => userApi.invalidateLeaderboards(),
     getServerSettings: () => ({ ...effectiveSettings }),
-    updateServerSettings: ({ botRoomEnabled: enabled }) => {
-      effectiveSettings = settingsStore.setBotRoomEnabled(enabled);
-      manager.setBotRoomsEnabled?.(enabled);
+    updateServerSettings: (patch) => {
+      if (Object.hasOwn(patch, 'botRoomEnabled')) {
+        effectiveSettings = {
+          ...effectiveSettings,
+          ...settingsStore.setBotRoomEnabled(patch.botRoomEnabled),
+        };
+        manager.setBotRoomsEnabled?.(patch.botRoomEnabled);
+      } else if (Object.hasOwn(patch, 'botRoomReadyTimeoutSeconds')) {
+        effectiveSettings = {
+          ...effectiveSettings,
+          ...settingsStore.setBotRoomReadyTimeoutSeconds(
+            patch.botRoomReadyTimeoutSeconds,
+          ),
+        };
+        manager.setBotReadyTimeoutMs?.(patch.botRoomReadyTimeoutSeconds * 1000);
+      }
       return { ...effectiveSettings };
     },
   }) : null;
