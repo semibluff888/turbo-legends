@@ -1916,6 +1916,31 @@ test('Bot ready timeout pauses across disconnects and missing ready waiters, the
   assert.equal(room.members.has(blocker.participantId), false);
 });
 
+test('Bot ready timeout resets when every other human leaves the room', async () => {
+  const harness = createHarness({ botRoomsEnabled: true, botReadyTimeoutMs: 30_000 });
+  const room = harness.manager.reconcileBotRooms();
+  const readyPlayer = await harness.manager.joinRoom(room.code, { displayName: 'Ready' });
+  const blocker = await harness.manager.joinRoom(room.code, { displayName: 'Blocker' });
+  harness.manager.setReady(readyPlayer.participantId, true);
+  harness.advance(20_000);
+
+  harness.manager.leave(readyPlayer.participantId);
+
+  const blockerMember = room.members.get(blocker.participantId);
+  assert.equal(blockerMember.botReadyWaitElapsedMs, 0);
+  assert.equal(blockerMember.botReadyWaitActiveSince, null);
+  assert.equal(blockerMember.botReadyWaitTimeoutMs, null);
+
+  const nextReadyPlayer = await harness.manager.joinRoom(room.code, { displayName: 'Next ready' });
+  harness.manager.setReady(nextReadyPlayer.participantId, true);
+  harness.advance(30_000);
+  harness.manager.maintenance();
+  assert.equal(room.members.has(blocker.participantId), true);
+  harness.advance(1);
+  harness.manager.maintenance();
+  assert.equal(room.members.has(blocker.participantId), false);
+});
+
 test('Bot map resets create fresh waits only for players who were ready', async () => {
   const harness = createHarness({ botRoomsEnabled: true, botReadyTimeoutMs: 30_000 });
   const room = harness.manager.reconcileBotRooms();

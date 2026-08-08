@@ -471,6 +471,10 @@ export class RoomManager extends EventEmitter {
   _syncBotReadyWait(room, now = this.now()) {
     if (!room.botManaged || room.state !== ROOM_STATES.WAITING) return [];
     const humans = humanMembers(room);
+    if (humans.length <= 1) {
+      for (const member of humans) this._resetBotReadyWait(member);
+      return [];
+    }
     const connectedReady = humans.filter((member) => member.connected && member.ready);
     const expired = [];
     for (const member of humans) {
