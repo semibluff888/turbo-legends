@@ -5,6 +5,8 @@ const elements = {
   adminKey: document.querySelector('#admin-key'),
   loginError: document.querySelector('#login-error'),
   globalError: document.querySelector('#global-error'),
+  botRoomEnabled: document.querySelector('#bot-room-enabled'),
+  botRoomStatus: document.querySelector('#bot-room-status'),
   range: document.querySelector('#range-select'),
   refresh: document.querySelector('#refresh-button'),
   logout: document.querySelector('#logout-button'),
@@ -32,6 +34,7 @@ const state = {
   selectedUser: null,
   series: [],
   refreshTimer: null,
+  serverSettings: null,
 };
 
 function escapeHtml(value) {
@@ -97,6 +100,23 @@ function showAdmin() {
 
 function setError(message = '') {
   elements.globalError.textContent = message;
+}
+
+function renderServerSettings(settings) {
+  state.serverSettings = settings;
+  elements.botRoomEnabled.checked = Boolean(settings.botRoomEnabled);
+  elements.botRoomEnabled.disabled = false;
+  elements.botRoomStatus.textContent = settings.botRoomEnabled ? '已开启' : '已关闭';
+}
+
+async function loadServerSettings(showErrors = true) {
+  try {
+    renderServerSettings(await api('/api/admin/settings'));
+  } catch (error) {
+    elements.botRoomEnabled.disabled = true;
+    if (error.status !== 401 && showErrors) setError(error.message);
+    throw error;
+  }
 }
 
 function renderMetrics(dashboard) {
@@ -274,7 +294,7 @@ elements.loginForm.addEventListener('submit', async (event) => {
     await api('/api/admin/login', { method: 'POST', body: { key: elements.adminKey.value } });
     elements.adminKey.value = '';
     showAdmin();
-    await Promise.all([loadDashboard(), loadUsers()]);
+    await Promise.all([loadDashboard(), loadUsers(), loadServerSettings()]);
   } catch (error) {
     elements.loginError.textContent = error.message;
   }
@@ -285,7 +305,26 @@ elements.logout.addEventListener('click', async () => {
   showLogin();
 });
 elements.refresh.addEventListener('click', () => {
-  void Promise.all([loadDashboard(), loadUsers()]).catch(() => {});
+  void Promise.all([loadDashboard(), loadUsers(), loadServerSettings()]).catch(() => {});
+});
+elements.botRoomEnabled.addEventListener('change', async () => {
+  const previous = state.serverSettings;
+  const requested = elements.botRoomEnabled.checked;
+  elements.botRoomEnabled.disabled = true;
+  elements.botRoomStatus.textContent = requested ? '开启中…' : '关闭中…';
+  try {
+    renderServerSettings(await api('/api/admin/settings', {
+      method: 'PATCH',
+      body: { botRoomEnabled: requested },
+    }));
+    setError();
+  } catch (error) {
+    if (previous) renderServerSettings(previous);
+    try {
+      renderServerSettings(await api('/api/admin/settings'));
+    } catch {}
+    if (error.status !== 401) setError(error.message);
+  }
 });
 elements.range.addEventListener('change', () => {
   void loadDashboard().catch(() => {});
@@ -323,6 +362,6 @@ elements.deleteUser.addEventListener('click', async () => {
 });
 window.addEventListener('resize', drawChart);
 
-Promise.all([loadDashboard(false), loadUsers()]).catch((error) => {
+Promise.all([loadDashboard(false), loadUsers(), loadServerSettings(false)]).catch((error) => {
   if (error.status !== 401) elements.loginError.textContent = error.message;
 });

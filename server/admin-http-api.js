@@ -83,6 +83,8 @@ export class AdminHttpApi {
     isUserActive = () => false,
     currentOnline = () => 0,
     invalidateLeaderboards = () => {},
+    getServerSettings = () => ({ botRoomEnabled: true, source: 'default', updatedAt: null }),
+    updateServerSettings = null,
   } = {}) {
     if (typeof adminKey !== 'string' || adminKey.length < 16) {
       throw new TypeError('ADMIN_KEY must contain at least 16 characters.');
@@ -98,6 +100,8 @@ export class AdminHttpApi {
     this.isUserActive = isUserActive;
     this.currentOnline = currentOnline;
     this.invalidateLeaderboards = invalidateLeaderboards;
+    this.getServerSettings = getServerSettings;
+    this.updateServerSettings = updateServerSettings;
     this.sessions = new Map();
     this.loginFailures = new Map();
   }
@@ -207,6 +211,37 @@ export class AdminHttpApi {
     }
 
     this._requireAuthenticated(request);
+
+    if (pathname === '/api/admin/settings' && request.method === 'GET') {
+      jsonResponse(response, 200, this.getServerSettings());
+      return true;
+    }
+
+    if (pathname === '/api/admin/settings' && request.method === 'PATCH') {
+      this._requireSameOriginJson(request);
+      const body = await readJsonBody(request);
+      const keys = Object.keys(body);
+      if (keys.length !== 1 || keys[0] !== 'botRoomEnabled'
+        || typeof body.botRoomEnabled !== 'boolean') {
+        jsonResponse(response, 400, {
+          error: {
+            code: 'settings_invalid',
+            message: 'Only a strict botRoomEnabled boolean is accepted.',
+          },
+        });
+        return true;
+      }
+      if (typeof this.updateServerSettings !== 'function') {
+        jsonResponse(response, 503, {
+          error: { code: 'settings_unavailable', message: 'Server settings are unavailable.' },
+        });
+        return true;
+      }
+      jsonResponse(response, 200, this.updateServerSettings({
+        botRoomEnabled: body.botRoomEnabled,
+      }));
+      return true;
+    }
 
     if (pathname === '/api/admin/dashboard' && request.method === 'GET') {
       const url = new URL(request.url, 'http://localhost');

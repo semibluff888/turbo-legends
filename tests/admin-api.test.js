@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { WebSocket } from 'ws';
@@ -74,6 +77,8 @@ test('admin login protects dashboards and user deletion while analytics begin at
     assert.equal(page.statusCode, 200);
     assert.equal(page.headers['cache-control'], 'no-store');
     assert.match(page.headers['content-security-policy'], /frame-ancestors 'none'/u);
+    assert.match(page.body, /BOT_ROOM_ENABLED/u);
+    assert.match(page.body, /id="bot-room-enabled"/u);
 
     const root = await httpRequest(port, '/', { origin: false });
     assert.equal(root.statusCode, 200);
@@ -208,5 +213,89 @@ test('same-origin browser fetch metadata is accepted when Origin is omitted', as
     assert.match(login.headers['set-cookie']?.[0] || '', /turbo_legends_admin=/u);
   } finally {
     await server.shutdown();
+  }
+});
+
+test('admin Bot-room setting is authenticated, strict, immediate and persistent', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'turbo-legends-settings-'));
+  const databasePath = join(directory, 'users.sqlite');
+  const logger = { info() {}, warn() {}, error() {} };
+  let server = await createGameServer({
+    root: PROJECT_ROOT,
+    adminKey: ADMIN_KEY,
+    botRoomEnabled: false,
+    userDbPath: databasePath,
+    logger,
+  });
+  let port = await listen(server);
+  try {
+    assert.equal(server.roomManager.botRoomsEnabled, false);
+    assert.equal(server.roomManager.rooms.size, 0);
+    assert.equal((await httpRequest(port, '/api/admin/settings')).statusCode, 401);
+
+    const login = await httpRequest(port, '/api/admin/login', {
+      method: 'POST', body: { key: ADMIN_KEY },
+    });
+    const cookie = login.headers['set-cookie'][0].split(';')[0];
+    const initial = await httpRequest(port, '/api/admin/settings', { cookie });
+    assert.deepEqual(initial.body, {
+      botRoomEnabled: false,
+      source: 'environment',
+      updatedAt: null,
+    });
+
+    const crossOrigin = await httpRequest(port, '/api/admin/settings', {
+      method: 'PATCH', cookie, body: { botRoomEnabled: true }, origin: false,
+    });
+    assert.equal(crossOrigin.statusCode, 403);
+    const invalid = await httpRequest(port, '/api/admin/settings', {
+      method: 'PATCH', cookie, body: { botRoomEnabled: 'true' },
+    });
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(invalid.body.error.code, 'settings_invalid');
+    const extra = await httpRequest(port, '/api/admin/settings', {
+      method: 'PATCH', cookie, body: { botRoomEnabled: true, extra: false },
+    });
+    assert.equal(extra.statusCode, 400);
+
+    const enabled = await httpRequest(port, '/api/admin/settings', {
+      method: 'PATCH', cookie, body: { botRoomEnabled: true },
+    });
+    assert.equal(enabled.statusCode, 200);
+    assert.equal(enabled.body.botRoomEnabled, true);
+    assert.equal(enabled.body.source, 'database');
+    assert.equal(server.roomManager.botRoomsEnabled, true);
+    assert.equal([...server.roomManager.rooms.values()].some((room) => room.botManaged), true);
+
+    const disabled = await httpRequest(port, '/api/admin/settings', {
+      method: 'PATCH', cookie, body: { botRoomEnabled: false },
+    });
+    assert.equal(disabled.statusCode, 200);
+    assert.equal(server.roomManager.rooms.size, 0);
+  } finally {
+    await server.shutdown();
+  }
+
+  server = await createGameServer({
+    root: PROJECT_ROOT,
+    adminKey: ADMIN_KEY,
+    botRoomEnabled: true,
+    userDbPath: databasePath,
+    logger,
+  });
+  port = await listen(server);
+  try {
+    assert.equal(server.roomManager.botRoomsEnabled, false);
+    assert.equal(server.roomManager.rooms.size, 0);
+    const login = await httpRequest(port, '/api/admin/login', {
+      method: 'POST', body: { key: ADMIN_KEY },
+    });
+    const cookie = login.headers['set-cookie'][0].split(';')[0];
+    const persisted = await httpRequest(port, '/api/admin/settings', { cookie });
+    assert.equal(persisted.body.botRoomEnabled, false);
+    assert.equal(persisted.body.source, 'database');
+  } finally {
+    await server.shutdown();
+    rmSync(directory, { recursive: true, force: true });
   }
 });

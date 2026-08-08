@@ -11,6 +11,7 @@ import { RoomManager } from './server/room-manager.js';
 import { createDefaultRaceFactory } from './server/race-factory.js';
 import { RuntimeMetrics } from './server/runtime-metrics.js';
 import { AdminHttpApi } from './server/admin-http-api.js';
+import { ServerSettingsStore } from './server/server-settings-store.js';
 import { SiteAnalytics } from './server/site-analytics.js';
 import {
   DEFAULT_GUEST_CREATION_LIMIT,
@@ -30,6 +31,11 @@ const compressGzip = promisify(gzip);
 const COMPRESSIBLE_EXTENSIONS = new Set([
   '.html', '.js', '.mjs', '.css', '.json', '.svg', '.txt', '.map', '.md',
 ]);
+
+function environmentBoolean(value, fallback = true) {
+  if (value === undefined || value === null || value === '') return Boolean(fallback);
+  return String(value).trim().toLowerCase() !== 'false';
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -417,6 +423,7 @@ export async function createGameServer({
     || DEFAULT_LEADERBOARD_CACHE_TTL_MS,
   trustProxy = process.env.TRUST_PROXY === 'true',
   adminKey = process.env.ADMIN_KEY || '',
+  botRoomEnabled = undefined,
   metricsToken = process.env.METRICS_TOKEN || '',
   metricsLogIntervalMs = Number(process.env.METRICS_LOG_INTERVAL_MS) || 60_000,
   maintenanceIntervalMs = Number(process.env.MAINTENANCE_INTERVAL_MS) || 500,
@@ -447,8 +454,19 @@ export async function createGameServer({
     guestCreationWindowMs,
     leaderboardCacheTtlMs,
   });
+  const settingsStore = new ServerSettingsStore({ db: users.db });
+  const environmentHasBotSetting = botRoomEnabled !== undefined
+    || process.env.BOT_ROOM_ENABLED !== undefined;
+  const environmentBotRoomEnabled = botRoomEnabled === undefined
+    ? environmentBoolean(process.env.BOT_ROOM_ENABLED, true)
+    : Boolean(botRoomEnabled);
+  let effectiveSettings = settingsStore.getBotRoomEnabled(
+    environmentBotRoomEnabled,
+    environmentHasBotSetting ? 'environment' : 'default',
+  );
   const manager = roomManager ?? createRoomManager({
     ...roomManagerOptions,
+    botRoomsEnabled: effectiveSettings.botRoomEnabled,
     metrics: roomManagerOptions.metrics ?? metrics,
     userStore: roomManagerOptions.userStore ?? users,
     siteAnalytics: roomManagerOptions.siteAnalytics ?? siteAnalytics,
@@ -456,6 +474,9 @@ export async function createGameServer({
   if (roomManager && !roomManager.metrics) roomManager.metrics = metrics;
   if (roomManager && !roomManager.userStore) roomManager.userStore = users;
   if (roomManager && !roomManager.siteAnalytics) roomManager.siteAnalytics = siteAnalytics;
+  if (roomManager) {
+    roomManager.setBotRoomsEnabled?.(effectiveSettings.botRoomEnabled, { reconcile: false });
+  }
   let gateway = null;
   const adminApi = adminKey ? new AdminHttpApi({
     adminKey,
@@ -467,6 +488,12 @@ export async function createGameServer({
       || [...(gateway?.sessions ?? [])].some((session) => session.userId === userId),
     currentOnline: () => gateway?.connectionCount ?? 0,
     invalidateLeaderboards: () => userApi.invalidateLeaderboards(),
+    getServerSettings: () => ({ ...effectiveSettings }),
+    updateServerSettings: ({ botRoomEnabled: enabled }) => {
+      effectiveSettings = settingsStore.setBotRoomEnabled(enabled);
+      manager.setBotRoomsEnabled?.(enabled);
+      return { ...effectiveSettings };
+    },
   }) : null;
   const server = createStaticServer(root, {
     metadataProvider: () => ({ version }),
@@ -500,6 +527,7 @@ export async function createGameServer({
     onConnectionCountChange: (count) => siteAnalytics?.recordOnlineCount(count),
     ...webSocketOptions,
   });
+  if (effectiveSettings.botRoomEnabled) manager.reconcileBotRooms?.();
 
   let disposed = false;
   const tickTimer = setInterval(() => {
@@ -560,6 +588,7 @@ export async function createGameServer({
   server.runtimeMetrics = metrics;
   server.userStore = users;
   server.siteAnalytics = siteAnalytics;
+  server.serverSettingsStore = settingsStore;
   server.adminApi = adminApi;
   server.shutdown = async () => {
     await disposeGameServices();

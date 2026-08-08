@@ -21,6 +21,7 @@ import {
   roomStatusMessage,
 } from '../src/ui/online-screens.js';
 import { getUiCopy } from '../src/ui/copy.js';
+import { TRACKS } from '../src/track/tracks.js';
 
 const onlineScreensSource = readFileSync(new URL('../src/ui/online-screens.js', import.meta.url), 'utf8');
 const onlineStylesSource = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
@@ -87,6 +88,52 @@ test('room system chat messages coalesce and expire without affecting player mes
 
   assert.equal(screen._expireRoomChatSystemMessage(systemId), true);
   assert.deepEqual(screen._chatMessages.map((message) => message.content), ['Hello']);
+});
+
+test('Bot room views expose badges, read-only controls and localized Bot chat', () => {
+  const lobby = buildLobbyView({ rooms: [{
+    roomCode: 'ABC234', roomName: 'Bot自建房', roomType: 'public', botManaged: true,
+    playerCount: 1, maxPlayers: 8, hostDisplayName: '赛博房主', trackId: TRACKS[0].id,
+    status: 'waiting', joinable: true,
+  }] });
+  assert.equal(lobby.rooms[0].botManaged, true);
+
+  const state = {
+    roomCode: 'ABC234', roomName: 'Bot自建房', roomType: 'public', botManaged: true,
+    maxPlayers: 8, state: 'waiting', hostParticipantId: 'bot-host', canStart: true,
+    settings: { trackId: TRACKS[0].id, difficulty: 'normal', autoFillAi: false },
+    members: [
+      { participantId: 'bot-host', displayName: '赛博房主', isBot: true, isHost: true, ready: true, connected: true },
+      { participantId: 'human', displayName: '玩家', isBot: false, ready: true, connected: true },
+    ],
+  };
+  const room = buildRoomView(state, 'human', { language: 'zh-CN' });
+  assert.equal(room.botManaged, true);
+  assert.equal(room.members[0].isBot, true);
+  assert.equal(roomStatusMessage(room, getUiCopy('zh-CN').online.room), '所有人都已准备，发送 /s 开始比赛。');
+
+  const screen = Object.assign(Object.create(OnlineScreens.prototype), {
+    copy: getUiCopy('zh-CN'),
+    language: 'zh-CN',
+    tracks: TRACKS,
+    trackById: new Map(TRACKS.map((track) => [track.id, track])),
+    _chatRoomCode: 'ABC234',
+    _chatMessages: [],
+    _chatMessageSequence: 0,
+    _chatSystemTimers: new Map(),
+    _renderRoomChat() {},
+  });
+  assert.equal(screen.appendRoomChat({
+    roomCode: 'ABC234', participantId: 'bot-host', displayName: '赛博房主', sentAt: Date.now(),
+    content: 'fallback', isBot: true, botMessageKey: 'waitReady', botMessageArgs: {},
+  }), true);
+  assert.equal(screen._chatMessages[0].content, '请等待所有人准备');
+  assert.equal(screen._chatMessages[0].isBot, true);
+
+  assert.match(onlineScreensSource, /view\.botManaged[\s\S]*copy\.botControls/u);
+  assert.match(onlineScreensSource, /online-room-bot-badge/u);
+  assert.match(onlineScreensSource, /online-chat-bot-badge/u);
+  assert.match(onlineStylesSource, /\.online-chat-message\.is-bot/u);
 });
 
 test('invite links preserve only the same-page room query', () => {

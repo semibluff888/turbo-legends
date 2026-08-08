@@ -199,6 +199,49 @@ test('WebSocket upgrades require a valid guest session cookie', {
   }
 });
 
+test('default multiplayer startup exposes a joinable Bot room with compatible Bot fields', {
+  skip: wsModule ? false : 'ws dependency is not installed in this workspace',
+}, async () => {
+  const { WebSocket } = wsModule;
+  const logger = { info() {}, warn() {}, error() {} };
+  const server = await createGameServer({ root: PROJECT_ROOT, logger, botRoomEnabled: true });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const port = server.address().port;
+  const origin = `http://127.0.0.1:${port}`;
+  const client = await connectClient(WebSocket, `ws://127.0.0.1:${port}/ws`, origin, {
+    guestDisplayName: 'Bot Guest',
+  });
+  try {
+    client.send({ type: 'enter_lobby' });
+    const lobby = await client.next((message) => message.type === 'lobby_state');
+    assert.equal(lobby.rooms.length, 1);
+    assert.equal(lobby.rooms[0].botManaged, true);
+    assert.equal(lobby.rooms[0].joinable, true);
+    assert.equal(lobby.rooms[0].hostDisplayName, '赛博房主');
+
+    const mark = client.mark();
+    client.send({ type: 'join_room', roomCode: lobby.rooms[0].roomCode });
+    const state = await client.next(
+      (message) => message.type === 'room_state' && message.botManaged,
+      mark,
+    );
+    assert.equal(state.members.find((member) => member.isBot).displayName, '赛博房主');
+    assert.equal(state.members.find((member) => member.isBot).ready, true);
+    const welcome = await client.next(
+      (message) => message.type === 'room_chat' && message.isBot,
+      mark,
+    );
+    assert.equal(welcome.botMessageKey, 'welcome');
+    assert.match(welcome.content, /\/h/u);
+  } finally {
+    await client.close();
+    await server.shutdown();
+  }
+});
+
 test('a silent Room connection is broadcast as reconnecting before it resumes', {
   skip: wsModule ? false : 'ws dependency is not installed in this workspace',
 }, async () => {
@@ -418,7 +461,7 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
 }, async () => {
   const { WebSocket } = wsModule;
   const logger = { info() {}, warn() {}, error() {} };
-  const server = await createGameServer({ root: PROJECT_ROOT, logger });
+  const server = await createGameServer({ root: PROJECT_ROOT, logger, botRoomEnabled: false });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);
@@ -445,6 +488,7 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
       displayName: 'Host',
       roomName: 'Host Raceway',
       roomType: 'public',
+      botManaged: false,
       maxPlayers: 4,
       trackId: 'harbor-loop',
       characterId: 'pip',
@@ -472,6 +516,7 @@ test('game server subscribes to Lobby, creates and joins a room, and reports agg
       roomCode: hostWelcome.roomCode,
       roomName: 'Host Raceway',
       roomType: 'public',
+      botManaged: false,
       requiresPassword: false,
       playerCount: 1,
       maxPlayers: 4,
@@ -559,7 +604,7 @@ test('a host can kick a guest back to the Lobby with an explicit notification', 
 }, async () => {
   const { WebSocket } = wsModule;
   const logger = { info() {}, warn() {}, error() {} };
-  const server = await createGameServer({ root: PROJECT_ROOT, logger });
+  const server = await createGameServer({ root: PROJECT_ROOT, logger, botRoomEnabled: false });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);
@@ -613,7 +658,7 @@ test('quick match stays subscribed after no-match and can join a later public ro
 }, async () => {
   const { WebSocket } = wsModule;
   const logger = { info() {}, warn() {}, error() {} };
-  const server = await createGameServer({ root: PROJECT_ROOT, logger });
+  const server = await createGameServer({ root: PROJECT_ROOT, logger, botRoomEnabled: false });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);

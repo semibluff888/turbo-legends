@@ -39,6 +39,10 @@ import { GameError } from './game-error.js';
 import { defaultScryptQueue, ScryptQueueFullError } from './scrypt-queue.js';
 
 const ROOM_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+export const BOT_ROOM_NAME = 'Bot自建房';
+export const BOT_HOST_NAME = '赛博房主';
+export const DEFAULT_BOT_ROOM_CHECK_INTERVAL_MS = 15_000;
+export const DEFAULT_BOT_MAP_CHANGE_COOLDOWN_MS = 3_000;
 const POST_RACE_STATES = Object.freeze({
   RESULTS: 'results',
   ROOM: 'room',
@@ -73,8 +77,43 @@ function occupiedMembers(room) {
   return [...room.members.values()].filter((member) => !member.abandoned);
 }
 
+function humanMembers(room) {
+  return occupiedMembers(room).filter((member) => !member.isBot);
+}
+
+function hasLiveHuman(room) {
+  return humanMembers(room).length > 0;
+}
+
+function hasConnectedHuman(room) {
+  return humanMembers(room).some((member) => member.connected);
+}
+
+function botMemberOf(room) {
+  return [...room.members.values()].find((member) => member.isBot) ?? null;
+}
+
 function hasOnlineMember(room) {
-  return occupiedMembers(room).some((member) => member.connected);
+  if (room.botManaged && room.state === ROOM_STATES.WAITING && !room.botRetiring) return true;
+  return hasConnectedHuman(room);
+}
+
+function normalizeBotCommandText(content) {
+  const normalized = String(content || '')
+    .trim()
+    .replace(/^／/u, '/')
+    .replace(/[０-９]/gu, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xFEE0));
+  if (!normalized.startsWith('/')) return null;
+  const parts = normalized.slice(1).trim().split(/\s+/u).filter(Boolean);
+  const name = String(parts.shift() || '').toLocaleLowerCase('en-US');
+  if (['帮助', 'help', 'h'].includes(name)) {
+    return parts.length === 0 ? { kind: 'help' } : { kind: 'unknown' };
+  }
+  if (['地图', 'map', 'm'].includes(name)) return { kind: 'map', args: parts };
+  if (['开始', 'start', 's'].includes(name)) {
+    return parts.length === 0 ? { kind: 'start' } : { kind: 'unknown' };
+  }
+  return { kind: 'unknown' };
 }
 
 function presenceStateOf(member) {
@@ -208,11 +247,13 @@ function defaultRaceResults(room) {
 
 function publicRoster(roster) {
   return roster.map(({
-    participantId, displayName, aiPlayerNumber, characterId, paintId, avatarId, controllerKind, kartIndex,
+    participantId, displayName, aiPlayerNumber, isBot,
+    characterId, paintId, avatarId, controllerKind, kartIndex,
   }) => ({
     participantId,
     displayName,
     ...(aiPlayerNumber == null ? {} : { aiPlayerNumber }),
+    ...(isBot ? { isBot: true } : {}),
     characterId,
     paintId,
     avatarId,
@@ -254,6 +295,9 @@ export class RoomManager extends EventEmitter {
     siteAnalytics = null,
     settlementRetryDelaysMs = [2_000, 10_000],
     roomReceiverCountProvider = null,
+    botRoomsEnabled = false,
+    botRoomCheckIntervalMs = DEFAULT_BOT_ROOM_CHECK_INTERVAL_MS,
+    botMapChangeCooldownMs = DEFAULT_BOT_MAP_CHANGE_COOLDOWN_MS,
   } = {}) {
     super();
     this.now = now;
@@ -296,6 +340,12 @@ export class RoomManager extends EventEmitter {
         .filter((delay) => Number.isFinite(delay) && delay >= 0)
       : [];
     this.roomReceiverCountProvider = roomReceiverCountProvider;
+    this.botRoomsEnabled = Boolean(botRoomsEnabled);
+    this.botRoomCheckIntervalMs = Math.max(1_000, Number(botRoomCheckIntervalMs)
+      || DEFAULT_BOT_ROOM_CHECK_INTERVAL_MS);
+    this.botMapChangeCooldownMs = Math.max(0, Number(botMapChangeCooldownMs)
+      || DEFAULT_BOT_MAP_CHANGE_COOLDOWN_MS);
+    this.nextBotRoomCheckAt = this.now();
     this._passwordVerifiers = new WeakMap();
     this.rooms = new Map();
     this.activeRaceRooms = new Set();
@@ -337,21 +387,283 @@ export class RoomManager extends EventEmitter {
       const playerCount = members.length;
       const isWaiting = room.state === ROOM_STATES.WAITING;
       const isFull = isWaiting && playerCount >= room.maxPlayers;
+      const joinable = isWaiting && !isFull && !room.botRetiring;
       const host = room.members.get(room.hostParticipantId);
       rooms.push({
         roomCode: room.code,
         roomName: room.roomName,
         roomType: room.roomType,
+        botManaged: Boolean(room.botManaged),
         requiresPassword: room.roomType === ROOM_TYPES.PRIVATE,
         playerCount,
         maxPlayers: room.maxPlayers,
         hostDisplayName: host?.displayName ?? '',
         trackId: room.settings.trackId,
         status: !isWaiting ? 'in_game' : isFull ? 'full' : 'waiting',
-        joinable: isWaiting && !isFull,
+        joinable,
       });
     }
     return rooms;
+  }
+
+  reconcileBotRooms(now = this.now()) {
+    this.nextBotRoomCheckAt = now + this.botRoomCheckIntervalMs;
+    if (!this.botRoomsEnabled) return null;
+    return this._reconcileBotRooms(now);
+  }
+
+  setBotRoomsEnabled(enabled, { reconcile = true } = {}) {
+    const next = Boolean(enabled);
+    const now = this.now();
+    this.botRoomsEnabled = next;
+    if (next) {
+      for (const room of this.rooms.values()) {
+        if (!room.botManaged || !room.botRetiring) continue;
+        room.botRetiring = false;
+        this._broadcastRoomState(room);
+      }
+      this.nextBotRoomCheckAt = now;
+      if (reconcile) this.reconcileBotRooms(now);
+    } else {
+      this.nextBotRoomCheckAt = Infinity;
+      for (const room of [...this.rooms.values()]) {
+        if (!room.botManaged) continue;
+        room.botRetiring = true;
+        if (this._destroyBotRoomIfHumanless(room, now)) continue;
+        this._broadcastRoomState(room);
+      }
+    }
+    return this.botRoomsEnabled;
+  }
+
+  _isPublicJoinableRoom(room) {
+    return room.roomType === ROOM_TYPES.PUBLIC
+      && room.state === ROOM_STATES.WAITING
+      && !room.botRetiring
+      && hasOnlineMember(room)
+      && occupiedMembers(room).length < room.maxPlayers;
+  }
+
+  _reconcileBotRooms(now) {
+    const joinableRooms = [...this.rooms.values()].filter(
+      (room) => this._isPublicJoinableRoom(room),
+    );
+    const idleBotRooms = [...this.rooms.values()]
+      .filter((room) => room.botManaged
+        && !room.botRetiring
+        && room.state === ROOM_STATES.WAITING
+        && !hasLiveHuman(room))
+      .sort((a, b) => a.createdAt - b.createdAt);
+    const usefulJoinableRoom = joinableRooms.some((room) => !idleBotRooms.includes(room));
+    if (usefulJoinableRoom) {
+      for (const room of idleBotRooms) this._destroyRoom(room);
+      return null;
+    }
+    if (idleBotRooms.length > 0) {
+      for (const room of idleBotRooms.slice(1)) this._destroyRoom(room);
+      return idleBotRooms[0];
+    }
+    return this._createBotRoom(now);
+  }
+
+  _createBotRoom(now = this.now()) {
+    const roomCode = this._allocateRoomCode();
+    const setupSeed = this.seedFactory() >>> 0;
+    const setupRng = deriveRng(setupSeed, `bot-room:${roomCode}`);
+    const tracks = [...this.tracks.values()];
+    const track = tracks[setupRng.int(0, Math.max(0, tracks.length - 1))];
+    const character = this.playableCharacters[
+      setupRng.int(0, Math.max(0, this.playableCharacters.length - 1))
+    ];
+    if (!track || !character) {
+      throw new GameError(ERROR_CODES.INTERNAL_ERROR, 'Bot room setup is unavailable.');
+    }
+    const defaults = defaultLoadoutForCharacter(character.id);
+    const appearance = pickDistinctAppearance(setupRng, [], this.paints, this.avatars);
+    const participantId = `bot-${roomCode.toLowerCase()}`;
+    const bot = {
+      userId: null,
+      participantId,
+      resumeToken: null,
+      displayName: BOT_HOST_NAME,
+      characterId: character.id,
+      paintId: appearance.paintId || defaults.paintId,
+      avatarId: appearance.avatarId || defaults.avatarId,
+      isBot: true,
+      ready: true,
+      connected: true,
+      abandoned: false,
+      resultLocked: false,
+      resumeExpired: false,
+      disconnectedAt: null,
+      resumeExpiresAt: null,
+      joinOrder: this._joinOrder++,
+      raceLoaded: true,
+      kartIndex: null,
+      controllerKind: CONTROLLER_KINDS.AI,
+      lastInputSeq: -1,
+      lastUseItemSeq: 0,
+      lastAppliedSeq: -1,
+      awaitingFreshInput: false,
+      pendingUseItems: 0,
+      lastInput: { ...DEFAULT_ZERO_INPUT },
+      lastInputAt: now,
+      lastChatAt: -Infinity,
+      postRaceState: null,
+    };
+    const room = {
+      code: roomCode,
+      roomName: BOT_ROOM_NAME,
+      roomType: ROOM_TYPES.PUBLIC,
+      maxPlayers: this.maxPlayers,
+      state: ROOM_STATES.WAITING,
+      hostParticipantId: participantId,
+      settings: { trackId: track.id, difficulty: 'normal', autoFillAi: false },
+      members: new Map([[participantId, bot]]),
+      race: null,
+      lastRaceId: null,
+      lastWireRaceId: null,
+      createdAt: now,
+      emptySince: null,
+      botManaged: true,
+      botRetiring: false,
+      botDestroyWhenHumanless: false,
+      botLastMapChangeAt: -Infinity,
+    };
+    this.rooms.set(roomCode, room);
+    this._broadcastRoomState(room);
+    return room;
+  }
+
+  _botTrackEntries() {
+    return [...this.tracks.values()].map((track, index) => ({
+      number: index + 1,
+      id: track.id,
+      name: track.name,
+    }));
+  }
+
+  _botChatMessage(room, { key, args = {}, content }) {
+    const bot = botMemberOf(room);
+    return serverMessage(SERVER_MESSAGE_TYPES.ROOM_CHAT, {
+      roomCode: room.code,
+      participantId: bot?.participantId ?? room.hostParticipantId,
+      displayName: bot?.displayName ?? BOT_HOST_NAME,
+      sentAt: this.wallClock(),
+      content,
+      isBot: true,
+      botMessageKey: key,
+      botMessageArgs: args,
+    });
+  }
+
+  _sendBotChat(room, payload) {
+    const message = this._botChatMessage(room, payload);
+    this._emitToRoom(room, message);
+    return message;
+  }
+
+  _botHelpPayload(room, { concise = false } = {}) {
+    const tracks = this._botTrackEntries();
+    const current = tracks.find((track) => track.id === room.settings.trackId) ?? tracks[0];
+    if (concise) {
+      return {
+        key: 'helpShort',
+        args: {},
+        content: '可用指令：/h 帮助、/m <数字> 修改地图、/s 开始比赛。',
+      };
+    }
+    const mapList = tracks.map((track) => `${track.number}=${track.name}`).join('，');
+    return {
+      key: 'help',
+      args: {
+        currentMapNumber: current?.number ?? 1,
+        currentMapName: current?.name ?? '',
+        maps: tracks,
+      },
+      content: `指令：/h 帮助、/m <数字> 修改地图、/s 开始比赛。地图：${mapList}。当前地图：${current?.number ?? 1}=${current?.name ?? ''}。`,
+    };
+  }
+
+  _handleBotCommand(room, command, now) {
+    if (!command) return null;
+    if (command.kind === 'help') return this._sendBotChat(room, this._botHelpPayload(room));
+    if (command.kind === 'unknown') {
+      return this._sendBotChat(room, this._botHelpPayload(room, { concise: true }));
+    }
+    if (command.kind === 'map') {
+      const [rawNumber] = command.args;
+      const tracks = this._botTrackEntries();
+      if (command.args.length !== 1 || !/^\d+$/u.test(rawNumber || '')) {
+        return this._sendBotChat(room, {
+          key: 'mapInvalid',
+          args: { min: 1, max: tracks.length },
+          content: `地图编号无效，请输入 1-${tracks.length} 的单个数字。`,
+        });
+      }
+      const selected = tracks[Number(rawNumber) - 1];
+      if (!selected) {
+        return this._sendBotChat(room, {
+          key: 'mapInvalid',
+          args: { min: 1, max: tracks.length },
+          content: `地图编号无效，请输入 1-${tracks.length} 的单个数字。`,
+        });
+      }
+      if (room.state !== ROOM_STATES.WAITING) {
+        return this._sendBotChat(room, {
+          key: 'mapUnavailable',
+          args: {},
+          content: '当前无法修改地图。',
+        });
+      }
+      if (room.settings.trackId === selected.id) {
+        return this._sendBotChat(room, {
+          key: 'mapUnchanged',
+          args: { mapNumber: selected.number, mapName: selected.name },
+          content: `当前已经是地图 ${selected.number}：${selected.name}。`,
+        });
+      }
+      const remainingMs = room.botLastMapChangeAt + this.botMapChangeCooldownMs - now;
+      if (remainingMs > 0) {
+        const seconds = Math.max(1, Math.ceil(remainingMs / 1000));
+        return this._sendBotChat(room, {
+          key: 'mapCooldown',
+          args: { seconds },
+          content: `地图修改冷却中，请等待 ${seconds} 秒。`,
+        });
+      }
+      this._setRoomSettings(room, { trackId: selected.id });
+      room.botLastMapChangeAt = now;
+      return this._sendBotChat(room, {
+        key: 'mapChanged',
+        args: { mapNumber: selected.number, mapName: selected.name },
+        content: `地图已修改为 ${selected.number}：${selected.name}。请重新准备。`,
+      });
+    }
+    if (command.kind === 'start') {
+      if (!this._canStart(room)) {
+        return this._sendBotChat(room, {
+          key: 'waitReady',
+          args: {},
+          content: '请等待所有人准备',
+        });
+      }
+      this._startRace(room);
+    }
+    return null;
+  }
+
+  _destroyBotRoomIfHumanless(room, now = this.now()) {
+    if (!room.botManaged || hasLiveHuman(room)) return false;
+    if (room.state === ROOM_STATES.WAITING
+      && !room.botRetiring
+      && !room.botDestroyWhenHumanless) return false;
+    if (room.race?.simulation
+      && [ROOM_STATES.COUNTDOWN, ROOM_STATES.RACING].includes(room.state)) {
+      this._finishRace(room, now);
+    }
+    this._destroyRoom(room);
+    return true;
   }
 
   async createRoom(options = {}) {
@@ -398,6 +710,10 @@ export class RoomManager extends EventEmitter {
       lastWireRaceId: null,
       createdAt: now,
       emptySince: null,
+      botManaged: false,
+      botRetiring: false,
+      botDestroyWhenHumanless: false,
+      botLastMapChangeAt: -Infinity,
     };
     if (passwordVerifier) this._passwordVerifiers.set(room, passwordVerifier);
     this.rooms.set(roomCode, room);
@@ -419,6 +735,9 @@ export class RoomManager extends EventEmitter {
     userId = null, displayName, characterId, paintId, avatarId, password,
   } = {}) {
     const room = this._requireRoom(roomCode);
+    if (room.botRetiring) {
+      throw new GameError(ERROR_CODES.ROOM_LOCKED, 'This Bot room is no longer accepting players.');
+    }
     if (room.state !== ROOM_STATES.WAITING) {
       throw new GameError(ERROR_CODES.ROOM_LOCKED, 'This race has already started.');
     }
@@ -438,9 +757,24 @@ export class RoomManager extends EventEmitter {
     const session = this._addParticipant(room, {
       userId, displayName, characterId, paintId, avatarId,
     }, this.now());
+    if (room.botManaged) room.botDestroyWhenHumanless = false;
     if (!room.hostParticipantId) this._migrateHost(room);
     this._broadcastRoomState(room);
-    return { ...session, roomCode: room.code, roomState: this.getRoomState(room.code) };
+    const roomState = this.getRoomState(room.code);
+    if (!room.botManaged) return { ...session, roomCode: room.code, roomState };
+    const joinedMember = room.members.get(session.participantId);
+    const welcome = this._botChatMessage(room, {
+      key: 'welcome',
+      args: { displayName: joinedMember?.displayName ?? displayName },
+      content: `欢迎 ${joinedMember?.displayName ?? displayName} 加入房间！发送 /h 查看指令。`,
+    });
+    this._emitToRoom(room, welcome);
+    return {
+      ...session,
+      roomCode: room.code,
+      roomState,
+      messages: [roomState, welcome],
+    };
   }
 
   async quickMatch({ userId = null, displayName, characterId, paintId, avatarId } = {}) {
@@ -451,6 +785,7 @@ export class RoomManager extends EventEmitter {
     })).filter(({ room, playerCount }) => (
       room.roomType === ROOM_TYPES.PUBLIC
       && room.state === ROOM_STATES.WAITING
+      && !room.botRetiring
       && hasOnlineMember(room)
       && playerCount < room.maxPlayers
     ));
@@ -491,6 +826,7 @@ export class RoomManager extends EventEmitter {
     member.connected = true;
     member.disconnectedAt = null;
     member.resumeExpiresAt = null;
+    if (room.botManaged) room.botDestroyWhenHumanless = false;
     room.emptySince = null;
     if (room.race?.simulation && member.kartIndex !== null) {
       // A resumed transport is not proof that the driver has fresh control.
@@ -551,7 +887,14 @@ export class RoomManager extends EventEmitter {
       }
       if (room.hostParticipantId === participantId) this._migrateHost(room);
       this._resolvePendingParticipant(participantId, !member.resultLocked, now);
-      if (occupiedMembers(room).length === 0
+      if (room.botManaged && !hasLiveHuman(room)) {
+        if (room.state !== ROOM_STATES.RESULTS && room.race?.simulation) {
+          this._finishRace(room, now);
+        }
+        this._destroyRoom(room);
+        return;
+      }
+      if (!room.botManaged && occupiedMembers(room).length === 0
         && [ROOM_STATES.COUNTDOWN, ROOM_STATES.RACING, ROOM_STATES.RESULTS]
           .includes(room.state)) {
         if (room.state !== ROOM_STATES.RESULTS) this._finishRace(room, now);
@@ -559,6 +902,7 @@ export class RoomManager extends EventEmitter {
         return;
       }
     }
+    if (this._destroyBotRoomIfHumanless(room, this.now())) return;
     if (![...room.members.values()].some((candidate) => candidate.connected)) room.emptySince = this.now();
     if (this._maybeReturnRoom(room)) return;
     this._broadcastRoomState(room);
@@ -602,6 +946,10 @@ export class RoomManager extends EventEmitter {
     const { room, member } = this._findParticipant(participantId);
     this._requireMemberRoom(room, member);
     this._requireHost(room, participantId);
+    return this._setRoomSettings(room, patch);
+  }
+
+  _setRoomSettings(room, patch) {
     let changed = false;
     if (patch.trackId !== undefined) {
       if (!this.tracks.has(patch.trackId)) {
@@ -631,7 +979,7 @@ export class RoomManager extends EventEmitter {
       }
     }
     if (changed) {
-      for (const member of room.members.values()) member.ready = false;
+      for (const member of room.members.values()) member.ready = Boolean(member.isBot);
       this._broadcastRoomState(room);
     }
     return this.getRoomState(room.code);
@@ -678,31 +1026,48 @@ export class RoomManager extends EventEmitter {
         'Chat messages must be at least 3 seconds apart.',
       );
     }
+    const validatedContent = requireValid(validateChatContent(content));
     const message = serverMessage(SERVER_MESSAGE_TYPES.ROOM_CHAT, {
       roomCode: room.code,
       participantId: member.participantId,
       displayName: member.displayName,
       sentAt: this.wallClock(),
-      content: requireValid(validateChatContent(content)),
+      content: validatedContent,
+      isBot: false,
     });
     member.lastChatAt = now;
     this._emitToRoom(room, message);
+    if (room.botManaged && !member.isBot) {
+      this._handleBotCommand(room, normalizeBotCommandText(validatedContent), now);
+    }
     return message;
   }
 
   startRace(participantId) {
-    const { room } = this._findParticipant(participantId);
+    const { room, member } = this._findParticipant(participantId);
     this._requireWaiting(room);
-    this._requireHost(room, participantId);
+    if (room.botManaged) {
+      if (member.isBot) throw new GameError(ERROR_CODES.FORBIDDEN, 'A human player must start the race.');
+    } else {
+      this._requireHost(room, participantId);
+    }
     const members = [...room.members.values()].filter((member) => !member.abandoned);
-    const connected = members.filter((member) => member.connected);
-    if (connected.length < 2) {
+    const humans = members.filter((candidate) => !candidate.isBot);
+    const connected = humans.filter((candidate) => candidate.connected);
+    const minimumHumans = room.botManaged ? 1 : 2;
+    if (connected.length < minimumHumans) {
       throw new GameError(ERROR_CODES.NOT_ENOUGH_PLAYERS, 'At least two connected players are required.');
     }
-    if (connected.length !== members.length || connected.some((member) => !member.ready)) {
+    if (connected.length !== humans.length || connected.some((candidate) => !candidate.ready)) {
       throw new GameError(ERROR_CODES.NOT_READY, 'Every player must be connected and ready.');
     }
 
+    return this._startRace(room);
+  }
+
+  _startRace(room) {
+    const members = [...room.members.values()].filter((member) => !member.abandoned);
+    room.botDestroyWhenHumanless = false;
     const now = this.now();
     const seed = this.seedFactory() >>> 0;
     const raceId = this.raceIdFactory();
@@ -714,10 +1079,10 @@ export class RoomManager extends EventEmitter {
     for (const member of members) {
       member.postRaceState = null;
       member.resultLocked = false;
-      member.raceLoaded = false;
+      member.raceLoaded = Boolean(member.isBot);
       member.kartIndex = roster.find((entry) => entry.participantId === member.participantId)?.kartIndex ?? null;
-      member.controllerKind = CONTROLLER_KINDS.TAKEOVER_AI;
-      member.awaitingFreshInput = true;
+      member.controllerKind = member.isBot ? CONTROLLER_KINDS.AI : CONTROLLER_KINDS.TAKEOVER_AI;
+      member.awaitingFreshInput = !member.isBot;
       member.lastInputSeq = -1;
       member.lastUseItemSeq = 0;
       member.lastAppliedSeq = -1;
@@ -735,7 +1100,10 @@ export class RoomManager extends EventEmitter {
       rosterByKartIndex: new Map(roster.map((entry) => [entry.kartIndex, entry])),
       rosterByParticipantId: new Map(roster.map((entry) => [entry.participantId, entry])),
       ackMembers: roster
-        .filter((entry) => room.members.has(entry.participantId))
+        .filter((entry) => {
+          const member = room.members.get(entry.participantId);
+          return Boolean(member && !member.isBot);
+        })
         .sort((a, b) => a.kartIndex - b.kartIndex),
       ackEntries: [],
       firstInputs: new Array(roster.length).fill(null),
@@ -807,8 +1175,9 @@ export class RoomManager extends EventEmitter {
     this._emitToParticipant(member.participantId, this._raceLoadedAck(room, late));
     this._broadcastRoomState(room);
     if (phase !== ROOM_STATES.LOADING) return;
-    const active = [...room.members.values()].filter((candidate) => candidate.connected && !candidate.abandoned);
-    if (active.length >= 2 && active.every((candidate) => candidate.raceLoaded)) {
+    const active = humanMembers(room).filter((candidate) => candidate.connected);
+    const minimumHumans = room.botManaged ? 1 : 2;
+    if (active.length >= minimumHumans && active.every((candidate) => candidate.raceLoaded)) {
       await this._beginRace(room, this.now());
     }
   }
@@ -884,6 +1253,7 @@ export class RoomManager extends EventEmitter {
         characterId: member.characterId,
         paintId: member.paintId,
         avatarId: member.avatarId,
+        isBot: Boolean(member.isBot),
         isHost: member.participantId === room.hostParticipantId,
         ready: member.ready,
         connected: member.connected,
@@ -902,6 +1272,7 @@ export class RoomManager extends EventEmitter {
       roomCode: room.code,
       roomName: room.roomName,
       roomType: room.roomType,
+      botManaged: Boolean(room.botManaged),
       maxPlayers: room.maxPlayers,
       state: room.state,
       hostParticipantId: room.hostParticipantId,
@@ -985,9 +1356,11 @@ export class RoomManager extends EventEmitter {
         }
         if (room.state === ROOM_STATES.WAITING) {
           this._expireWaitingMembers(room, now);
+          if (this._destroyBotRoomIfHumanless(room, now)) continue;
           continue;
         }
         this._expireRaceSessions(room, now);
+        if (this._destroyBotRoomIfHumanless(room, now)) continue;
         if (room.state === ROOM_STATES.LOADING) {
           if (now >= room.race.loadingDeadline) this._beginRace(room, now);
           continue;
@@ -1001,6 +1374,13 @@ export class RoomManager extends EventEmitter {
       }
     }
     this._settlePendingRaces(now);
+    if (this.botRoomsEnabled && now >= this.nextBotRoomCheckAt) {
+      try {
+        this.reconcileBotRooms(now);
+      } catch (error) {
+        this.emit('managerError', error);
+      }
+    }
   }
 
   setRoomReceiverCountProvider(provider) {
@@ -1090,7 +1470,8 @@ export class RoomManager extends EventEmitter {
         characterId: member.characterId,
         paintId: member.paintId,
         avatarId: member.avatarId,
-        controllerKind: CONTROLLER_KINDS.HUMAN,
+        ...(member.isBot ? { isBot: true, aiPlayerNumber: 1 } : {}),
+        controllerKind: member.isBot ? CONTROLLER_KINDS.AI : CONTROLLER_KINDS.HUMAN,
       }));
     if (room.settings.autoFillAi) {
       const used = new Set(roster.map((entry) => entry.characterId));
@@ -1141,11 +1522,15 @@ export class RoomManager extends EventEmitter {
     if (race.launchPromise) return race.launchPromise;
     const launchPromise = (async () => {
       const activeHumans = [...room.members.values()]
-        .filter((member) => member.connected && member.raceLoaded && !member.abandoned);
-      if (activeHumans.length < 2) {
+        .filter((member) => !member.isBot
+          && member.connected && member.raceLoaded && !member.abandoned);
+      const minimumHumans = room.botManaged ? 1 : 2;
+      if (activeHumans.length < minimumHumans) {
         this._finalizeRaceMembers(room, { resetReady: true });
         room.state = ROOM_STATES.WAITING;
         room.race = null;
+        room.botDestroyWhenHumanless = room.botManaged
+          && !hasConnectedHuman(room) && hasLiveHuman(room);
         this._emitToRoom(room, serverMessage(SERVER_MESSAGE_TYPES.ERROR, {
           code: ERROR_CODES.NOT_ENOUGH_PLAYERS,
           message: 'Race cancelled because fewer than two players finished loading.',
@@ -1181,11 +1566,14 @@ export class RoomManager extends EventEmitter {
       race.analyticsStartedAt = null;
       this.activeRaceRooms.add(room);
       for (const member of room.members.values()) {
-        const kind = member.connected && member.raceLoaded && !member.abandoned
-          ? CONTROLLER_KINDS.HUMAN
-          : CONTROLLER_KINDS.TAKEOVER_AI;
+        const kind = member.isBot
+          ? CONTROLLER_KINDS.AI
+          : member.connected && member.raceLoaded && !member.abandoned
+            ? CONTROLLER_KINDS.HUMAN
+            : CONTROLLER_KINDS.TAKEOVER_AI;
         member.awaitingFreshInput = kind !== CONTROLLER_KINDS.HUMAN;
-        if (kind === CONTROLLER_KINDS.HUMAN) member.lastInputAt = now;
+        if (member.isBot) member.awaitingFreshInput = false;
+        else if (kind === CONTROLLER_KINDS.HUMAN) member.lastInputAt = now;
         this._setController(room, member, kind, true);
       }
       if (room.state === ROOM_STATES.RACING) this._recordAnalyticsRaceStart(room, now);
@@ -1235,6 +1623,10 @@ export class RoomManager extends EventEmitter {
     secondInputs.fill(null);
     for (const member of room.members.values()) {
       if (member.kartIndex === null) continue;
+      if (member.isBot) {
+        this._setController(room, member, CONTROLLER_KINDS.AI);
+        continue;
+      }
       const timedOut = now - member.lastInputAt > this.inputTimeoutMs;
       if (timedOut) member.awaitingFreshInput = true;
       const human = member.connected
@@ -1346,8 +1738,10 @@ export class RoomManager extends EventEmitter {
     const settlement = this._createRaceSettlement(room);
     if (settlement) this.pendingSettlements.set(settlement.raceId, settlement);
     for (const member of room.members.values()) {
-      member.ready = false;
-      member.postRaceState = member.abandoned ? null : POST_RACE_STATES.RESULTS;
+      member.ready = Boolean(member.isBot);
+      member.postRaceState = member.isBot
+        ? POST_RACE_STATES.ROOM
+        : member.abandoned ? null : POST_RACE_STATES.RESULTS;
     }
     this._broadcastSnapshots(room);
     this._emitToRoom(room, serverMessage(SERVER_MESSAGE_TYPES.RACE_RESULTS, {
@@ -1518,7 +1912,10 @@ export class RoomManager extends EventEmitter {
     this._finalizeRaceMembers(room);
     room.race = null;
     room.state = ROOM_STATES.WAITING;
+    room.botDestroyWhenHumanless = room.botManaged
+      && !hasConnectedHuman(room) && hasLiveHuman(room);
     this._migrateHost(room);
+    if (this._destroyBotRoomIfHumanless(room, this.now())) return;
     this._broadcastRoomState(room);
   }
 
@@ -1532,10 +1929,10 @@ export class RoomManager extends EventEmitter {
         this._removeParticipant(room, member);
         continue;
       }
-      if (resetReady) member.ready = false;
-      member.raceLoaded = false;
+      if (resetReady || member.isBot) member.ready = Boolean(member.isBot);
+      member.raceLoaded = Boolean(member.isBot);
       member.kartIndex = null;
-      member.controllerKind = CONTROLLER_KINDS.HUMAN;
+      member.controllerKind = member.isBot ? CONTROLLER_KINDS.AI : CONTROLLER_KINDS.HUMAN;
       member.awaitingFreshInput = false;
       member.pendingUseItems = 0;
       member.postRaceState = null;
@@ -1546,8 +1943,7 @@ export class RoomManager extends EventEmitter {
 
   _maybeReturnRoom(room) {
     if (room.state !== ROOM_STATES.RESULTS) return false;
-    const active = [...room.members.values()]
-      .filter((member) => member.connected && !member.abandoned);
+    const active = humanMembers(room).filter((member) => member.connected);
     if (active.length === 0
       || active.some((member) => member.postRaceState !== POST_RACE_STATES.ROOM)) {
       return false;
@@ -1582,8 +1978,10 @@ export class RoomManager extends EventEmitter {
 
   _canStart(room) {
     if (room.state !== ROOM_STATES.WAITING) return false;
-    const members = [...room.members.values()].filter((member) => !member.abandoned);
-    return members.length >= 2 && members.every((member) => member.connected && member.ready);
+    const members = humanMembers(room);
+    const minimumHumans = room.botManaged ? 1 : 2;
+    return members.length >= minimumHumans
+      && members.every((member) => member.connected && member.ready);
   }
 
   _expireWaitingMembers(room, now) {
@@ -1612,7 +2010,9 @@ export class RoomManager extends EventEmitter {
         changed = true;
       }
     }
-    if (changed) this._broadcastRoomState(room);
+    if (changed) {
+      this._broadcastRoomState(room);
+    }
   }
 
   _removeParticipant(room, member) {
@@ -1629,6 +2029,11 @@ export class RoomManager extends EventEmitter {
   }
 
   _migrateHost(room) {
+    if (room.botManaged) {
+      const bot = botMemberOf(room);
+      room.hostParticipantId = bot?.participantId ?? null;
+      return;
+    }
     if (room.members.get(room.hostParticipantId)?.connected) return;
     const next = [...room.members.values()]
       .filter((member) => member.connected && !member.abandoned)
@@ -1761,6 +2166,8 @@ export class RoomManager extends EventEmitter {
       room.lastWireRaceId = room.race.wireRaceId;
       room.race = null;
       room.state = ROOM_STATES.WAITING;
+      room.botDestroyWhenHumanless = room.botManaged
+        && !hasConnectedHuman(room) && hasLiveHuman(room);
       this._emitToRoom(room, serverMessage(SERVER_MESSAGE_TYPES.ERROR, {
         code: ERROR_CODES.INTERNAL_ERROR,
         message: 'This race was cancelled after an authoritative simulation error.',

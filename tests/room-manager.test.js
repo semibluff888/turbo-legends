@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   CHAT_SEND_INTERVAL_MS,
+  CONTROLLER_KINDS,
   ERROR_CODES,
   PROTOCOL_VERSION,
   ROOM_STATES,
@@ -11,7 +12,11 @@ import {
 import { decodeSnapshotPacket } from '../src/net/binary-race-codec.js';
 import { GameError } from '../server/game-error.js';
 import { createDefaultRaceFactory } from '../server/race-factory.js';
-import { RoomManager } from '../server/room-manager.js';
+import {
+  BOT_HOST_NAME,
+  BOT_ROOM_NAME,
+  RoomManager,
+} from '../server/room-manager.js';
 
 class FakeSimulation {
   constructor(args) {
@@ -251,6 +256,7 @@ test('room chat uses authoritative identity, enforces 3 seconds, and is not repl
     displayName: 'Host',
     sentAt: 1_700_000_000_000,
     content: 'Good luck!',
+    isBot: false,
   });
   assert.deepEqual(harness.messages.slice(mark), [{
     roomCode: host.roomCode,
@@ -416,6 +422,7 @@ test('room metadata, capacity, and list status use each room human-seat limit', 
     roomCode: host.roomCode,
     roomName: 'Two Seat Sprint',
     roomType: ROOM_TYPES.PUBLIC,
+    botManaged: false,
     requiresPassword: false,
     playerCount: 1,
     maxPlayers: 2,
@@ -1745,4 +1752,219 @@ test('a disconnected results member is removed after the waiting-room reconnect 
     () => harness.manager.resume(host.roomCode, guest.participantId, guest.resumeToken),
     (error) => error.code === ERROR_CODES.SESSION_NOT_FOUND,
   );
+});
+
+function botReplies(harness, key = null) {
+  return harness.messages
+    .map((event) => event.message)
+    .filter((message) => message.type === 'room_chat'
+      && message.isBot
+      && (key === null || message.botMessageKey === key));
+}
+
+test('Bot room reconciliation creates one lightweight public fallback and removes it for a human room', async () => {
+  const codes = ['BOT234', 'HUM234'];
+  const harness = createHarness({
+    botRoomsEnabled: true,
+    roomCodeFactory: () => codes.shift(),
+  });
+  const botRoom = harness.manager.reconcileBotRooms();
+  assert.equal(botRoom.roomName, BOT_ROOM_NAME);
+  assert.equal(botRoom.roomType, ROOM_TYPES.PUBLIC);
+  assert.equal(botRoom.maxPlayers, 8);
+  assert.deepEqual(botRoom.settings, {
+    trackId: botRoom.settings.trackId,
+    difficulty: 'normal',
+    autoFillAi: false,
+  });
+  const bot = [...botRoom.members.values()][0];
+  assert.equal(bot.displayName, BOT_HOST_NAME);
+  assert.equal(bot.isBot, true);
+  assert.equal(bot.ready, true);
+  assert.equal(bot.controllerKind, CONTROLLER_KINDS.AI);
+  assert.equal(harness.manager.activeRaceRooms.size, 0);
+  assert.deepEqual(harness.manager.tick(), { catchUpSteps: 0, catchUpCapped: 0, roomErrors: 0 });
+  assert.equal(harness.manager.listRooms()[0].botManaged, true);
+
+  const humanRoom = await harness.manager.createRoom({
+    displayName: 'Host', roomName: 'Human Room', roomType: ROOM_TYPES.PUBLIC,
+  });
+  harness.advance(15_000);
+  harness.manager.maintenance();
+  assert.equal(harness.manager.rooms.has(botRoom.code), false);
+  assert.equal(harness.manager.rooms.has(humanRoom.roomCode), true);
+  assert.equal([...harness.manager.rooms.values()].some((room) => room.botManaged), false);
+});
+
+test('Bot room commands accept the three aliases, numeric maps, full-width input and room cooldown', async () => {
+  const harness = createHarness({ botRoomsEnabled: true });
+  const room = harness.manager.reconcileBotRooms();
+  const player = await harness.manager.joinRoom(room.code, { displayName: 'Driver' });
+  assert.equal(botReplies(harness, 'welcome').at(-1).content.includes('/h'), true);
+  assert.equal(harness.manager.getRoomState(room.code).members.find((member) => member.isBot).isHost, true);
+
+  for (const command of ['/帮助', '/help', '/h']) {
+    harness.advance(CHAT_SEND_INTERVAL_MS);
+    harness.manager.sendChat(player.participantId, command);
+    const help = botReplies(harness, 'help').at(-1);
+    assert.match(help.content, /1=Sunset Circuit/u);
+    assert.match(help.content, /6=Metropolis Highway/u);
+    assert.equal(help.botMessageArgs.maps.length, 6);
+  }
+
+  const currentIndex = [...harness.manager.tracks].findIndex(([id]) => id === room.settings.trackId);
+  const targets = [1, 2, 3].map((offset) => (currentIndex + offset) % 6 + 1);
+  const commands = [`/地图 ${targets[0]}`, `/map ${targets[1]}`, `／m ${String(targets[2]).replace(/\d/gu, (digit) => String.fromCharCode(digit.charCodeAt(0) + 0xFEE0))}`];
+  for (const command of commands) {
+    harness.advance(CHAT_SEND_INTERVAL_MS);
+    harness.manager.setReady(player.participantId, true);
+    harness.manager.sendChat(player.participantId, command);
+    const state = harness.manager.getRoomState(room.code);
+    assert.equal(state.members.find((member) => member.isBot).ready, true);
+    assert.equal(state.members.find((member) => member.participantId === player.participantId).ready, false);
+    assert.equal(botReplies(harness, 'mapChanged').at(-1).content.includes('请重新准备'), true);
+  }
+
+  const beforeInvalid = room.settings.trackId;
+  for (const invalid of ['/m Sunset Circuit', '/m sunset-circuit', '/m random', '/m 0', '/m 7', '/m 1 extra']) {
+    harness.advance(CHAT_SEND_INTERVAL_MS);
+    harness.manager.sendChat(player.participantId, invalid);
+    assert.equal(room.settings.trackId, beforeInvalid);
+    assert.equal(botReplies(harness, 'mapInvalid').at(-1).content.includes('1-6'), true);
+  }
+
+  harness.advance(CHAT_SEND_INTERVAL_MS);
+  harness.manager.sendChat(player.participantId, '/status');
+  assert.equal(botReplies(harness, 'helpShort').at(-1).content.includes('/m <数字>'), true);
+  harness.advance(CHAT_SEND_INTERVAL_MS);
+  const replyCount = botReplies(harness).length;
+  harness.manager.sendChat(player.participantId, '普通聊天');
+  assert.equal(botReplies(harness).length, replyCount);
+
+  harness.advance(CHAT_SEND_INTERVAL_MS);
+  const nextMap = room.settings.trackId === 'sunset-circuit' ? 2 : 1;
+  harness.manager.sendChat(player.participantId, `/m ${nextMap}`);
+  const guest = await harness.manager.joinRoom(room.code, { displayName: 'Guest' });
+  const cooldownTarget = nextMap === 6 ? 1 : nextMap + 1;
+  harness.manager.sendChat(guest.participantId, `/m ${cooldownTarget}`);
+  assert.equal(botReplies(harness, 'mapCooldown').length > 0, true);
+});
+
+test('Bot start aliases require ready humans and launch one human plus ordinary AI without Bot ACKs', async () => {
+  for (const command of ['/开始', '/start', '/s']) {
+    const harness = createHarness({ botRoomsEnabled: true });
+    const room = harness.manager.reconcileBotRooms();
+    const player = await harness.manager.joinRoom(room.code, { displayName: 'Solo' });
+
+    harness.manager.sendChat(player.participantId, command);
+    assert.equal(botReplies(harness, 'waitReady').at(-1).content, '请等待所有人准备');
+    assert.equal(room.state, ROOM_STATES.WAITING);
+
+    harness.advance(CHAT_SEND_INTERVAL_MS);
+    harness.manager.setReady(player.participantId, true);
+    harness.manager.sendChat(player.participantId, command);
+    assert.equal(room.state, ROOM_STATES.LOADING);
+    const bot = [...room.members.values()].find((member) => member.isBot);
+    const botRoster = room.race.roster.find((entry) => entry.participantId === bot.participantId);
+    assert.equal(bot.raceLoaded, true);
+    assert.equal(botRoster.controllerKind, CONTROLLER_KINDS.AI);
+    assert.equal(botRoster.aiPlayerNumber, 1);
+    assert.deepEqual(room.race.ackMembers.map((entry) => entry.participantId), [player.participantId]);
+    assert.equal(room.race.snapshotSource.acks.length, 1);
+
+    await harness.manager.markRaceLoaded(player.participantId, room.race.raceId);
+    assert.equal(room.state, ROOM_STATES.COUNTDOWN);
+    assert.equal(harness.simulations[0].controllers[bot.kartIndex], CONTROLLER_KINDS.AI);
+  }
+});
+
+test('Bot participants never enter account activity or user race settlement', async () => {
+  const starts = [];
+  const settlements = [];
+  const userStore = {
+    startRace(value) { starts.push(value); },
+    settleRace(value) {
+      settlements.push(value);
+      return new Map([[value.participants[0].userId, { xp: 0 }]]);
+    },
+  };
+  const harness = createHarness({ botRoomsEnabled: true, userStore });
+  const room = harness.manager.reconcileBotRooms();
+  const bot = [...room.members.values()].find((member) => member.isBot);
+  const player = await harness.manager.joinRoom(room.code, {
+    userId: 'user-1', displayName: 'Solo',
+  });
+  assert.equal(harness.manager.participantRooms.has(bot.participantId), false);
+  assert.equal(harness.manager.isUserActive(bot.participantId), false);
+  harness.manager.setReady(player.participantId, true);
+  const race = harness.manager.startRace(player.participantId);
+  await harness.manager.markRaceLoaded(player.participantId, race.raceId);
+  harness.manager._finishRace(room, harness.now());
+  assert.deepEqual(starts[0].participants, [{
+    userId: 'user-1', participantId: player.participantId,
+  }]);
+  assert.deepEqual(settlements[0].participants.map((entry) => entry.userId), ['user-1']);
+  assert.equal(JSON.stringify(settlements[0]).includes(bot.participantId), false);
+});
+
+test('Bot room disable drains occupied rooms, re-enable cancels drain, and humanless races are reclaimed', async () => {
+  const harness = createHarness({ botRoomsEnabled: false, resumeTimeoutMs: 30_000 });
+  harness.manager.setBotRoomsEnabled(true);
+  let room = [...harness.manager.rooms.values()][0];
+  assert.equal(room.botManaged, true);
+  harness.manager.setBotRoomsEnabled(false);
+  assert.equal(harness.manager.rooms.size, 0);
+
+  harness.manager.setBotRoomsEnabled(true);
+  room = [...harness.manager.rooms.values()][0];
+  const player = await harness.manager.joinRoom(room.code, { displayName: 'Driver' });
+  harness.manager.setBotRoomsEnabled(false);
+  assert.equal(room.botRetiring, true);
+  await assert.rejects(
+    harness.manager.joinRoom(room.code, { displayName: 'Blocked' }),
+    (error) => error.code === ERROR_CODES.ROOM_LOCKED,
+  );
+  harness.manager.setBotRoomsEnabled(true);
+  assert.equal(room.botRetiring, false);
+  harness.manager.setReady(player.participantId, true);
+  const race = harness.manager.startRace(player.participantId);
+  await harness.manager.markRaceLoaded(player.participantId, race.raceId);
+  harness.manager.disconnect(player.participantId);
+  assert.equal(harness.manager.rooms.has(room.code), true);
+  harness.advance(30_001);
+  harness.manager.maintenance();
+  assert.notEqual(harness.manager.rooms.get(room.code), room);
+  assert.equal([...harness.manager.rooms.values()].every((candidate) => (
+    candidate.botManaged && candidate.state === ROOM_STATES.WAITING
+  )), true);
+});
+
+test('an explicit last-human race leave immediately destroys a Bot room', async () => {
+  const harness = createHarness({ botRoomsEnabled: true });
+  const room = harness.manager.reconcileBotRooms();
+  const player = await harness.manager.joinRoom(room.code, { displayName: 'Solo' });
+  harness.manager.setReady(player.participantId, true);
+  const race = harness.manager.startRace(player.participantId);
+  await harness.manager.markRaceLoaded(player.participantId, race.raceId);
+  harness.manager.leave(player.participantId);
+  assert.equal(harness.manager.rooms.has(room.code), false);
+});
+
+test('a Bot race result keeps the reconnect window but destroys the room when it expires', async () => {
+  const harness = createHarness({ botRoomsEnabled: true, resultsTimeoutMs: 30_000 });
+  const room = harness.manager.reconcileBotRooms();
+  const player = await harness.manager.joinRoom(room.code, { displayName: 'Solo' });
+  harness.manager.setReady(player.participantId, true);
+  const race = harness.manager.startRace(player.participantId);
+  await harness.manager.markRaceLoaded(player.participantId, race.raceId);
+  harness.manager._finishRace(room, harness.now());
+  harness.manager.disconnect(player.participantId);
+
+  harness.advance(30_000);
+  harness.manager.maintenance();
+  assert.equal(harness.manager.rooms.get(room.code), room);
+  assert.equal(room.state, ROOM_STATES.WAITING);
+  harness.advance(1);
+  harness.manager.maintenance();
+  assert.notEqual(harness.manager.rooms.get(room.code), room);
 });

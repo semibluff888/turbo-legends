@@ -45,6 +45,19 @@
 
       <p id="global-error" class="error global-error" role="alert"></p>
 
+      <section class="panel settings-panel" aria-labelledby="server-settings-title">
+        <div>
+          <p class="eyebrow">服务器设置</p>
+          <h2 id="server-settings-title">Bot 自建房 <code>BOT_ROOM_ENABLED</code></h2>
+          <p class="muted settings-description">开启后，无公开可加入房间时服务器会自动创建 Bot 房</p>
+        </div>
+        <label class="setting-toggle" for="bot-room-enabled">
+          <span id="bot-room-status">加载中</span>
+          <input id="bot-room-enabled" type="checkbox" role="switch" disabled>
+          <span class="switch-track" aria-hidden="true"><span></span></span>
+        </label>
+      </section>
+
       <section id="metric-grid" class="metric-grid" aria-label="核心指标"></section>
 
       <section class="dashboard-grid">

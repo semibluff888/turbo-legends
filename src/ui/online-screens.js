@@ -394,6 +394,7 @@ export function buildLobbyView(lobbyState = {}, options = {}) {
       track,
       status,
       joinable,
+      botManaged: Boolean(room.botManaged),
       isInvited,
       matchesSearch,
       sourceIndex: index,
@@ -448,6 +449,7 @@ export function buildRoomView(roomState = {}, localParticipantId = '', options =
       paintId: String(firstDefined(member.paintId, DEFAULT_ONLINE_LOADOUT.paintId)),
       avatarId: String(firstDefined(member.avatarId, DEFAULT_ONLINE_LOADOUT.avatarId)),
       ready: Boolean(firstDefined(member.ready, member.isReady, false)),
+      isBot: Boolean(member.isBot),
       connected: !['disconnected', 'offline', 'expired'].includes(state),
       connectionState: state,
       postRaceState,
@@ -465,6 +467,9 @@ export function buildRoomView(roomState = {}, localParticipantId = '', options =
   const localMember = members.find((member) => member.isLocal) || null;
   const onlineMembers = members.filter((member) => member.connected);
   const reconnectingMembers = members.filter((member) => !member.connected);
+  const humanMembers = members.filter((member) => !member.isBot);
+  const onlineHumanMembers = humanMembers.filter((member) => member.connected);
+  const reconnectingHumanMembers = humanMembers.filter((member) => !member.connected);
   const everyoneOnline = members.length > 0 && onlineMembers.length === members.length;
   const everyoneReady = everyoneOnline && members.every((member) => member.ready);
   const serverAllowsStart = typeof roomState.canStart === 'boolean'
@@ -482,6 +487,7 @@ export function buildRoomView(roomState = {}, localParticipantId = '', options =
     roomName: normalizeRoomName(firstDefined(roomState.roomName, roomState.name, ''))
       || copy.online.room.unnamedRoom,
     roomType: roomTypeOf(roomState),
+    botManaged: Boolean(roomState.botManaged),
     maxPlayers,
     capacity: maxPlayers,
     playerCount,
@@ -492,6 +498,10 @@ export function buildRoomView(roomState = {}, localParticipantId = '', options =
     onlineCount: onlineMembers.length,
     reconnectingMembers,
     reconnectingCount: reconnectingMembers.length,
+    humanMembers,
+    onlineHumanCount: onlineHumanMembers.length,
+    reconnectingHumanMembers,
+    reconnectingHumanCount: reconnectingHumanMembers.length,
     everyoneReady,
     isHost,
     canManageRoom,
@@ -504,6 +514,21 @@ export function buildRoomView(roomState = {}, localParticipantId = '', options =
 
 export function roomStatusMessage(view, copy = getUiCopy().online.room) {
   if (view.phase !== 'waiting') return copy.phase[view.phase] || copy.loading;
+  if (view.botManaged) {
+    if (view.reconnectingHumanCount === 1) {
+      return copy.waitingForReconnect.replace('{name}', view.reconnectingHumanMembers[0].displayName);
+    }
+    if (view.reconnectingHumanCount > 1) {
+      return copy.waitingForReconnectCount.replace('{count}', String(view.reconnectingHumanCount));
+    }
+    if (view.onlineHumanCount < 1) return copy.waitingForRacer;
+    if (!view.humanMembers.every((member) => member.connected && member.ready)) {
+      return copy.readyCount
+        .replace('{ready}', String(view.humanMembers.filter((member) => member.ready && member.connected).length))
+        .replace('{total}', String(view.onlineHumanCount));
+    }
+    return copy.botReadyToStart;
+  }
   if (view.reconnectingCount === 1) {
     return copy.waitingForReconnect.replace('{name}', view.reconnectingMembers[0].displayName);
   }
@@ -1656,22 +1681,67 @@ export class OnlineScreens {
     this._listen(root.querySelector('[data-action="copy"]'), 'click', () => this._copyInvite());
   }
 
+  _localizedBotChatContent(message) {
+    if (!message.isBot || !message.botMessageKey) return message.content;
+    const args = message.botMessageArgs || {};
+    const copy = this.copy.online.room.botMessages || {};
+    const trackName = (entry = {}) => (
+      localizeTrack(this.trackById.get(entry.id), this.language)?.name || entry.name || ''
+    );
+    switch (message.botMessageKey) {
+      case 'welcome':
+        return formatCopy(copy.welcome, { displayName: args.displayName });
+      case 'help': {
+        const maps = Array.isArray(args.maps)
+          ? args.maps.map((entry) => `${entry.number}=${trackName(entry)}`).join('，')
+          : '';
+        const currentMapName = trackName({
+          id: args.maps?.find((entry) => entry.number === args.currentMapNumber)?.id,
+          name: args.currentMapName,
+        });
+        return formatCopy(copy.help, {
+          maps,
+          currentMapNumber: args.currentMapNumber,
+          currentMapName,
+        });
+      }
+      case 'helpShort': return copy.helpShort;
+      case 'mapInvalid': return formatCopy(copy.mapInvalid, args);
+      case 'mapUnavailable': return copy.mapUnavailable;
+      case 'mapCooldown': return formatCopy(copy.mapCooldown, args);
+      case 'mapChanged':
+      case 'mapUnchanged':
+        return formatCopy(copy[message.botMessageKey], {
+          ...args,
+          mapName: trackName({
+            id: this.tracks[Number(args.mapNumber) - 1]?.id,
+            name: args.mapName,
+          }),
+        });
+      case 'waitReady': return copy.waitReady;
+      default: return message.content;
+    }
+  }
+
   _renderRoomChatEntry(list, message) {
     const item = createNode(
       this.doc,
       'li',
-      `online-chat-message${message.system ? ' is-system' : ''}`,
+      `online-chat-message${message.system ? ' is-system' : ''}${message.isBot ? ' is-bot' : ''}`,
       list,
     );
     if (message.participantId) item.dataset.participantId = message.participantId;
     const meta = createNode(this.doc, 'span', 'online-chat-meta', item);
-    createNode(
+    const name = createNode(
       this.doc,
       'strong',
       'online-chat-name',
       meta,
       message.system ? this.copy.online.room.system : message.displayName,
     );
+    if (message.isBot) {
+      createNode(this.doc, 'span', 'online-chat-bot-badge', name, this.copy.online.room.botBadge);
+    }
     const time = createNode(
       this.doc,
       'time',
@@ -1734,8 +1804,16 @@ export class OnlineScreens {
       participantId: String(message.participantId || ''),
       displayName: String(message.displayName || this.copy.online.room.system),
       sentAt,
-      content,
+      content: this._localizedBotChatContent({
+        ...message,
+        content,
+      }),
       system: Boolean(message.system),
+      isBot: Boolean(message.isBot),
+      botMessageKey: String(message.botMessageKey || ''),
+      botMessageArgs: message.botMessageArgs && typeof message.botMessageArgs === 'object'
+        ? message.botMessageArgs
+        : {},
     };
     this._chatMessages.push(entry);
     if (this._chatMessages.length > MAX_ROOM_CHAT_MESSAGES) {
@@ -2256,6 +2334,9 @@ export class OnlineScreens {
         room.roomType === 'private' ? copy.privateBadge : copy.publicBadge,
       );
       type.title = room.requiresPassword ? copy.passwordRequired : copy.noPasswordRequired;
+      if (room.botManaged) {
+        createNode(this.doc, 'span', 'online-room-bot-badge', titleLine, copy.botBadge);
+      }
       createNode(this.doc, 'h4', '', titleLine, room.roomName);
       createNode(this.doc, 'span', 'online-room-list-code', title, room.roomCode);
 
@@ -2477,7 +2558,8 @@ export class OnlineScreens {
     const sortedMembers = view.members.slice().sort((a, b) => a.joinOrder - b.joinOrder);
     for (let index = 0; index < view.maxPlayers; index += 1) {
       const member = sortedMembers[index];
-      const canKick = Boolean(member && view.isHost && view.phase === 'waiting' && !member.isLocal);
+      const canKick = Boolean(member && !member.isBot
+        && view.isHost && view.phase === 'waiting' && !member.isLocal);
       const item = createNode(
         this.doc,
         'li',
@@ -2493,6 +2575,7 @@ export class OnlineScreens {
       const name = createNode(this.doc, 'span', 'online-member-name', identity, member.displayName);
       if (member.isLocal) createNode(this.doc, 'span', 'online-mini-chip', name, copy.you);
       if (member.isHost) createNode(this.doc, 'span', 'online-mini-chip is-host', name, copy.host);
+      if (member.isBot) createNode(this.doc, 'span', 'online-mini-chip is-bot', name, copy.botBadge);
       const character = this.characterById.get(member.characterId);
       const loadout = createNode(this.doc, 'span', 'online-member-loadout', identity);
       const memberLoadout = this._sanitizeLoadout(member);
@@ -2513,7 +2596,7 @@ export class OnlineScreens {
           ? copy.reconnecting
           : inGame
             ? copy.inGame
-            : member.ready ? copy.ready : copy.notReady,
+            : member.isBot ? copy.botReady : member.ready ? copy.ready : copy.notReady,
       );
       ready.title = member.connected ? '' : copy.reconnectingHint;
       if (canKick) {
@@ -2538,12 +2621,12 @@ export class OnlineScreens {
     this._syncRoomTrackPreview(view.trackId);
     difficultySelect.value = view.difficulty;
     autoFillAi.checked = view.autoFillAi;
-    trackSelect.disabled = this._busy || !view.isHost || !view.canManageRoom;
-    difficultySelect.disabled = this._busy || !view.isHost || !view.canManageRoom;
-    autoFillAi.disabled = this._busy || !view.isHost || !view.canManageRoom;
-    root.querySelector('[data-host-note]').textContent = view.isHost
-      ? copy.hostControls
-      : copy.hostOnly;
+    trackSelect.disabled = this._busy || view.botManaged || !view.isHost || !view.canManageRoom;
+    difficultySelect.disabled = this._busy || view.botManaged || !view.isHost || !view.canManageRoom;
+    autoFillAi.disabled = this._busy || view.botManaged || !view.isHost || !view.canManageRoom;
+    root.querySelector('[data-host-note]').textContent = view.botManaged
+      ? copy.botControls
+      : view.isHost ? copy.hostControls : copy.hostOnly;
 
     const ready = root.querySelector('[data-action="ready"]');
     ready.textContent = view.localMember?.ready ? copy.cancelReady : copy.readyUp;

@@ -1718,6 +1718,7 @@ kbd {
 }
 .online-mini-chip { color: #271b08; background: var(--accent); }
 .online-mini-chip.is-host { color: #fff; background: #b45fe9; }
+.online-mini-chip.is-bot { color: #052131; background: #7fe3ff; }
 .online-ready-chip { margin: 0; padding: 3px 9px; font-size: 11px; color: rgba(255, 255, 255, 0.52); background: rgba(255, 255, 255, 0.08); }
 .online-ready-chip.is-ready { color: #122b22; background: #77f0be; }
 .online-ready-chip.is-in-game { color: #071e31; background: #7fe3ff; }
@@ -1954,6 +1955,16 @@ kbd {
 
 .online-room-type.is-public { color: #9ff3d1; border-color: rgba(68, 228, 158, 0.4); background: rgba(68, 228, 158, 0.1); }
 .online-room-type.is-private { color: #e0bbff; border-color: rgba(180, 95, 233, 0.48); background: rgba(180, 95, 233, 0.12); }
+.online-room-bot-badge {
+  padding: 3px 8px;
+  border: 1px solid rgba(127, 227, 255, 0.52);
+  border-radius: 999px;
+  color: #b9f2ff;
+  background: rgba(74, 168, 255, 0.14);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
 
 .online-room-facts {
   min-width: 0;
@@ -4142,6 +4153,10 @@ body.touch #hud:not([hidden]) .hud-item-impact-label { font-size: 9px; }
   border-color: rgba(255, 210, 63, 0.28);
   background: rgba(255, 210, 63, 0.08);
 }
+.online-chat-message.is-bot {
+  border-color: rgba(127, 227, 255, 0.3);
+  background: rgba(74, 168, 255, 0.09);
+}
 .online-chat-meta { display: contents; }
 .online-chat-name {
   overflow: hidden;
@@ -4152,6 +4167,15 @@ body.touch #hud:not([hidden]) .hud-item-impact-label { font-size: 9px; }
   white-space: nowrap;
 }
 .online-chat-message.is-system .online-chat-name { color: #ffd23f; }
+.online-chat-bot-badge {
+  margin-left: 5px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: #052131;
+  background: #7fe3ff;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
 .online-chat-time {
   color: rgba(255, 255, 255, 0.38);
   font-size: 9px;
