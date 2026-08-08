@@ -1907,7 +1907,7 @@ test('Bot participants never enter account activity or user race settlement', as
   assert.equal(JSON.stringify(settlements[0]).includes(bot.participantId), false);
 });
 
-test('Bot room disable drains occupied rooms, re-enable cancels drain, and humanless races are reclaimed', async () => {
+test('Bot room disable stops replenishment while occupied rooms remain joinable until humanless', async () => {
   const harness = createHarness({ botRoomsEnabled: false, resumeTimeoutMs: 30_000 });
   harness.manager.setBotRoomsEnabled(true);
   let room = [...harness.manager.rooms.values()][0];
@@ -1920,16 +1920,21 @@ test('Bot room disable drains occupied rooms, re-enable cancels drain, and human
   const player = await harness.manager.joinRoom(room.code, { displayName: 'Driver' });
   harness.manager.setBotRoomsEnabled(false);
   assert.equal(room.botRetiring, true);
-  await assert.rejects(
-    harness.manager.joinRoom(room.code, { displayName: 'Blocked' }),
-    (error) => error.code === ERROR_CODES.ROOM_LOCKED,
-  );
+  assert.equal(harness.manager.listRooms()[0].joinable, true);
+  const directPlayer = await harness.manager.joinRoom(room.code, { displayName: 'Direct' });
+  const matchedPlayer = await harness.manager.quickMatch({ displayName: 'Matched' });
+  assert.equal(directPlayer.roomCode, room.code);
+  assert.equal(matchedPlayer.roomCode, room.code);
   harness.manager.setBotRoomsEnabled(true);
   assert.equal(room.botRetiring, false);
-  harness.manager.setReady(player.participantId, true);
+  for (const participant of [player, directPlayer, matchedPlayer]) {
+    harness.manager.setReady(participant.participantId, true);
+  }
   const race = harness.manager.startRace(player.participantId);
-  await harness.manager.markRaceLoaded(player.participantId, race.raceId);
-  harness.manager.disconnect(player.participantId);
+  for (const participant of [player, directPlayer, matchedPlayer]) {
+    await harness.manager.markRaceLoaded(participant.participantId, race.raceId);
+    harness.manager.disconnect(participant.participantId);
+  }
   assert.equal(harness.manager.rooms.has(room.code), true);
   harness.advance(30_001);
   harness.manager.maintenance();

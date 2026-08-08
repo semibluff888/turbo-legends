@@ -387,7 +387,7 @@ export class RoomManager extends EventEmitter {
       const playerCount = members.length;
       const isWaiting = room.state === ROOM_STATES.WAITING;
       const isFull = isWaiting && playerCount >= room.maxPlayers;
-      const joinable = isWaiting && !isFull && !room.botRetiring;
+      const joinable = isWaiting && !isFull;
       const host = room.members.get(room.hostParticipantId);
       rooms.push({
         roomCode: room.code,
@@ -735,9 +735,6 @@ export class RoomManager extends EventEmitter {
     userId = null, displayName, characterId, paintId, avatarId, password,
   } = {}) {
     const room = this._requireRoom(roomCode);
-    if (room.botRetiring) {
-      throw new GameError(ERROR_CODES.ROOM_LOCKED, 'This Bot room is no longer accepting players.');
-    }
     if (room.state !== ROOM_STATES.WAITING) {
       throw new GameError(ERROR_CODES.ROOM_LOCKED, 'This race has already started.');
     }
@@ -785,7 +782,6 @@ export class RoomManager extends EventEmitter {
     })).filter(({ room, playerCount }) => (
       room.roomType === ROOM_TYPES.PUBLIC
       && room.state === ROOM_STATES.WAITING
-      && !room.botRetiring
       && hasOnlineMember(room)
       && playerCount < room.maxPlayers
     ));
